@@ -18,5 +18,7 @@ begin.
 - Objective duplication, complexity, maintainability, vulnerability, secret, workflow, and
   documentation gates.
 - Pinned local code-review graph MCP and autonomous parallel-agent workflow.
+- File-size, cognitive-complexity, and behavior-core coverage ratchets with an explicit anti-
+  coverage-theater testing strategy.
 
 [Unreleased]: https://github.com/Horcag/agent-machine-control/commits/main

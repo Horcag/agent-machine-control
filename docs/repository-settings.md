@@ -23,7 +23,7 @@ push and after every required check has run once so GitHub can select it by name
 - Do not allow routine bypass; reserve an audited break-glass path for maintainers.
 
 Required checks should include the CI matrix, lint, race detector, CodeQL, security workflow,
-dependency review on pull requests, documentation checks, and code-review-graph impact analysis.
+coverage, dependency review on pull requests, documentation checks, and code-review-graph impact analysis.
 Do not make scheduled-only Scorecard runs a pull-request requirement.
 
 ## Release protection

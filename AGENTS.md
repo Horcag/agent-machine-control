@@ -29,6 +29,10 @@ privileged boundary.
 - Public code and documentation are written in English.
 - Add tests with behavior changes. Use `make quick` while iterating, `make check` before commit,
   and `make quality` before review.
+- Treat file-size, complexity, and coverage thresholds as debt ratchets. Do not game them with tiny
+  wrappers, duplicated tests, or assertions that prove no meaningful behavior.
+- Follow `docs/testing.md`: test decisions, failure modes, contracts, and concurrency; skip thin
+  wiring, generated code, trivial constants, and third-party behavior.
 - Keep changes focused. Do not add speculative interfaces or cross-backend abstractions before
   a second concrete backend needs them.
 - Use Conventional Commit subjects. Do not add AI attribution or generated-by trailers.

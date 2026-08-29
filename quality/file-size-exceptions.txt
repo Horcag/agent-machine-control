@@ -1,0 +1,2 @@
+# One temporary exception per line: relative/path.go=maximum_lines
+# Exceptions must name an existing file that is still above its default hard limit.

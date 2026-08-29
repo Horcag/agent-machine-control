@@ -47,6 +47,7 @@ The public API and command surface are not stable before `v0.1.0`.
 - [Public versus local data boundary](docs/public-private-boundary.md)
 - [Development guide](docs/development.md)
 - [Quality system](docs/quality.md)
+- [Testing strategy](docs/testing.md)
 - [Autonomous and parallel agent workflow](docs/agent-workflow.md)
 - [Recommended repository settings](docs/repository-settings.md)
 - [Open-source baseline research](docs/research/open-source-baseline.md)

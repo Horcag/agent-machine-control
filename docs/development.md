@@ -4,6 +4,7 @@
 
 - Go 1.25 or newer.
 - `golangci-lint` v2.13.2 for the full lint target. Keep the local and CI versions aligned.
+- ShellCheck for the small repository shell-tooling surface.
 - GoReleaser v2 for packaging checks.
 
 The baseline commands intentionally use ordinary Go tooling so contributors are not required to
@@ -16,6 +17,10 @@ make quality
 make hooks
 goreleaser release --snapshot --clean
 ```
+
+`make quick` includes the fast file-size ratchet but excludes coverage, race detection, security
+scans, and documentation tooling. Those run in `make quality`, pre-push hooks, and CI so the inner
+loop remains responsive.
 
 The pinned analysis commands run through `go run`, `npx`, or `uvx`; the first invocation downloads
 tooling and later invocations use local caches. Override a tool command only when reproducing the
@@ -46,6 +51,9 @@ overlapping tool and memory surfaces.
 - OS integration tests use generated data and explicit opt-in labels.
 - Destructive tests require a disposable target, verified checkpoint, and evidence capture.
 - MCP changes require tool-schema snapshots, official conformance checks, and two real clients.
+
+Coverage applies to `internal/...` only and follows `docs/testing.md`. It is a lower debt boundary,
+not a request for tests around thin command wiring or implementation trivia.
 
 ## Commits and releases
 

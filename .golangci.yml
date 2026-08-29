@@ -12,6 +12,7 @@ linters:
     - dupl
     - errcheck
     - gocritic
+    - gocognit
     - gosec
     - govet
     - ineffassign
@@ -20,6 +21,7 @@ linters:
     - misspell
     - modernize
     - nakedret
+    - nestif
     - nolintlint
     - revive
     - staticcheck
@@ -33,6 +35,10 @@ linters:
       threshold: 100
     maintidx:
       under: 20
+    gocognit:
+      min-complexity: 20
+    nestif:
+      min-complexity: 5
   exclusions:
     generated: lax
     presets:

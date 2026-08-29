@@ -14,6 +14,9 @@ pre-commit:
     - name: run unit tests
       glob: "*.go"
       run: go test ./...
+    - name: enforce file-size ratchet
+      glob: "*.go"
+      run: make file-size
     - name: scan staged history for secrets when available
       run: |
         if command -v gitleaks >/dev/null 2>&1; then
@@ -29,8 +32,12 @@ pre-push:
       run: make check
     - name: race detector
       run: make test-race
+    - name: coverage policy
+      run: make coverage
     - name: GitHub Actions syntax
       run: make actionlint
+    - name: shell script analysis
+      run: make shellcheck
     - name: vulnerability scan
       run: make vuln
     - name: repository secret scan
