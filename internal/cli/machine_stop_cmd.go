@@ -109,9 +109,11 @@ func executeStopWithApproval(
 		if mode == "turn-off" {
 			initialClass = domain.ClassDestructivePrivileged
 		}
-		if promptedAppr, dl, ok := promptForApproval(prompter, nowFn, req.Actor, req.TargetID, "machine.stop", domain.CapabilityMachineStop, initialClass, common.Reason, common.IdempotencyKey, common.Timeout, params, promptMsg); ok {
+		newIdempotencyKey := domain.DeriveApprovalIdempotencyKey(common.IdempotencyKey)
+		if promptedAppr, dl, ok := promptForApproval(prompter, nowFn, req.Actor, req.TargetID, "machine.stop", domain.CapabilityMachineStop, initialClass, common.Reason, newIdempotencyKey, common.Timeout, params, promptMsg); ok {
 			req.Approval = promptedAppr
 			req.Deadline = dl
+			req.IdempotencyKey = newIdempotencyKey
 			rcpt, obs, err = recoverySvc.StopMachine(ctx, req, mode)
 		}
 	}

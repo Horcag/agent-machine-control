@@ -24,6 +24,9 @@ var (
 
 	// ErrManagerBusy indicates live operation capacity has been reached.
 	ErrManagerBusy = errors.New("operations: live operation capacity exceeded")
+
+	// ErrPersistenceFailure indicates a storage error or that persistence is not configured properly.
+	ErrPersistenceFailure = errors.New("operations: persistent storage is not configured")
 )
 
 // ListOptions specifies filter and pagination parameters for querying operations.
@@ -35,10 +38,11 @@ type ListOptions struct {
 
 // InFlightKey uniquely identifies a submitted mutation per actor and idempotency key.
 type inFlightEntry struct {
-	opID        string
-	fingerprint domain.Fingerprint
-	target      domain.MachineRef
-	kind        domain.OperationKind
-	actor       domain.ActorID
-	record      *domain.OperationRecord
+	opID                   string
+	fingerprint            domain.Fingerprint
+	idempotencyFingerprint domain.Fingerprint
+	target                 domain.MachineRef
+	kind                   domain.OperationKind
+	actor                  domain.ActorID
+	record                 *domain.OperationRecord
 }

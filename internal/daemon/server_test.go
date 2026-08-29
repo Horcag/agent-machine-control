@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Horcag/agent-machine-control/internal/audit"
 	"github.com/Horcag/agent-machine-control/internal/client"
 	"github.com/Horcag/agent-machine-control/internal/daemon"
 )
@@ -40,7 +42,7 @@ func TestServer_HealthAndStrictValidation(t *testing.T) {
 	}
 
 	// 2. Reject unknown fields
-	badJSON := `{"kind":"machine.start","target":"c4a523d4-6b99-4d62-a5e2-4752c0f20001","reason":"test","idempotency_key":"key-bad","unknown_field":"forbidden"}`
+	badJSON := `{"kind":"machine.stop","target":"c4a523d4-6b99-4d62-a5e2-4752c0f20001","reason":"test","parameters":{"mode":"turn-off"},"idempotency_key":"key-bad","unknown_field":"forbidden"}`
 	req, _ = http.NewRequest(http.MethodPost, endpoint+"/v1/operations", bytes.NewReader([]byte(badJSON)))
 	req.Header.Set("Authorization", "Bearer "+opToken)
 	resp, err = http.DefaultClient.Do(req)
@@ -53,7 +55,7 @@ func TestServer_HealthAndStrictValidation(t *testing.T) {
 	}
 
 	// 3. Reject trailing JSON
-	trailingJSON := `{"kind":"machine.start","target":"c4a523d4-6b99-4d62-a5e2-4752c0f20001","reason":"test","idempotency_key":"key-trail"} trailing`
+	trailingJSON := `{"kind":"machine.stop","target":"c4a523d4-6b99-4d62-a5e2-4752c0f20001","reason":"test","parameters":{"mode":"turn-off"},"idempotency_key":"key-trail"} trailing`
 	req, _ = http.NewRequest(http.MethodPost, endpoint+"/v1/operations", bytes.NewReader([]byte(trailingJSON)))
 	req.Header.Set("Authorization", "Bearer "+opToken)
 	resp, err = http.DefaultClient.Do(req)
@@ -402,7 +404,7 @@ func TestServer_RequestValidationErrors(t *testing.T) {
 	defer func() { _ = srv.Shutdown(context.Background()) }()
 
 	// 1. Unknown fields in body -> 400
-	req, _ := http.NewRequest(http.MethodPost, endpoint+"/v1/operations", bytes.NewReader([]byte(`{"kind":"machine.start","target":"c4a523d4-6b99-4d62-a5e2-4752c0f20001","unknown_field":true}`)))
+	req, _ := http.NewRequest(http.MethodPost, endpoint+"/v1/operations", bytes.NewReader([]byte(`{"kind":"machine.stop","target":"c4a523d4-6b99-4d62-a5e2-4752c0f20001","unknown_field":true}`)))
 	req.Header.Set("Authorization", "Bearer "+opToken)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -414,7 +416,7 @@ func TestServer_RequestValidationErrors(t *testing.T) {
 	}
 
 	// 2. Trailing data in body -> 400
-	req, _ = http.NewRequest(http.MethodPost, endpoint+"/v1/operations", bytes.NewReader([]byte(`{"kind":"machine.start","target":"c4a523d4-6b99-4d62-a5e2-4752c0f20001"} extra`)))
+	req, _ = http.NewRequest(http.MethodPost, endpoint+"/v1/operations", bytes.NewReader([]byte(`{"kind":"machine.stop","target":"c4a523d4-6b99-4d62-a5e2-4752c0f20001"} extra`)))
 	req.Header.Set("Authorization", "Bearer "+opToken)
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
@@ -569,4 +571,91 @@ func readSSEUntilCompleted(t *testing.T, r io.Reader) bool {
 		}
 	}
 	return false
+}
+
+func TestDaemon_IdempotentDenialWithRegeneratedDeadline(t *testing.T) {
+	srv, endpoint, adminToken, opToken := setupTestServer(t)
+	defer func() { _ = srv.Shutdown(context.Background()) }()
+
+	cl := client.New(endpoint, opToken)
+	ctx := context.Background()
+
+	deadline1 := time.Now().Add(10 * time.Minute)
+	req1 := daemon.CreateOperationRequest{
+		Kind:           "machine.stop",
+		Target:         "c4a523d4-6b99-4d62-a5e2-4752c0f20001",
+		Reason:         "test",
+		Parameters:     map[string]any{"mode": "turn-off"},
+		IdempotencyKey: "key-regen-deadline",
+		Deadline:       &deadline1,
+	}
+
+	op1, err := cl.CreateOperation(ctx, req1)
+	if err != nil {
+		t.Fatalf("req1 failed: %v", err)
+	}
+
+	op1Final, err := cl.WaitOperation(ctx, op1.OperationID, 5*time.Second, 0)
+	if err != nil {
+		t.Fatalf("wait req1 failed: %v", err)
+	}
+
+	if op1Final.ErrorCategory != "approval_required" {
+		t.Fatalf("expected approval_required denial, got %v %v", op1Final.ErrorCategory, op1Final.ErrorMessage)
+	}
+
+	deadline2 := time.Now().Add(20 * time.Minute)
+	req2 := daemon.CreateOperationRequest{
+		Kind:           "machine.stop",
+		Target:         "c4a523d4-6b99-4d62-a5e2-4752c0f20001",
+		Reason:         "test",
+		Parameters:     map[string]any{"mode": "turn-off"},
+		IdempotencyKey: "key-regen-deadline",
+		Deadline:       &deadline2,
+	}
+
+	op2, err := cl.CreateOperation(ctx, req2)
+	if err != nil {
+		t.Fatalf("req2 failed: %v", err)
+	}
+
+	if op2.OperationID != op1Final.OperationID {
+		t.Fatalf("expected same operation ID, got %s vs %s", op1Final.OperationID, op2.OperationID)
+	}
+	if op2.ReceiptID != op1Final.ReceiptID {
+		t.Fatalf("expected same receipt ID, got %s vs %s", op1Final.ReceiptID, op2.ReceiptID)
+	}
+	if op2.ErrorCategory != op1Final.ErrorCategory {
+		t.Fatalf("expected same error category, got %s vs %s", op1Final.ErrorCategory, op2.ErrorCategory)
+	}
+
+	// Verify exact audit events (1 denial total for this key)
+	req3, _ := http.NewRequest(http.MethodGet, endpoint+"/v1/audit", nil)
+	req3.Header.Set("Authorization", "Bearer "+adminToken)
+	resp3, err := http.DefaultClient.Do(req3)
+	if err != nil {
+		t.Fatalf("audit req failed: %v", err)
+	}
+	defer resp3.Body.Close()
+	var auditResp daemon.AuditListResponse
+	if err := json.NewDecoder(resp3.Body).Decode(&auditResp); err != nil {
+		t.Fatalf("failed to decode audit response: %v", err)
+	}
+
+	denials := countDenials(auditResp.Events, op1Final.ReceiptID, op1Final.ErrorCategory, op1Final.ErrorMessage)
+	if denials != 1 {
+		t.Fatalf("expected exactly 1 denial audit event for receipt ID %s, got %d, events: %+v", op1Final.ReceiptID, denials, auditResp.Events)
+	}
+}
+
+func countDenials(events []audit.Event, receiptID, category, message string) int {
+	denials := 0
+	for _, e := range events {
+		if e.ReceiptID == receiptID && string(e.OutcomeStatus) == "denied" {
+			if e.ErrorCategory == category && e.ErrorMessage == message {
+				denials++
+			}
+		}
+	}
+	return denials
 }

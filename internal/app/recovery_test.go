@@ -315,7 +315,7 @@ func TestRecoveryService_StopMachine_TurnOff_RequiresApproval(t *testing.T) {
 		Actor:               actor,
 		Reason:              "hard turn off",
 		Deadline:            now.Add(30 * time.Second),
-		IdempotencyKey:      "key-stop-turnoff",
+		IdempotencyKey:      "key-stop-turnoff-2",
 		RequiredCapability:  domain.CapabilityMachineStop,
 		RequiredScopes:      []string{"machine:write"},
 		Classification:      domain.ClassDestructivePrivileged,
@@ -330,12 +330,13 @@ func TestRecoveryService_StopMachine_TurnOff_RequiresApproval(t *testing.T) {
 		Target:          domain.MachineRef(targetID),
 		AuthorizedClass: domain.ClassDestructivePrivileged,
 		Fingerprint:     fp,
-		IdempotencyKey:  "key-stop-turnoff",
+		IdempotencyKey:  "key-stop-turnoff-2",
 		IssuedAt:        now,
 		ExpiresAt:       now.Add(time.Hour),
 	}
 	req.Deadline = op.Deadline
 	req.Approval = &appr
+	req.IdempotencyKey = "key-stop-turnoff-2"
 
 	rcpt, obs, err := svc.StopMachine(context.Background(), req, "turn-off")
 	if err != nil {

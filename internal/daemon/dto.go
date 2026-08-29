@@ -45,45 +45,47 @@ type CreateOperationRequest struct {
 
 // OperationDTO is the JSON representation of an operation.
 type OperationDTO struct {
-	SchemaVersion  string         `json:"schema_version"`
-	OperationID    string         `json:"operation_id"`
-	Kind           string         `json:"kind"`
-	Target         string         `json:"target"`
-	Actor          string         `json:"actor"`
-	State          string         `json:"state"`
-	RequestedClass string         `json:"requested_class,omitempty"`
-	EffectiveClass string         `json:"effective_class,omitempty"`
-	Fingerprint    string         `json:"fingerprint,omitempty"`
-	IdempotencyKey string         `json:"idempotency_key,omitempty"`
-	CreatedAt      string         `json:"created_at"`
-	AdmittedAt     string         `json:"admitted_at,omitempty"`
-	RunningAt      string         `json:"running_at,omitempty"`
-	CompletedAt    string         `json:"completed_at,omitempty"`
-	Deadline       string         `json:"deadline,omitempty"`
-	ReceiptID      string         `json:"receipt_id,omitempty"`
-	ErrorCategory  string         `json:"error_category,omitempty"`
-	ErrorMessage   string         `json:"error_message,omitempty"`
-	Parameters     map[string]any `json:"parameters,omitempty"`
+	SchemaVersion          string         `json:"schema_version"`
+	OperationID            string         `json:"operation_id"`
+	Kind                   string         `json:"kind"`
+	Target                 string         `json:"target"`
+	Actor                  string         `json:"actor"`
+	State                  string         `json:"state"`
+	RequestedClass         string         `json:"requested_class,omitempty"`
+	EffectiveClass         string         `json:"effective_class,omitempty"`
+	Fingerprint            string         `json:"fingerprint,omitempty"`
+	IdempotencyFingerprint string         `json:"idempotency_fingerprint,omitempty"`
+	IdempotencyKey         string         `json:"idempotency_key,omitempty"`
+	CreatedAt              string         `json:"created_at"`
+	AdmittedAt             string         `json:"admitted_at,omitempty"`
+	RunningAt              string         `json:"running_at,omitempty"`
+	CompletedAt            string         `json:"completed_at,omitempty"`
+	Deadline               string         `json:"deadline,omitempty"`
+	ReceiptID              string         `json:"receipt_id,omitempty"`
+	ErrorCategory          string         `json:"error_category,omitempty"`
+	ErrorMessage           string         `json:"error_message,omitempty"`
+	Parameters             map[string]any `json:"parameters,omitempty"`
 }
 
 // ConvertToOperationDTO converts a domain.OperationRecord to an OperationDTO.
 func ConvertToOperationDTO(rec domain.OperationRecord) OperationDTO {
 	dto := OperationDTO{
-		SchemaVersion:  SchemaVersion,
-		OperationID:    rec.ID,
-		Kind:           string(rec.Kind),
-		Target:         string(rec.Target),
-		Actor:          string(rec.Actor),
-		State:          string(rec.State),
-		RequestedClass: string(rec.RequestedClass),
-		EffectiveClass: string(rec.EffectiveClass),
-		Fingerprint:    string(rec.Fingerprint),
-		IdempotencyKey: rec.IdempotencyKey,
-		CreatedAt:      rec.CreatedAt.UTC().Format(time.RFC3339Nano),
-		ReceiptID:      string(rec.ReceiptID),
-		ErrorCategory:  rec.ErrorCategory,
-		ErrorMessage:   rec.ErrorMessage,
-		Parameters:     rec.Parameters,
+		SchemaVersion:          SchemaVersion,
+		OperationID:            rec.ID,
+		Kind:                   string(rec.Kind),
+		Target:                 string(rec.Target),
+		Actor:                  string(rec.Actor),
+		State:                  string(rec.State),
+		RequestedClass:         string(rec.RequestedClass),
+		EffectiveClass:         string(rec.EffectiveClass),
+		Fingerprint:            string(rec.Fingerprint),
+		IdempotencyFingerprint: string(rec.IdempotencyFingerprint),
+		IdempotencyKey:         rec.IdempotencyKey,
+		CreatedAt:              rec.CreatedAt.UTC().Format(time.RFC3339Nano),
+		ReceiptID:              string(rec.ReceiptID),
+		ErrorCategory:          rec.ErrorCategory,
+		ErrorMessage:           rec.ErrorMessage,
+		Parameters:             rec.Parameters,
 	}
 	if !rec.AdmittedAt.IsZero() {
 		dto.AdmittedAt = rec.AdmittedAt.UTC().Format(time.RFC3339Nano)

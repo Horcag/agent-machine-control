@@ -50,6 +50,8 @@ type Event struct {
 	ReceiptID      string               `json:"receipt_id,omitempty"`
 	OutcomeStatus  domain.OutcomeStatus `json:"outcome_status,omitempty"`
 	ExitCode       int                  `json:"exit_code,omitempty"`
+	ErrorCategory  string               `json:"error_category,omitempty"`
+	ErrorMessage   string               `json:"error_message,omitempty"`
 	RollbackRef    string               `json:"rollback_ref,omitempty"`
 }
 
@@ -176,6 +178,8 @@ func (s *Store) RecordTerminalOutcome(r domain.Receipt) error {
 		ReceiptID:     string(r.ReceiptID),
 		OutcomeStatus: r.Outcome.Status,
 		ExitCode:      r.Outcome.ExitCode,
+		ErrorCategory: r.Outcome.ErrorCategory,
+		ErrorMessage:  r.Outcome.ErrorMessage,
 		RollbackRef:   r.RollbackRef,
 	}
 

@@ -60,36 +60,41 @@ const (
 	OutcomeFailed OutcomeStatus = "failed"
 	// OutcomeAborted indicates execution was cancelled or aborted before completion.
 	OutcomeAborted OutcomeStatus = "aborted"
+	// OutcomeDenied indicates the operation was denied by policy.
+	OutcomeDenied OutcomeStatus = "denied"
 )
 
 // IsValid checks if the OutcomeStatus is recognized.
 func (os OutcomeStatus) IsValid() bool {
-	return os == OutcomeSuccess || os == OutcomeFailed || os == OutcomeAborted
+	return os == OutcomeSuccess || os == OutcomeFailed || os == OutcomeAborted || os == OutcomeDenied
 }
 
 // ExecutionOutcome records the exit outcome of an executed operation without raw free-form text.
 type ExecutionOutcome struct {
-	Status   OutcomeStatus
-	ExitCode int
+	Status        OutcomeStatus
+	ExitCode      int
+	ErrorCategory string
+	ErrorMessage  string
 }
 
 // Receipt contains the tamper-evident record of an executed operation.
 type Receipt struct {
-	ReceiptID        ReceiptID
-	OperationKind    OperationKind
-	Fingerprint      Fingerprint
-	IdempotencyKey   string
-	Actor            ActorID
-	Target           MachineRef
-	Class            OperationClass
-	EffectiveBackend string
-	StartedAt        time.Time
-	CompletedAt      time.Time
-	Outcome          ExecutionOutcome
-	ObservationType  ObservationType
-	EvidenceRefs     []string
-	RollbackRef      string
-	RedactionStatus  RedactionStatus
+	ReceiptID              ReceiptID
+	OperationKind          OperationKind
+	Fingerprint            Fingerprint
+	IdempotencyFingerprint Fingerprint
+	IdempotencyKey         string
+	Actor                  ActorID
+	Target                 MachineRef
+	Class                  OperationClass
+	EffectiveBackend       string
+	StartedAt              time.Time
+	CompletedAt            time.Time
+	Outcome                ExecutionOutcome
+	ObservationType        ObservationType
+	EvidenceRefs           []string
+	RollbackRef            string
+	RedactionStatus        RedactionStatus
 }
 
 // Validate verifies all security and integrity invariants of the receipt.
@@ -140,6 +145,23 @@ func (r Receipt) validateHeader() error {
 	if r.RedactionStatus == RedactionFailed {
 		return ErrRedactionFailed
 	}
+	if err := r.validateOutcomeFields(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r Receipt) validateOutcomeFields() error {
+	if r.Outcome.Status == OutcomeDenied {
+		if err := ValidateBoundedString(r.Outcome.ErrorCategory, 1, 256, ErrInvalidReceiptID); err != nil {
+			return fmt.Errorf("invalid error category: %w", err)
+		}
+		if err := ValidateBoundedString(r.Outcome.ErrorMessage, 1, 1024, ErrInvalidReceiptID); err != nil {
+			return fmt.Errorf("invalid error message: %w", err)
+		}
+	} else if r.Outcome.ErrorCategory != "" || r.Outcome.ErrorMessage != "" {
+		return fmt.Errorf("%w: error category and message must be empty for non-denied outcomes", ErrInvalidReceiptID)
+	}
 	return nil
 }
 
@@ -154,6 +176,11 @@ func (r Receipt) validateOperationIdentity() error {
 	// Every receipt (observe and mutation) requires a valid operation fingerprint.
 	if err := r.Fingerprint.Validate(); err != nil {
 		return fmt.Errorf("%w: invalid fingerprint in receipt", ErrMissingMutationIdentity)
+	}
+	if r.IdempotencyFingerprint != "" {
+		if err := r.IdempotencyFingerprint.Validate(); err != nil {
+			return fmt.Errorf("%w: invalid idempotency fingerprint in receipt", ErrMissingMutationIdentity)
+		}
 	}
 
 	if r.Class.IsMutation() {

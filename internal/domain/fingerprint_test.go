@@ -257,3 +257,51 @@ func TestFingerprint_Validate(t *testing.T) {
 		})
 	}
 }
+
+func TestComputeIdempotencyFingerprint_Semantics(t *testing.T) {
+	deadline1 := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	deadline2 := deadline1.Add(time.Minute)
+
+	baseOp := domain.Operation{
+		Kind:                domain.OperationKind("machine.start"),
+		Target:              domain.MachineRef("vm-alpha"),
+		Actor:               domain.ActorContext{AuthenticatedCaller: "user:alice", EffectiveActor: "agent:worker"},
+		Reason:              "testing",
+		Deadline:            deadline1,
+		IdempotencyKey:      "idem-123",
+		Classification:      domain.ClassReversibleMutation,
+		EvidenceSensitivity: domain.EvidenceSensitivityStandard,
+		Parameters:          map[string]any{"mode": "test"},
+	}
+
+	fpFull1, _ := domain.ComputeOperationFingerprint(baseOp)
+	fpIdem1, _ := domain.ComputeIdempotencyFingerprint(baseOp)
+
+	// Change deadline
+	opDeadline := baseOp
+	opDeadline.Deadline = deadline2
+
+	fpFull2, _ := domain.ComputeOperationFingerprint(opDeadline)
+	fpIdem2, _ := domain.ComputeIdempotencyFingerprint(opDeadline)
+
+	if fpFull1 == fpFull2 {
+		t.Errorf("expected full fingerprint to change with deadline")
+	}
+	if fpIdem1 != fpIdem2 {
+		t.Errorf("expected idempotency fingerprint to NOT change with deadline")
+	}
+
+	// Change parameter (a bound semantic field)
+	opParam := baseOp
+	opParam.Parameters = map[string]any{"mode": "prod"}
+
+	fpFull3, _ := domain.ComputeOperationFingerprint(opParam)
+	fpIdem3, _ := domain.ComputeIdempotencyFingerprint(opParam)
+
+	if fpFull1 == fpFull3 {
+		t.Errorf("expected full fingerprint to change with parameter")
+	}
+	if fpIdem1 == fpIdem3 {
+		t.Errorf("expected idempotency fingerprint to change with parameter")
+	}
+}

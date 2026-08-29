@@ -193,7 +193,7 @@ func mapClientError(err error, stderr io.Writer, opName string) int {
 
 func mapFailureCategory(category, message string, stderr io.Writer, opName string) int {
 	switch category {
-	case "policy_denied":
+	case "policy_denied", "approval_required":
 		fmt.Fprintf(stderr, "amc %s: policy denied: %s\n", opName, message)
 		return ExitDenied
 	case "timeout":

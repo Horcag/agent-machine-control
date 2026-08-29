@@ -200,7 +200,7 @@ func verifyExpectedReversibleFingerprint(
 		Actor:               actor,
 		Reason:              sc.reason,
 		Deadline:            now.Add(30 * time.Second),
-		IdempotencyKey:      sc.idempKey,
+		IdempotencyKey:      domain.DeriveApprovalIdempotencyKey(sc.idempKey),
 		RequiredCapability:  string(domain.CapabilityMachineStart),
 		RequiredScopes:      []string{"machine:write"},
 		Classification:      domain.ClassReversibleMutation,

@@ -63,16 +63,25 @@ func Evaluate(input EvaluationInput) Decision {
 	// 2. Admission deadline, actor context, and structural validation.
 	fp, dec, ok := validateOperationAndActor(snapshot)
 	if !ok {
+		if dec.EffectiveClass == "" {
+			dec.EffectiveClass = snapshot.Operation.Classification
+		}
 		return dec
 	}
 
 	// 3. Backend capability enforcement.
 	if dec, ok := checkCapabilityRequirements(snapshot); !ok {
+		if dec.EffectiveClass == "" {
+			dec.EffectiveClass = snapshot.Operation.Classification
+		}
 		return dec
 	}
 
 	// 4. Authorization scope and sensitive-evidence scope validation.
 	if dec, ok := checkScopeRequirements(snapshot); !ok {
+		if dec.EffectiveClass == "" {
+			dec.EffectiveClass = snapshot.Operation.Classification
+		}
 		return dec
 	}
 
@@ -87,6 +96,9 @@ func Evaluate(input EvaluationInput) Decision {
 
 	// 6. Mutation prerequisites (audit state).
 	if dec, ok := evaluateMutationPrerequisites(snapshot); !ok {
+		if dec.EffectiveClass == "" {
+			dec.EffectiveClass = snapshot.Operation.Classification
+		}
 		return dec
 	}
 

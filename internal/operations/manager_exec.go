@@ -199,7 +199,7 @@ func (m *Manager) dispatchBackend(ctx context.Context, op domain.Operation, req 
 func sanitizeExecError(err error) (string, string) {
 	var deniedErr *app.PolicyDeniedError
 	if errors.As(err, &deniedErr) {
-		return "policy_denied", deniedErr.Message
+		return string(deniedErr.Reason), deniedErr.Message
 	}
 	return "backend_error", "backend operation failed"
 }

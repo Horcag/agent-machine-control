@@ -96,6 +96,12 @@ func (s *RecoveryService) executeMutation(
 	// 1. Idempotency Check & 2. Audit Writability Check
 	if cached, err := s.checkPreconditions(op); err != nil || cached != nil {
 		if cached != nil {
+			if cached.Outcome.Status == domain.OutcomeDenied {
+				return *cached, &PolicyDeniedError{
+					Reason:  policy.DenialReason(cached.Outcome.ErrorCategory),
+					Message: cached.Outcome.ErrorMessage,
+				}
+			}
 			return *cached, nil
 		}
 		return domain.Receipt{}, err
@@ -106,6 +112,11 @@ func (s *RecoveryService) executeMutation(
 	// 3. Rollback discovery & 4. Policy evaluation & 5. Approval check
 	decision, rollbackRef, err := s.prepareAndAuthorizeMutation(ctx, op, req, now)
 	if err != nil {
+		var deniedErr *PolicyDeniedError
+		if errors.As(err, &deniedErr) {
+			receiptRecord, persistErr := s.persistOutcome(op, fp, decision, now, now, err, rollbackRef)
+			return s.finalizeMutation(receiptRecord, err, persistErr, nil)
+		}
 		return domain.Receipt{}, err
 	}
 
@@ -148,10 +159,10 @@ func (s *RecoveryService) prepareAndAuthorizeMutation(
 	rollbackState, rollbackRef := s.discoverRollback(ctx, op, req.TargetID)
 	decision, err := s.evaluateMutationPolicy(ctx, op, req, now, rollbackState)
 	if err != nil {
-		return policy.Decision{}, "", err
+		return decision, rollbackRef, err
 	}
 	if err := s.verifyApprovalUnconsumed(decision, req); err != nil {
-		return policy.Decision{}, "", err
+		return decision, rollbackRef, err
 	}
 	return decision, rollbackRef, nil
 }
@@ -359,11 +370,20 @@ func (s *RecoveryService) persistOutcome(
 	exitCode := 0
 	effectiveRollback := rollbackRef
 
+	var errCategory, errMsg string
+
 	if runErr != nil {
 		outcomeStatus = domain.OutcomeFailed
 		exitCode = 1
 		effectiveRollback = ""
-		if errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runErr, domain.ErrMissingDeadline) {
+
+		var deniedErr *PolicyDeniedError
+		if errors.As(runErr, &deniedErr) {
+			outcomeStatus = domain.OutcomeDenied
+			exitCode = 7
+			errCategory = string(deniedErr.Reason)
+			errMsg = deniedErr.Message
+		} else if errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runErr, domain.ErrMissingDeadline) {
 			outcomeStatus = domain.OutcomeAborted
 		}
 	}
@@ -373,20 +393,28 @@ func (s *RecoveryService) persistOutcome(
 		return domain.Receipt{}, fmt.Errorf("app: failed to generate receipt ID: %w", err)
 	}
 
+	idFp, err := domain.ComputeIdempotencyFingerprint(op)
+	if err != nil {
+		return domain.Receipt{}, fmt.Errorf("app: failed to compute idempotency fingerprint: %w", err)
+	}
+
 	receiptRecord := domain.Receipt{
-		ReceiptID:        domain.ReceiptID(rcptID),
-		OperationKind:    op.Kind,
-		Fingerprint:      fp,
-		IdempotencyKey:   op.IdempotencyKey,
-		Actor:            op.Actor.EffectiveActor,
-		Target:           op.Target,
-		Class:            decision.EffectiveClass,
-		EffectiveBackend: "hyperv",
-		StartedAt:        startedAt,
-		CompletedAt:      completedAt,
+		ReceiptID:              domain.ReceiptID(rcptID),
+		OperationKind:          op.Kind,
+		Fingerprint:            fp,
+		IdempotencyFingerprint: idFp,
+		IdempotencyKey:         op.IdempotencyKey,
+		Actor:                  op.Actor.EffectiveActor,
+		Target:                 op.Target,
+		Class:                  decision.EffectiveClass,
+		EffectiveBackend:       "hyperv",
+		StartedAt:              startedAt,
+		CompletedAt:            completedAt,
 		Outcome: domain.ExecutionOutcome{
-			Status:   outcomeStatus,
-			ExitCode: exitCode,
+			Status:        outcomeStatus,
+			ExitCode:      exitCode,
+			ErrorCategory: errCategory,
+			ErrorMessage:  errMsg,
 		},
 		ObservationType: domain.ObservationObserved,
 		RollbackRef:     effectiveRollback,
@@ -397,12 +425,17 @@ func (s *RecoveryService) persistOutcome(
 	if s.receiptStore != nil {
 		saveErr = s.receiptStore.Save(receiptRecord)
 	}
+	if saveErr != nil {
+		receiptRecord.ReceiptID = "" // zero/no receipt ID
+		return receiptRecord, saveErr
+	}
+
 	if s.auditStore != nil {
 		auditErr = s.auditStore.RecordTerminalOutcome(receiptRecord)
 	}
 
-	if saveErr != nil || auditErr != nil {
-		return receiptRecord, errors.Join(saveErr, auditErr)
+	if auditErr != nil {
+		return receiptRecord, auditErr
 	}
 
 	return receiptRecord, nil

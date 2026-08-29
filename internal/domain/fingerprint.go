@@ -110,6 +110,10 @@ func canonicalizeScopes(scopes []string) ([]string, error) {
 // ComputeOperationFingerprint calculates the deterministic SHA-256 fingerprint for an operation,
 // binding every security-relevant field.
 func ComputeOperationFingerprint(op Operation) (Fingerprint, error) {
+	return computeFingerprintInternal(op, true)
+}
+
+func computeFingerprintInternal(op Operation, includeDeadline bool) (Fingerprint, error) {
 	if err := validateOperationForFingerprint(op); err != nil {
 		return "", err
 	}
@@ -125,14 +129,20 @@ func ComputeOperationFingerprint(op Operation) (Fingerprint, error) {
 	}
 
 	var buf bytes.Buffer
-	buf.WriteString("AMC_OP_V2\n")
+	if includeDeadline {
+		buf.WriteString("AMC_OP_V2\n")
+	} else {
+		buf.WriteString("AMC_IDEMP_V1\n")
+	}
 	fmt.Fprintf(&buf, "CALLER:%s\n", op.Actor.AuthenticatedCaller)
 	fmt.Fprintf(&buf, "ACTOR:%s\n", op.Actor.EffectiveActor)
 	fmt.Fprintf(&buf, "TARGET:%s\n", op.Target)
 	fmt.Fprintf(&buf, "KIND:%s\n", op.Kind)
 	fmt.Fprintf(&buf, "CLASS:%s\n", op.Classification)
 	fmt.Fprintf(&buf, "REASON:%s\n", op.Reason)
-	fmt.Fprintf(&buf, "DEADLINE:%s\n", op.Deadline.UTC().Format(time.RFC3339Nano))
+	if includeDeadline {
+		fmt.Fprintf(&buf, "DEADLINE:%s\n", op.Deadline.UTC().Format(time.RFC3339Nano))
+	}
 	fmt.Fprintf(&buf, "IDEMPOTENCY:%s\n", op.IdempotencyKey)
 	fmt.Fprintf(&buf, "CAPABILITY:%s\n", op.RequiredCapability)
 	buf.WriteString("SCOPES:")
@@ -147,6 +157,12 @@ func ComputeOperationFingerprint(op Operation) (Fingerprint, error) {
 
 	digest := sha256.Sum256(buf.Bytes())
 	return Fingerprint("sha256:" + hex.EncodeToString(digest[:])), nil
+}
+
+// ComputeIdempotencyFingerprint calculates the canonical idempotency-equivalence fingerprint
+// for an operation, which excludes the execution deadline.
+func ComputeIdempotencyFingerprint(op Operation) (Fingerprint, error) {
+	return computeFingerprintInternal(op, false)
 }
 
 // ComputeFingerprint is a helper that constructs an Operation and computes its fingerprint.

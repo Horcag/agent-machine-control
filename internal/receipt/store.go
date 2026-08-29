@@ -25,45 +25,51 @@ var (
 
 // DTO is the on-disk and machine-readable JSON representation of a domain.Receipt.
 type DTO struct {
-	ReceiptID        string                 `json:"receipt_id"`
-	OperationKind    string                 `json:"operation_kind"`
-	Fingerprint      string                 `json:"fingerprint"`
-	IdempotencyKey   string                 `json:"idempotency_key,omitempty"`
-	Actor            string                 `json:"actor"`
-	Target           string                 `json:"target"`
-	Class            domain.OperationClass  `json:"class"`
-	EffectiveBackend string                 `json:"effective_backend"`
-	StartedAt        string                 `json:"started_at"`
-	CompletedAt      string                 `json:"completed_at"`
-	Outcome          OutcomeDTO             `json:"outcome"`
-	ObservationType  domain.ObservationType `json:"observation_type"`
-	EvidenceRefs     []string               `json:"evidence_refs,omitempty"`
-	RollbackRef      string                 `json:"rollback_ref,omitempty"`
-	RedactionStatus  domain.RedactionStatus `json:"redaction_status"`
+	ReceiptID              string                 `json:"receipt_id"`
+	OperationKind          string                 `json:"operation_kind"`
+	Fingerprint            string                 `json:"fingerprint"`
+	IdempotencyFingerprint string                 `json:"idempotency_fingerprint,omitempty"`
+	IdempotencyKey         string                 `json:"idempotency_key,omitempty"`
+	Actor                  string                 `json:"actor"`
+	Target                 string                 `json:"target"`
+	Class                  domain.OperationClass  `json:"class"`
+	EffectiveBackend       string                 `json:"effective_backend"`
+	StartedAt              string                 `json:"started_at"`
+	CompletedAt            string                 `json:"completed_at"`
+	Outcome                OutcomeDTO             `json:"outcome"`
+	ObservationType        domain.ObservationType `json:"observation_type"`
+	EvidenceRefs           []string               `json:"evidence_refs,omitempty"`
+	RollbackRef            string                 `json:"rollback_ref,omitempty"`
+	RedactionStatus        domain.RedactionStatus `json:"redaction_status"`
 }
 
 // OutcomeDTO is the outcome structure inside DTO.
 type OutcomeDTO struct {
-	Status   domain.OutcomeStatus `json:"status"`
-	ExitCode int                  `json:"exit_code"`
+	Status        domain.OutcomeStatus `json:"status"`
+	ExitCode      int                  `json:"exit_code"`
+	ErrorCategory string               `json:"error_category,omitempty"`
+	ErrorMessage  string               `json:"error_message,omitempty"`
 }
 
 // ConvertToDTO converts a domain.Receipt into a DTO.
 func ConvertToDTO(r domain.Receipt) DTO {
 	return DTO{
-		ReceiptID:        string(r.ReceiptID),
-		OperationKind:    string(r.OperationKind),
-		Fingerprint:      string(r.Fingerprint),
-		IdempotencyKey:   r.IdempotencyKey,
-		Actor:            string(r.Actor),
-		Target:           string(r.Target),
-		Class:            r.Class,
-		EffectiveBackend: r.EffectiveBackend,
-		StartedAt:        r.StartedAt.UTC().Format(time.RFC3339Nano),
-		CompletedAt:      r.CompletedAt.UTC().Format(time.RFC3339Nano),
+		ReceiptID:              string(r.ReceiptID),
+		OperationKind:          string(r.OperationKind),
+		Fingerprint:            string(r.Fingerprint),
+		IdempotencyFingerprint: string(r.IdempotencyFingerprint),
+		IdempotencyKey:         r.IdempotencyKey,
+		Actor:                  string(r.Actor),
+		Target:                 string(r.Target),
+		Class:                  r.Class,
+		EffectiveBackend:       r.EffectiveBackend,
+		StartedAt:              r.StartedAt.UTC().Format(time.RFC3339Nano),
+		CompletedAt:            r.CompletedAt.UTC().Format(time.RFC3339Nano),
 		Outcome: OutcomeDTO{
-			Status:   r.Outcome.Status,
-			ExitCode: r.Outcome.ExitCode,
+			Status:        r.Outcome.Status,
+			ExitCode:      r.Outcome.ExitCode,
+			ErrorCategory: r.Outcome.ErrorCategory,
+			ErrorMessage:  r.Outcome.ErrorMessage,
 		},
 		ObservationType: r.ObservationType,
 		EvidenceRefs:    r.EvidenceRefs,
@@ -91,19 +97,22 @@ func ConvertFromDTO(dto DTO) (domain.Receipt, error) {
 	}
 
 	return domain.Receipt{
-		ReceiptID:        domain.ReceiptID(dto.ReceiptID),
-		OperationKind:    domain.OperationKind(dto.OperationKind),
-		Fingerprint:      domain.Fingerprint(dto.Fingerprint),
-		IdempotencyKey:   dto.IdempotencyKey,
-		Actor:            domain.ActorID(dto.Actor),
-		Target:           domain.MachineRef(dto.Target),
-		Class:            dto.Class,
-		EffectiveBackend: dto.EffectiveBackend,
-		StartedAt:        startedAt,
-		CompletedAt:      completedAt,
+		ReceiptID:              domain.ReceiptID(dto.ReceiptID),
+		OperationKind:          domain.OperationKind(dto.OperationKind),
+		Fingerprint:            domain.Fingerprint(dto.Fingerprint),
+		IdempotencyFingerprint: domain.Fingerprint(dto.IdempotencyFingerprint),
+		IdempotencyKey:         dto.IdempotencyKey,
+		Actor:                  domain.ActorID(dto.Actor),
+		Target:                 domain.MachineRef(dto.Target),
+		Class:                  dto.Class,
+		EffectiveBackend:       dto.EffectiveBackend,
+		StartedAt:              startedAt,
+		CompletedAt:            completedAt,
 		Outcome: domain.ExecutionOutcome{
-			Status:   dto.Outcome.Status,
-			ExitCode: dto.Outcome.ExitCode,
+			Status:        dto.Outcome.Status,
+			ExitCode:      dto.Outcome.ExitCode,
+			ErrorCategory: dto.Outcome.ErrorCategory,
+			ErrorMessage:  dto.Outcome.ErrorMessage,
 		},
 		ObservationType: dto.ObservationType,
 		EvidenceRefs:    dto.EvidenceRefs,
@@ -249,6 +258,26 @@ func (s *Store) LookupIdempotency(op domain.Operation) (*domain.Receipt, error) 
 	return nil, nil
 }
 
+func matchReceipt(rcpt domain.Receipt, op domain.Operation, fp domain.Fingerprint) (bool, error) {
+	if rcpt.IdempotencyKey != op.IdempotencyKey {
+		return false, nil
+	}
+	var match bool
+	if rcpt.IdempotencyFingerprint == "" {
+		match = (rcpt.Fingerprint == fp)
+	} else {
+		idFp, err := domain.ComputeIdempotencyFingerprint(op)
+		if err != nil {
+			return false, fmt.Errorf("receipt: failed to compute idempotency fingerprint: %w", err)
+		}
+		match = (rcpt.IdempotencyFingerprint == idFp)
+	}
+	if rcpt.Actor != op.Actor.EffectiveActor || rcpt.Target != op.Target || !match {
+		return false, ErrIdempotencyCollision
+	}
+	return true, nil
+}
+
 func (s *Store) inspectReceiptFile(filePath string, op domain.Operation, fp domain.Fingerprint) (bool, *domain.Receipt, error) {
 	fi, err := os.Lstat(filePath)
 	if err != nil {
@@ -297,13 +326,12 @@ func (s *Store) inspectReceiptFile(filePath string, op domain.Operation, fp doma
 		return false, nil, fmt.Errorf("receipt: cached receipt validation failed in %s: %w", filePath, err)
 	}
 
-	if receipt.IdempotencyKey != op.IdempotencyKey {
-		return false, nil, nil
+	matched, err := matchReceipt(receipt, op, fp)
+	if err != nil {
+		return false, nil, err
 	}
-
-	// Found matching key: verify exact match or collision
-	if receipt.Actor != op.Actor.EffectiveActor || receipt.Target != op.Target || receipt.Fingerprint != fp {
-		return false, nil, ErrIdempotencyCollision
+	if !matched {
+		return false, nil, nil
 	}
 
 	return true, &receipt, nil

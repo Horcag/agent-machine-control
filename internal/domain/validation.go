@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"unicode"
@@ -55,6 +57,16 @@ func ValidateIdempotencyKey(s string) error {
 		return ErrMissingIdempotencyKey
 	}
 	return ValidateBoundedString(s, MinIdempotencyKeyLength, MaxIdempotencyKeyLength, ErrInvalidIdempotencyKey)
+}
+
+// DeriveApprovalIdempotencyKey creates a deterministic derived key for an approved retry attempt.
+func DeriveApprovalIdempotencyKey(originalKey string) string {
+	if originalKey == "" {
+		return ""
+	}
+	// Derive a safe collision-resistant bounded key
+	hash := sha256.Sum256([]byte(originalKey + "\x00approved"))
+	return hex.EncodeToString(hash[:])
 }
 
 // ValidateReason checks that an operation reason is valid and bounded.

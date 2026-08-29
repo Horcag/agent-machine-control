@@ -86,16 +86,17 @@ func ensureSyntheticReceipt(
 		return "", err
 	}
 	rcpt := domain.Receipt{
-		ReceiptID:        domain.ReceiptID(generated),
-		OperationKind:    rec.Kind,
-		Fingerprint:      rec.Fingerprint,
-		IdempotencyKey:   rec.IdempotencyKey,
-		Actor:            rec.Actor,
-		Target:           rec.Target,
-		Class:            rec.EffectiveClass,
-		EffectiveBackend: "hyperv",
-		StartedAt:        rec.CreatedAt,
-		CompletedAt:      now,
+		ReceiptID:              domain.ReceiptID(generated),
+		OperationKind:          rec.Kind,
+		Fingerprint:            rec.Fingerprint,
+		IdempotencyFingerprint: rec.IdempotencyFingerprint,
+		IdempotencyKey:         rec.IdempotencyKey,
+		Actor:                  rec.Actor,
+		Target:                 rec.Target,
+		Class:                  rec.EffectiveClass,
+		EffectiveBackend:       "hyperv",
+		StartedAt:              rec.CreatedAt,
+		CompletedAt:            now,
 		Outcome: domain.ExecutionOutcome{
 			Status:   domain.OutcomeAborted,
 			ExitCode: 1,

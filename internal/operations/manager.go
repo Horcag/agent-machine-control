@@ -143,21 +143,27 @@ func (m *Manager) initializeNewRecord(ctx context.Context, op domain.Operation, 
 		return nil, nil, err
 	}
 
+	idFp, err := domain.ComputeIdempotencyFingerprint(op)
+	if err != nil {
+		return nil, nil, fmt.Errorf("operations: failed to compute idempotency fingerprint: %w", err)
+	}
+
 	now := m.now()
 	rec := &domain.OperationRecord{
-		SchemaVersion:  "1",
-		ID:             opID,
-		Actor:          op.Actor.EffectiveActor,
-		Target:         op.Target,
-		Kind:           op.Kind,
-		RequestedClass: op.Classification,
-		EffectiveClass: op.Classification,
-		Fingerprint:    fp,
-		IdempotencyKey: op.IdempotencyKey,
-		Deadline:       op.Deadline,
-		State:          domain.OpStatePending,
-		CreatedAt:      now,
-		Parameters:     domain.DeepCloneMap(op.Parameters),
+		SchemaVersion:          "1",
+		ID:                     opID,
+		Actor:                  op.Actor.EffectiveActor,
+		Target:                 op.Target,
+		Kind:                   op.Kind,
+		RequestedClass:         op.Classification,
+		EffectiveClass:         op.Classification,
+		Fingerprint:            fp,
+		IdempotencyFingerprint: idFp,
+		IdempotencyKey:         op.IdempotencyKey,
+		Deadline:               op.Deadline,
+		State:                  domain.OpStatePending,
+		CreatedAt:              now,
+		Parameters:             domain.DeepCloneMap(op.Parameters),
 	}
 
 	if err := SaveRecord(m.dir, *rec); err != nil {
@@ -181,12 +187,13 @@ func (m *Manager) initializeNewRecord(ctx context.Context, op domain.Operation, 
 
 	if op.IdempotencyKey != "" {
 		m.inFlight[op.IdempotencyKey] = &inFlightEntry{
-			opID:        opID,
-			fingerprint: fp,
-			target:      op.Target,
-			kind:        op.Kind,
-			actor:       op.Actor.EffectiveActor,
-			record:      rec,
+			opID:                   opID,
+			fingerprint:            fp,
+			idempotencyFingerprint: idFp,
+			target:                 op.Target,
+			kind:                   op.Kind,
+			actor:                  op.Actor.EffectiveActor,
+			record:                 rec,
 		}
 	}
 
@@ -354,9 +361,21 @@ func (m *Manager) Cancel(opID string, caller domain.ActorContext, _ string) erro
 	return nil
 }
 
+func matchIdempotency(actual, recFp, opFp, opIDFp domain.Fingerprint) bool {
+	if actual == "" {
+		return recFp == opFp
+	}
+	return actual == opIDFp
+}
+
 func (m *Manager) checkInFlightAndDisk(op domain.Operation, fp domain.Fingerprint) (*domain.OperationRecord, bool, error) {
+	idFp, err := domain.ComputeIdempotencyFingerprint(op)
+	if err != nil {
+		return nil, false, err
+	}
 	if existing, ok := m.inFlight[op.IdempotencyKey]; ok {
-		if existing.fingerprint == fp && existing.target == op.Target && existing.kind == op.Kind && existing.actor == op.Actor.EffectiveActor {
+		if matchIdempotency(existing.idempotencyFingerprint, existing.fingerprint, fp, idFp) &&
+			existing.target == op.Target && existing.kind == op.Kind && existing.actor == op.Actor.EffectiveActor {
 			recCopy := existing.record.Clone()
 			return &recCopy, true, nil
 		}
@@ -370,7 +389,8 @@ func (m *Manager) checkInFlightAndDisk(op domain.Operation, fp domain.Fingerprin
 
 	for _, rec := range existingRecords {
 		if rec.IdempotencyKey == op.IdempotencyKey {
-			if rec.Fingerprint == fp && rec.Target == op.Target && rec.Kind == op.Kind && rec.Actor == op.Actor.EffectiveActor {
+			if matchIdempotency(rec.IdempotencyFingerprint, rec.Fingerprint, fp, idFp) &&
+				rec.Target == op.Target && rec.Kind == op.Kind && rec.Actor == op.Actor.EffectiveActor {
 				recCopy := rec.Clone()
 				return &recCopy, true, nil
 			}
@@ -378,47 +398,6 @@ func (m *Manager) checkInFlightAndDisk(op domain.Operation, fp domain.Fingerprin
 		}
 	}
 	return nil, false, nil
-}
-
-func (m *Manager) checkCachedReceipt(op domain.Operation) (*domain.OperationRecord, bool, error) {
-	if m.receiptStore == nil {
-		return nil, false, nil
-	}
-	cachedRcpt, rcptErr := m.receiptStore.LookupIdempotency(op)
-	if rcptErr != nil {
-		if errors.Is(rcptErr, receipt.ErrIdempotencyCollision) {
-			return nil, false, ErrOperationConflict
-		}
-		return nil, false, rcptErr
-	}
-	if cachedRcpt == nil {
-		return nil, false, nil
-	}
-	fp, fpErr := op.Fingerprint()
-	if fpErr != nil {
-		return nil, false, fpErr
-	}
-	if cachedRcpt.Actor != op.Actor.EffectiveActor || cachedRcpt.Target != op.Target || cachedRcpt.Fingerprint != fp {
-		return nil, false, ErrOperationConflict
-	}
-	rec := &domain.OperationRecord{
-		SchemaVersion:  "1",
-		ID:             fmt.Sprintf("op-cached-%s", cachedRcpt.ReceiptID),
-		Actor:          cachedRcpt.Actor,
-		Target:         cachedRcpt.Target,
-		Kind:           cachedRcpt.OperationKind,
-		RequestedClass: cachedRcpt.Class,
-		EffectiveClass: cachedRcpt.Class,
-		Fingerprint:    cachedRcpt.Fingerprint,
-		IdempotencyKey: cachedRcpt.IdempotencyKey,
-		Deadline:       cachedRcpt.CompletedAt,
-		State:          domain.OpStateCompleted,
-		CreatedAt:      cachedRcpt.StartedAt,
-		CompletedAt:    cachedRcpt.CompletedAt,
-		ReceiptID:      cachedRcpt.ReceiptID,
-		Parameters:     op.Parameters,
-	}
-	return rec, true, nil
 }
 
 func generateOpID() (string, error) {

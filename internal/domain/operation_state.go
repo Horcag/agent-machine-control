@@ -68,26 +68,27 @@ func ValidateStateTransition(from, to OperationState) error {
 
 // OperationRecord represents the durable, crash-safe state of an operation on disk.
 type OperationRecord struct {
-	SchemaVersion  string         `json:"schema_version"`
-	ID             string         `json:"id"`
-	Actor          ActorID        `json:"actor"`
-	Target         MachineRef     `json:"target"`
-	Kind           OperationKind  `json:"kind"`
-	RequestedClass OperationClass `json:"requested_class"`
-	EffectiveClass OperationClass `json:"effective_class"`
-	Fingerprint    Fingerprint    `json:"fingerprint"`
-	IdempotencyKey string         `json:"idempotency_key,omitempty"`
-	Deadline       time.Time      `json:"deadline"`
-	State          OperationState `json:"state"`
-	CreatedAt      time.Time      `json:"created_at"`
-	AdmittedAt     time.Time      `json:"admitted_at"`
-	RunningAt      time.Time      `json:"running_at"`
-	CompletedAt    time.Time      `json:"completed_at"`
-	LastEventSeq   uint64         `json:"last_event_seq,omitempty"`
-	ReceiptID      ReceiptID      `json:"receipt_id,omitempty"`
-	ErrorCategory  string         `json:"error_category,omitempty"`
-	ErrorMessage   string         `json:"error_message,omitempty"`
-	Parameters     map[string]any `json:"parameters,omitempty"`
+	SchemaVersion          string         `json:"schema_version"`
+	ID                     string         `json:"id"`
+	Actor                  ActorID        `json:"actor"`
+	Target                 MachineRef     `json:"target"`
+	Kind                   OperationKind  `json:"kind"`
+	RequestedClass         OperationClass `json:"requested_class"`
+	EffectiveClass         OperationClass `json:"effective_class"`
+	Fingerprint            Fingerprint    `json:"fingerprint"`
+	IdempotencyFingerprint Fingerprint    `json:"idempotency_fingerprint,omitempty"`
+	IdempotencyKey         string         `json:"idempotency_key,omitempty"`
+	Deadline               time.Time      `json:"deadline"`
+	State                  OperationState `json:"state"`
+	CreatedAt              time.Time      `json:"created_at"`
+	AdmittedAt             time.Time      `json:"admitted_at"`
+	RunningAt              time.Time      `json:"running_at"`
+	CompletedAt            time.Time      `json:"completed_at"`
+	LastEventSeq           uint64         `json:"last_event_seq,omitempty"`
+	ReceiptID              ReceiptID      `json:"receipt_id,omitempty"`
+	ErrorCategory          string         `json:"error_category,omitempty"`
+	ErrorMessage           string         `json:"error_message,omitempty"`
+	Parameters             map[string]any `json:"parameters,omitempty"`
 }
 
 // Validate verifies that the OperationRecord invariants hold.

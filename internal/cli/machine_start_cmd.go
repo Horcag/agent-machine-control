@@ -80,9 +80,11 @@ func runMachineStart(
 	var deniedErr *app.PolicyDeniedError
 	if errors.As(err, &deniedErr) && deniedErr.Reason == policy.DenialApprovalRequired && common.Approval == nil && prompter != nil {
 		promptMsg := fmt.Sprintf("Destructive operation machine.start on %s requires confirmation (no rollback checkpoint found)", targetID)
-		if promptedAppr, dl, ok := promptForApproval(prompter, nowFn, actor, targetID, "machine.start", domain.CapabilityMachineStart, domain.ClassReversibleMutation, common.Reason, common.IdempotencyKey, common.Timeout, nil, promptMsg); ok {
+		newIdempotencyKey := domain.DeriveApprovalIdempotencyKey(common.IdempotencyKey)
+		if promptedAppr, dl, ok := promptForApproval(prompter, nowFn, actor, targetID, "machine.start", domain.CapabilityMachineStart, domain.ClassReversibleMutation, common.Reason, newIdempotencyKey, common.Timeout, nil, promptMsg); ok {
 			req.Approval = promptedAppr
 			req.Deadline = dl
+			req.IdempotencyKey = newIdempotencyKey
 			rcpt, obs, err = recoverySvc.StartMachine(ctx, req)
 		}
 	}

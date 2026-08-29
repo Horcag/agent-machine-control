@@ -493,3 +493,65 @@ func TestStore_StrictJSON_TrailingData(t *testing.T) {
 		t.Fatalf("expected error for trailing scalar in receipt file")
 	}
 }
+
+func TestStore_LookupIdempotency_LegacyFallback(t *testing.T) {
+	dir := t.TempDir()
+	store := receipt.NewStore(dir)
+
+	deadline := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	op := domain.Operation{
+		Kind:                domain.OperationKind("machine.start"),
+		Target:              domain.MachineRef("vm-alpha"),
+		Actor:               domain.ActorContext{AuthenticatedCaller: "user:alice", EffectiveActor: "user:alice"},
+		Reason:              "testing",
+		Deadline:            deadline,
+		IdempotencyKey:      "legacy-idem-1",
+		Classification:      domain.ClassReversibleMutation,
+		EvidenceSensitivity: domain.EvidenceSensitivityStandard,
+	}
+
+	fp, _ := domain.ComputeOperationFingerprint(op)
+	// Do NOT compute IdempotencyFingerprint to simulate a legacy record
+	rcpt := domain.Receipt{
+		ReceiptID:        "rcpt-0123456789abcdef0123456789abcdef",
+		OperationKind:    op.Kind,
+		Fingerprint:      fp,
+		IdempotencyKey:   op.IdempotencyKey,
+		Actor:            op.Actor.EffectiveActor,
+		Target:           op.Target,
+		Class:            op.Classification,
+		EffectiveBackend: "hyperv",
+		StartedAt:        time.Now().Add(-time.Minute),
+		CompletedAt:      time.Now(),
+		Outcome: domain.ExecutionOutcome{
+			Status:   domain.OutcomeSuccess,
+			ExitCode: 0,
+		},
+		ObservationType: domain.ObservationObserved,
+		RedactionStatus: domain.RedactionApplied,
+		RollbackRef:     "chk-12345678-1234-1234-1234-123456789012",
+	}
+	if err := store.Save(rcpt); err != nil {
+		t.Fatalf("failed to save legacy receipt: %v", err)
+	}
+
+	// Lookup with same deadline (same full fingerprint) -> SUCCESS
+	matched, err := store.LookupIdempotency(op)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if matched == nil {
+		t.Fatalf("expected to find legacy receipt")
+	}
+	if matched.ReceiptID != rcpt.ReceiptID {
+		t.Fatalf("expected matched receipt to equal legacy receipt")
+	}
+
+	// Lookup with different deadline (different full fingerprint) -> COLLISION (fails closed)
+	opNewDeadline := op
+	opNewDeadline.Deadline = deadline.Add(time.Minute)
+	matched2, err2 := store.LookupIdempotency(opNewDeadline)
+	if !errors.Is(err2, receipt.ErrIdempotencyCollision) {
+		t.Fatalf("expected ErrIdempotencyCollision for legacy fallback with different deadline, got matched=%v err=%v", matched2, err2)
+	}
+}

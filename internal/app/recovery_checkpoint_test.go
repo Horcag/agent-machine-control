@@ -37,7 +37,7 @@ func TestRecoveryService_CreateCheckpoint_RequiresApproval(t *testing.T) {
 		Actor:               actor,
 		Reason:              "checkpoint create",
 		Deadline:            now.Add(30 * time.Second),
-		IdempotencyKey:      "key-snap-create",
+		IdempotencyKey:      "key-snap-create-2",
 		RequiredCapability:  domain.CapabilityCheckpointCreate,
 		RequiredScopes:      []string{"machine:write"},
 		Classification:      domain.ClassDestructivePrivileged,
@@ -47,17 +47,18 @@ func TestRecoveryService_CreateCheckpoint_RequiresApproval(t *testing.T) {
 	fp, _ := op.Fingerprint()
 
 	appr := domain.Approval{
-		ID:              "app-snap-1",
+		ID:              "app-create-1",
 		Actor:           actor.EffectiveActor,
 		Target:          domain.MachineRef(targetID),
 		AuthorizedClass: domain.ClassDestructivePrivileged,
 		Fingerprint:     fp,
-		IdempotencyKey:  "key-snap-create",
+		IdempotencyKey:  "key-snap-create-2",
 		IssuedAt:        now,
 		ExpiresAt:       now.Add(time.Hour),
 	}
 	req.Deadline = op.Deadline
 	req.Approval = &appr
+	req.IdempotencyKey = "key-snap-create-2"
 
 	rcpt, snap, err := svc.CreateCheckpoint(context.Background(), req, "my-checkpoint")
 	if err != nil {
@@ -100,7 +101,7 @@ func TestRecoveryService_RestoreCheckpoint_RequiresApproval(t *testing.T) {
 		Actor:               actor,
 		Reason:              "checkpoint restore",
 		Deadline:            now.Add(30 * time.Second),
-		IdempotencyKey:      "key-snap-restore",
+		IdempotencyKey:      "key-snap-restore-2",
 		RequiredCapability:  domain.CapabilityCheckpointRestore,
 		RequiredScopes:      []string{"machine:write"},
 		Classification:      domain.ClassDestructivePrivileged,
@@ -115,12 +116,13 @@ func TestRecoveryService_RestoreCheckpoint_RequiresApproval(t *testing.T) {
 		Target:          domain.MachineRef(targetID),
 		AuthorizedClass: domain.ClassDestructivePrivileged,
 		Fingerprint:     fp,
-		IdempotencyKey:  "key-snap-restore",
+		IdempotencyKey:  "key-snap-restore-2",
 		IssuedAt:        now,
 		ExpiresAt:       now.Add(time.Hour),
 	}
 	req.Deadline = op.Deadline
 	req.Approval = &appr
+	req.IdempotencyKey = "key-snap-restore-2"
 
 	rcpt, obs, err := svc.RestoreCheckpoint(context.Background(), req, snapID)
 	if err != nil {
