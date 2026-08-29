@@ -45,6 +45,7 @@ The public API and command surface are not stable before `v0.1.0`.
 - [Architecture decision](docs/adr/0001-core-cli-mcp-architecture.md)
 - [Language and toolchain decision](docs/adr/0002-language-and-toolchain.md)
 - [Public versus local data boundary](docs/public-private-boundary.md)
+- [Threat model](docs/threat-model.md)
 - [Development guide](docs/development.md)
 - [Quality system](docs/quality.md)
 - [Testing strategy](docs/testing.md)
