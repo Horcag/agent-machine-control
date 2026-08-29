@@ -4,8 +4,9 @@ Agent Machine Control is a local-first control plane for virtual machines that g
 CLI automation, and MCP-capable agents the same policy-enforced operations.
 
 > [!WARNING]
-> This project is pre-alpha. The current binaries only expose build information and do not
-> control machines yet. Do not use unreleased development builds on production systems.
+> This project is pre-alpha. The current binaries implement read-only discovery; mutations,
+> daemon/MCP/session/console control are not yet implemented. Do not use unreleased
+> development builds on production systems.
 
 ## Design goals
 
@@ -27,6 +28,56 @@ capabilities are identical.
 | `amc` | Human- and agent-friendly CLI, including local `--direct` recovery mode. |
 | `amcd` | Long-lived sessions, events, policy, audit, and operator UI. |
 | `amc-mcp` | Thin stdio and Streamable HTTP adapter over the shared application core. |
+
+## Implemented commands
+
+`amc` implements three read-only observation commands for local Hyper-V discovery:
+
+```sh
+# Check Hyper-V and host readiness
+amc doctor
+amc doctor --json
+
+# List discovered virtual machines
+amc machine list
+amc machine list --json
+
+# Inspect a single virtual machine by GUID
+amc machine inspect c4a523d4-6b99-4d62-a5e2-4752c0f20001
+amc machine inspect c4a523d4-6b99-4d62-a5e2-4752c0f20001 --json
+```
+
+### JSON mode
+
+Every command supports `--json` for machine-readable automation. Output envelopes conform to schema version `1`, emitting sorted arrays for `capabilities`, `machines`, `network_adapters`, and `ip_addresses`.
+
+### VM-GUID inspect requirement
+
+The `amc machine inspect <guid>` command requires a valid 36-character Hyper-V VM GUID (for example `c4a523d4-6b99-4d62-a5e2-4752c0f20001`). Non-GUID inputs or missing arguments are rejected before invoking the provider.
+
+### Hyper-V and PowerShell prerequisites
+
+Observation queries require `powershell.exe` in `PATH` and the Windows Hyper-V PowerShell module (`Hyper-V`).
+
+- **Windows**: `powershell.exe` is available by default on Windows systems.
+- **WSL interop**: When running inside WSL, WSL interop discovers `powershell.exe` in the host Windows PATH (for example `/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe`) and queries the host Hyper-V instance.
+
+### Exit categories and codes
+
+`amc` uses deterministic process exit codes:
+
+| Code | Name | Description |
+| --- | --- | --- |
+| `0` | `ExitSuccess` | Normal successful completion. |
+| `2` | `ExitUsage` | Incorrect command invocation, missing arguments, or invalid flags. |
+| `3` | `ExitNotFound` | The requested virtual machine GUID was not found. |
+| `4` | `ExitBackendUnavailable` | PowerShell, the Hyper-V module, or host management is unreachable or denied. |
+| `5` | `ExitMalformedProvider` | The provider returned corrupt, invalid, or oversized data. |
+| `6` | `ExitTimeout` | The operation exceeded its configured deadline. |
+
+### Read-only and pre-alpha boundary
+
+All implemented operations are strictly read-only observation commands (`host.diagnostics`, `machine.list`, `machine.inspect`, `network_adapter.observe`). Mutating, interactive, console, PTY, and sidecar operations are not supported in pre-alpha builds.
 
 ## Build the bootstrap
 

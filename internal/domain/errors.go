@@ -45,4 +45,13 @@ var (
 	ErrInvalidRollbackRef       = errors.New("domain: invalid rollback reference")
 	ErrInvalidEvidenceRef       = errors.New("domain: invalid evidence reference")
 	ErrInvalidBackendID         = errors.New("domain: invalid backend identifier")
+
+	// Machine observation errors.
+	ErrInvalidMachineID            = errors.New("domain: invalid machine identifier/GUID")
+	ErrInvalidMachineName          = errors.New("domain: invalid machine display name")
+	ErrInvalidLifecycleState       = errors.New("domain: invalid machine lifecycle state")
+	ErrInvalidMetricValue          = errors.New("domain: metric value cannot be negative")
+	ErrDuplicateMachineID          = errors.New("domain: duplicate machine identifier in observation set")
+	ErrInvalidNetworkAdapter       = errors.New("domain: invalid network adapter observation")
+	ErrInvalidObservationTimestamp = errors.New("domain: machine observation timestamp cannot be zero")
 )
