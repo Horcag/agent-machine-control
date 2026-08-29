@@ -7,6 +7,7 @@ config:
 globs:
   - "**/*.md"
   - "!kanban/**"
+  - "!.agent-work/**"
   - "!.codex/**"
   - "!.code-review-graph/**"
   - "!dist/**"
