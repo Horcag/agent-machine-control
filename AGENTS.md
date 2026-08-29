@@ -27,8 +27,17 @@ privileged boundary.
 
 - Go is the primary language. Use the standard library before adding dependencies.
 - Public code and documentation are written in English.
-- Add tests with behavior changes and run `make check`; use `make test-race` for concurrent code.
+- Add tests with behavior changes. Use `make quick` while iterating, `make check` before commit,
+  and `make quality` before review.
 - Keep changes focused. Do not add speculative interfaces or cross-backend abstractions before
   a second concrete backend needs them.
 - Use Conventional Commit subjects. Do not add AI attribution or generated-by trailers.
 - Local `kanban/`, `.codex/`, `state/`, and evidence directories are intentionally ignored.
+
+## Parallel work and review
+
+- Follow `docs/agent-workflow.md`: one claimed task, one primary owner, one worktree.
+- Do not share an uncommitted checkout between writers or edit another task's owned files.
+- Use the repo-local code-review-graph MCP to narrow impact, then verify source and tests.
+- Authors do not self-approve. Boundary changes require independent code/security and architecture
+  review evidence before merge-ready status.

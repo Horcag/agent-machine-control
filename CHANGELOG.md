@@ -14,5 +14,9 @@ begin.
 - Shared-core architecture for CLI, daemon, MCP, and operator UI surfaces.
 - Go build, test, lint, security scanning, and draft release foundations.
 - Local-only kanban workflow and explicit public/private data boundary.
+- Shared executable bootstrap with contract tests.
+- Objective duplication, complexity, maintainability, vulnerability, secret, workflow, and
+  documentation gates.
+- Pinned local code-review graph MCP and autonomous parallel-agent workflow.
 
 [Unreleased]: https://github.com/Horcag/agent-machine-control/commits/main

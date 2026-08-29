@@ -1,11 +1,6 @@
 version: 2
 project_name: agent-machine-control
 
-before:
-  hooks:
-    - go mod tidy
-    - go test ./...
-
 builds:
   - id: amc
     main: ./cmd/amc

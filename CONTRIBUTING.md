@@ -25,7 +25,8 @@ Requirements:
 git clone https://github.com/Horcag/agent-machine-control.git
 cd agent-machine-control
 make check
-make test-race
+make quality
+make hooks
 ```
 
 ## Pull requests
@@ -37,6 +38,13 @@ make test-race
 - Do not add dependencies without explaining maintenance, licensing, supply-chain, and binary-
   size costs.
 - Use Conventional Commit subjects such as `feat(cli): add machine inspection`.
+
+Use `make quick` for the edit loop, `make check` before committing, and `make quality` before
+requesting review. `make hooks` installs the pinned Lefthook configuration; hooks are convenience,
+not a replacement for CI.
+
+Parallel contributors use separate Git worktrees and non-overlapping ownership as described in
+[`docs/agent-workflow.md`](docs/agent-workflow.md). Authors must not self-approve their changes.
 
 All pull requests require review. Passing CI is necessary but does not replace review or live
 acceptance for Hyper-V, Windows desktop, installer, and secure-desktop claims.

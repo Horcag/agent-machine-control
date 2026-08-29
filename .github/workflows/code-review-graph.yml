@@ -1,0 +1,43 @@
+name: Code review graph
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  impact-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install pinned graph analyzer
+        run: |
+          . ./quality/tool-versions.env
+          python -m pip install --disable-pip-version-check \
+            "code-review-graph==${CODE_REVIEW_GRAPH_VERSION}"
+      - name: Build graph and analyze the pull request
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git fetch --no-tags --depth=1 origin \
+            "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          code-review-graph build --repo .
+          code-review-graph detect-changes \
+            --repo . \
+            --base "origin/${BASE_REF}" \
+            --brief | tee "${RUNNER_TEMP}/code-review-graph.txt"
+          {
+            echo '## Code review graph'
+            echo '```text'
+            cat "${RUNNER_TEMP}/code-review-graph.txt"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"

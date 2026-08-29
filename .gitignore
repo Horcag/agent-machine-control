@@ -2,6 +2,7 @@
 /kanban/
 /.codex/
 /.agent-work/
+/.code-review-graph/
 /local/
 /state/
 
@@ -46,6 +47,7 @@ go.work
 go.work.sum
 /.cache/
 /.tmp/
+/lefthook-local.yml
 
 # Optional web UI dependencies and output
 /web/node_modules/

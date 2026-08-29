@@ -1,0 +1,39 @@
+min_version: 2.1.12
+
+pre-commit:
+  jobs:
+    - name: format staged Go files
+      glob: "*.go"
+      run: gofmt -w {staged_files}
+      stage_fixed: true
+    - name: reject whitespace errors
+      run: git diff --cached --check
+    - name: verify module files
+      glob: "*.go"
+      run: go mod tidy -diff && go mod verify
+    - name: run unit tests
+      glob: "*.go"
+      run: go test ./...
+    - name: scan staged history for secrets when available
+      run: |
+        if command -v gitleaks >/dev/null 2>&1; then
+          gitleaks git --staged --redact --no-banner
+        else
+          echo "gitleaks is not installed; CI will run the required secret scan"
+        fi
+
+pre-push:
+  parallel: true
+  jobs:
+    - name: full Go quality gate
+      run: make check
+    - name: race detector
+      run: make test-race
+    - name: GitHub Actions syntax
+      run: make actionlint
+    - name: vulnerability scan
+      run: make vuln
+    - name: repository secret scan
+      run: make secrets
+    - name: documentation lint
+      run: make docs

@@ -46,6 +46,9 @@ The public API and command surface are not stable before `v0.1.0`.
 - [Language and toolchain decision](docs/adr/0002-language-and-toolchain.md)
 - [Public versus local data boundary](docs/public-private-boundary.md)
 - [Development guide](docs/development.md)
+- [Quality system](docs/quality.md)
+- [Autonomous and parallel agent workflow](docs/agent-workflow.md)
+- [Recommended repository settings](docs/repository-settings.md)
 - [Open-source baseline research](docs/research/open-source-baseline.md)
 - [Roadmap](ROADMAP.md)
 
@@ -57,3 +60,6 @@ unredacted automation transcripts.
 
 Contributions are welcome under the [Apache License 2.0](LICENSE). Start with
 [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+The repository includes an optional pinned code-review-graph MCP configuration. Its local graph,
+Kanban board, agent handoffs, and runtime evidence are ignored and never published by default.

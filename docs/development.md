@@ -10,11 +10,16 @@ The baseline commands intentionally use ordinary Go tooling so contributors are 
 install a project-specific task runner.
 
 ```sh
+make quick
 make check
-make test-race
-golangci-lint run
+make quality
+make hooks
 goreleaser release --snapshot --clean
 ```
+
+The pinned analysis commands run through `go run`, `npx`, or `uvx`; the first invocation downloads
+tooling and later invocations use local caches. Override a tool command only when reproducing the
+same pinned version. CI remains the reference environment.
 
 On Windows, PowerShell-specific tests must use generated fixtures and disposable VMs. A successful
 Linux cross-build does not prove Hyper-V, ConPTY, UI Automation, named-pipe, or secure-desktop
@@ -28,6 +33,11 @@ Pin GitHub Actions to immutable commits and let Dependabot propose reviewed upda
 
 The planned MCP dependency is the official Go SDK. The planned first optional CLI dependency is
 Cobra only if the nested command tree becomes cumbersome with the standard `flag` package.
+
+The repo-local development MCP is `code-review-graph==2.3.8`, configured in `.mcp.json`. It is an
+analysis aid with an explicit read-oriented tool allowlist and is not linked into product binaries.
+Serena and additional code-analysis MCPs are deliberately deferred until a measured gap justifies
+overlapping tool and memory surfaces.
 
 ## Tests
 

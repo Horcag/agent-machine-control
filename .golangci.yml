@@ -8,18 +8,31 @@ linters:
   default: none
   enable:
     - bodyclose
+    - cyclop
+    - dupl
     - errcheck
     - gocritic
     - gosec
     - govet
     - ineffassign
     - makezero
+    - maintidx
     - misspell
     - modernize
     - nakedret
+    - nolintlint
     - revive
     - staticcheck
+    - unparam
     - unused
+  settings:
+    cyclop:
+      max-complexity: 15
+      package-average: 10.0
+    dupl:
+      threshold: 100
+    maintidx:
+      under: 20
   exclusions:
     generated: lax
     presets:
