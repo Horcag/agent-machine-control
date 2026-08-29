@@ -38,4 +38,10 @@ var (
 
 	// ErrDuplicateMachineID indicates duplicate VM GUIDs in the list response.
 	ErrDuplicateMachineID = errors.New("hyperv: duplicate machine ID observed")
+
+	// ErrCheckpointNotFound indicates the requested checkpoint was not found.
+	ErrCheckpointNotFound = errors.New("hyperv: checkpoint not found")
+
+	// ErrInvalidState indicates the machine is not in a valid state for the requested operation.
+	ErrInvalidState = errors.New("hyperv: machine is in an invalid state for operation")
 )

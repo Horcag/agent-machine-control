@@ -31,7 +31,7 @@ capabilities are identical.
 
 ## Implemented commands
 
-`amc` implements three read-only observation commands for local Hyper-V discovery:
+`amc` implements discovery and direct recovery commands for local Hyper-V management:
 
 ```sh
 # Check Hyper-V and host readiness
@@ -45,6 +45,13 @@ amc machine list --json
 # Inspect a single virtual machine by GUID
 amc machine inspect c4a523d4-6b99-4d62-a5e2-4752c0f20001
 amc machine inspect c4a523d4-6b99-4d62-a5e2-4752c0f20001 --json
+
+# Direct recovery mutations (in-process fallback when daemon is down)
+amc --direct machine start <guid> --reason "recovering vm" --idempotency-key "k-1"
+amc --direct machine stop <guid> --mode shutdown --reason "stopping vm" --idempotency-key "k-2"
+amc --direct checkpoint list <guid>
+amc --direct checkpoint create <guid> --name "pre-maintenance" --reason "snapshotting" --idempotency-key "k-3"
+amc --direct checkpoint restore <guid> <checkpoint-guid> --reason "reverting vm" --idempotency-key "k-4"
 ```
 
 ### JSON mode
@@ -57,7 +64,7 @@ The `amc machine inspect <guid>` command requires a valid 36-character Hyper-V V
 
 ### Hyper-V and PowerShell prerequisites
 
-Observation queries require `powershell.exe` in `PATH`, the Windows Hyper-V PowerShell module (`Hyper-V`), and a Windows security token with membership in the local `Administrators` (`S-1-5-32-544`) or `Hyper-V Administrators` (`S-1-5-32-578`) group.
+Observation and recovery operations require `powershell.exe` in `PATH`, the Windows Hyper-V PowerShell module (`Hyper-V`), and a Windows security token with membership in the local `Administrators` (`S-1-5-32-544`) or `Hyper-V Administrators` (`S-1-5-32-578`) group.
 
 - **Windows**: `powershell.exe` is available by default on Windows systems. The current user token must belong to local `Administrators` or `Hyper-V Administrators`.
 - **WSL interop**: When running inside WSL, WSL interop discovers `powershell.exe` in the host Windows PATH (for example `/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe`) and queries the host Hyper-V instance. The host Windows security token must belong to local `Administrators` or `Hyper-V Administrators`.
@@ -74,6 +81,8 @@ Observation queries require `powershell.exe` in `PATH`, the Windows Hyper-V Powe
 | `4` | `ExitBackendUnavailable` | PowerShell, the Hyper-V module, or host management is unreachable or denied. |
 | `5` | `ExitMalformedProvider` | The provider returned corrupt, invalid, or oversized data. |
 | `6` | `ExitTimeout` | The operation exceeded its configured deadline. |
+| `7` | `ExitDenied` | Policy evaluation denied the operation, or interactive confirmation was rejected. |
+| `8` | `ExitConflict` | Concurrent lease conflict, fencing violation, or idempotency key collision. |
 
 ### Read-only and pre-alpha boundary
 

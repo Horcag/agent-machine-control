@@ -112,6 +112,14 @@ func TestScripts_AccessPreflightSIDsAndPrincipalChecks(t *testing.T) {
 		`error_category = "access_denied"`,
 	}
 
+	mutationScripts := map[string]string{
+		"ScriptStart":             hyperv.ScriptStart,
+		"ScriptStop":              hyperv.ScriptStop,
+		"ScriptCheckpointList":    hyperv.ScriptCheckpointList,
+		"ScriptCheckpointCreate":  hyperv.ScriptCheckpointCreate,
+		"ScriptCheckpointRestore": hyperv.ScriptCheckpointRestore,
+	}
+
 	for name, script := range scripts {
 		for _, snippet := range requiredSnippets {
 			if !strings.Contains(script, snippet) {
@@ -124,6 +132,20 @@ func TestScripts_AccessPreflightSIDsAndPrincipalChecks(t *testing.T) {
 		}
 		if strings.Contains(script, "net localgroup") {
 			t.Errorf("script %s must not invoke net localgroup", name)
+		}
+	}
+
+	for name, script := range mutationScripts {
+		for _, snippet := range requiredSnippets {
+			if !strings.Contains(script, snippet) {
+				t.Errorf("mutation script %s missing required preflight snippet %q", name, snippet)
+			}
+		}
+		if !strings.Contains(script, "$ErrorActionPreference = 'Stop'") {
+			t.Errorf("mutation script %s missing $ErrorActionPreference = 'Stop'", name)
+		}
+		if !strings.Contains(script, "Import-Module Hyper-V -ErrorAction Stop") {
+			t.Errorf("mutation script %s missing Import-Module Hyper-V -ErrorAction Stop", name)
 		}
 	}
 }
@@ -160,5 +182,25 @@ func TestScripts_PreflightOrdering(t *testing.T) {
 		assertOrder(t, hyperv.ScriptInspect, "Import-Module Hyper-V -ErrorAction Stop", "[System.Security.Principal.WindowsIdentity]::GetCurrent()")
 		assertOrder(t, hyperv.ScriptInspect, "$principal.IsInRole($adminSid)", "Get-VM -Id $vmGuid -ErrorAction Stop")
 		assertOrder(t, hyperv.ScriptInspect, "Get-VM -Id $vmGuid -ErrorAction Stop", "Get-VMNetworkAdapter -VM $vm -ErrorAction Stop")
+	})
+
+	t.Run("ScriptStart", func(t *testing.T) {
+		assertOrder(t, hyperv.ScriptStart, "$env:AMC_TARGET_VM_ID", "Import-Module Hyper-V -ErrorAction Stop")
+		assertOrder(t, hyperv.ScriptStart, "Import-Module Hyper-V -ErrorAction Stop", "[System.Security.Principal.WindowsIdentity]::GetCurrent()")
+		assertOrder(t, hyperv.ScriptStart, "$principal.IsInRole($adminSid)", "Start-VM -VM $vm")
+	})
+
+	t.Run("ScriptStop", func(t *testing.T) {
+		assertOrder(t, hyperv.ScriptStop, "$env:AMC_TARGET_VM_ID", "Import-Module Hyper-V -ErrorAction Stop")
+		assertOrder(t, hyperv.ScriptStop, "Import-Module Hyper-V -ErrorAction Stop", "[System.Security.Principal.WindowsIdentity]::GetCurrent()")
+		assertOrder(t, hyperv.ScriptStop, "$principal.IsInRole($adminSid)", "Get-VM -Id $vmGuid")
+	})
+
+	t.Run("ScriptCheckpointRestore", func(t *testing.T) {
+		assertOrder(t, hyperv.ScriptCheckpointRestore, "$env:AMC_TARGET_VM_ID", "Import-Module Hyper-V -ErrorAction Stop")
+		assertOrder(t, hyperv.ScriptCheckpointRestore, "$env:AMC_SNAPSHOT_ID", "Import-Module Hyper-V -ErrorAction Stop")
+		assertOrder(t, hyperv.ScriptCheckpointRestore, "Import-Module Hyper-V -ErrorAction Stop", "[System.Security.Principal.WindowsIdentity]::GetCurrent()")
+		assertOrder(t, hyperv.ScriptCheckpointRestore, "$principal.IsInRole($adminSid)", "Get-VMSnapshot")
+		assertOrder(t, hyperv.ScriptCheckpointRestore, "Get-VMSnapshot", "Restore-VMSnapshot")
 	})
 }

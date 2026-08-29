@@ -54,4 +54,8 @@ var (
 	ErrDuplicateMachineID          = errors.New("domain: duplicate machine identifier in observation set")
 	ErrInvalidNetworkAdapter       = errors.New("domain: invalid network adapter observation")
 	ErrInvalidObservationTimestamp = errors.New("domain: machine observation timestamp cannot be zero")
+
+	// Checkpoint observation errors.
+	ErrInvalidCheckpointID          = errors.New("domain: invalid checkpoint identifier/GUID")
+	ErrInvalidCheckpointObservation = errors.New("domain: invalid checkpoint observation")
 )

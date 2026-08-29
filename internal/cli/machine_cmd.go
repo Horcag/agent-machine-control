@@ -16,22 +16,36 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/domain"
 )
 
-func runMachine(ctx context.Context, service *app.DiscoveryService, args []string, stdout, stderr io.Writer) int {
+func runMachine(
+	ctx context.Context,
+	discoverySvc *app.DiscoveryService,
+	recoverySvc *app.RecoveryService,
+	actor domain.ActorContext,
+	prompter Prompter,
+	nowFn func() time.Time,
+	directMode bool,
+	args []string,
+	stdout, stderr io.Writer,
+) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "amc machine: missing subcommand (expected 'list' or 'inspect')")
+		fmt.Fprintln(stderr, "amc machine: missing subcommand (expected 'list', 'inspect', 'start', or 'stop')")
 		return ExitUsage
 	}
 
 	switch args[0] {
 	case "list":
-		return runMachineList(ctx, service, args[1:], stdout, stderr)
+		return runMachineList(ctx, discoverySvc, args[1:], stdout, stderr)
 	case "inspect":
-		return runMachineInspect(ctx, service, args[1:], stdout, stderr)
+		return runMachineInspect(ctx, discoverySvc, args[1:], stdout, stderr)
+	case "start":
+		return runMachineStart(ctx, recoverySvc, actor, prompter, nowFn, directMode, args[1:], stdout, stderr)
+	case "stop":
+		return runMachineStop(ctx, recoverySvc, actor, prompter, nowFn, directMode, args[1:], stdout, stderr)
 	case "help", "--help", "-h":
-		fmt.Fprintln(stdout, "Usage: amc machine <list|inspect> [flags] [args]")
+		fmt.Fprintln(stdout, "Usage: amc machine <list|inspect|start|stop> [flags] [args]")
 		return ExitSuccess
 	default:
-		fmt.Fprintf(stderr, "amc machine: unknown subcommand %q (expected 'list' or 'inspect')\n", args[0])
+		fmt.Fprintf(stderr, "amc machine: unknown subcommand %q (expected 'list', 'inspect', 'start', or 'stop')\n", args[0])
 		return ExitUsage
 	}
 }
@@ -200,6 +214,10 @@ func mapCLIError(err error, stderr io.Writer, opName string) int {
 	if errors.Is(err, hyperv.ErrMachineNotFound) {
 		fmt.Fprintf(stderr, "amc %s: machine not found\n", opName)
 		return ExitNotFound
+	}
+	if errors.Is(err, hyperv.ErrInvalidState) {
+		fmt.Fprintf(stderr, "amc %s: invalid machine state\n", opName)
+		return ExitConflict
 	}
 	if errors.Is(err, hyperv.ErrCommandTimeout) {
 		fmt.Fprintf(stderr, "amc %s: command timed out\n", opName)

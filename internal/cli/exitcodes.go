@@ -18,4 +18,10 @@ const (
 
 	// ExitTimeout indicates the operation exceeded its allotted deadline.
 	ExitTimeout = 6
+
+	// ExitDenied indicates the operation was denied by policy or required approval was missing/invalid.
+	ExitDenied = 7
+
+	// ExitConflict indicates a concurrent lease or state conflict.
+	ExitConflict = 8
 )
