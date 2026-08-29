@@ -1,0 +1,1904 @@
+[
+  {
+    "description": "Create a new checkpoint for a VM",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "The machine GUID to checkpoint",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "description": "Idempotency key for the operation",
+          "type": "string"
+        },
+        "name": {
+          "description": "Name of the new checkpoint",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Reason for creating the checkpoint",
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Explicit timeout duration (e.g. 5m)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "reason",
+        "idempotency_key",
+        "timeout"
+      ],
+      "type": "object"
+    },
+    "name": "checkpoint_create",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "checkpoint": {
+          "additionalProperties": false,
+          "properties": {
+            "checkpoint_type": {
+              "type": "string"
+            },
+            "created_at": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "observation_type": {
+              "type": "string"
+            },
+            "observed_at": {
+              "type": "string"
+            },
+            "parent_id": {
+              "type": "string"
+            },
+            "vm_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "vm_id",
+            "created_at",
+            "observed_at",
+            "observation_type"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "machine": {
+          "additionalProperties": false,
+          "properties": {
+            "capabilities": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "cpu_usage_percent": {
+              "type": "integer"
+            },
+            "generation": {
+              "type": "integer"
+            },
+            "id": {
+              "type": "string"
+            },
+            "memory_assigned_bytes": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "name": {
+              "type": "string"
+            },
+            "network_adapters": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "ip_addresses": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": [
+                      "null",
+                      "array"
+                    ]
+                  },
+                  "mac_address": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "switch_name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "ip_addresses"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "observation_type": {
+              "type": "string"
+            },
+            "observed_at": {
+              "type": "string"
+            },
+            "raw_state": {
+              "type": "string"
+            },
+            "raw_status": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "uptime_ms": {
+              "type": "integer"
+            },
+            "version": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "state",
+            "raw_state",
+            "generation",
+            "version",
+            "uptime_ms",
+            "cpu_usage_percent",
+            "memory_assigned_bytes",
+            "network_adapters",
+            "capabilities",
+            "observed_at",
+            "observation_type"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "receipt": {
+          "additionalProperties": false,
+          "properties": {
+            "actor": {
+              "type": "string"
+            },
+            "class": {
+              "type": "string"
+            },
+            "completed_at": {
+              "type": "string"
+            },
+            "effective_backend": {
+              "type": "string"
+            },
+            "evidence_refs": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "fingerprint": {
+              "type": "string"
+            },
+            "idempotency_fingerprint": {
+              "type": "string"
+            },
+            "idempotency_key": {
+              "type": "string"
+            },
+            "observation_type": {
+              "type": "string"
+            },
+            "operation_kind": {
+              "type": "string"
+            },
+            "outcome": {
+              "additionalProperties": false,
+              "properties": {
+                "error_category": {
+                  "type": "string"
+                },
+                "error_message": {
+                  "type": "string"
+                },
+                "exit_code": {
+                  "type": "integer"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status",
+                "exit_code"
+              ],
+              "type": "object"
+            },
+            "receipt_id": {
+              "type": "string"
+            },
+            "redaction_status": {
+              "type": "string"
+            },
+            "rollback_ref": {
+              "type": "string"
+            },
+            "started_at": {
+              "type": "string"
+            },
+            "target": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "receipt_id",
+            "operation_kind",
+            "fingerprint",
+            "actor",
+            "target",
+            "class",
+            "effective_backend",
+            "started_at",
+            "completed_at",
+            "outcome",
+            "observation_type",
+            "redaction_status"
+          ],
+          "type": "object"
+        },
+        "schema_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "receipt"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "List virtual machine checkpoints",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "The machine GUID to list checkpoints for",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "name": "checkpoint_list",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "checkpoints": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "checkpoint_type": {
+                "type": "string"
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "observation_type": {
+                "type": "string"
+              },
+              "observed_at": {
+                "type": "string"
+              },
+              "parent_id": {
+                "type": "string"
+              },
+              "vm_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "vm_id",
+              "created_at",
+              "observed_at",
+              "observation_type"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "observation_type": {
+          "type": "string"
+        },
+        "schema_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "observation_type",
+        "checkpoints"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Restore a VM checkpoint",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "checkpoint_id": {
+          "description": "The checkpoint GUID to restore",
+          "type": "string"
+        },
+        "id": {
+          "description": "The machine GUID to restore",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "description": "Idempotency key for the operation",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Reason for restoring the checkpoint",
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Explicit timeout duration (e.g. 5m)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "checkpoint_id",
+        "reason",
+        "idempotency_key",
+        "timeout"
+      ],
+      "type": "object"
+    },
+    "name": "checkpoint_restore",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "machine": {
+          "additionalProperties": false,
+          "properties": {
+            "capabilities": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "cpu_usage_percent": {
+              "type": "integer"
+            },
+            "generation": {
+              "type": "integer"
+            },
+            "id": {
+              "type": "string"
+            },
+            "memory_assigned_bytes": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "name": {
+              "type": "string"
+            },
+            "network_adapters": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "ip_addresses": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": [
+                      "null",
+                      "array"
+                    ]
+                  },
+                  "mac_address": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "switch_name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "ip_addresses"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "observation_type": {
+              "type": "string"
+            },
+            "observed_at": {
+              "type": "string"
+            },
+            "raw_state": {
+              "type": "string"
+            },
+            "raw_status": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "uptime_ms": {
+              "type": "integer"
+            },
+            "version": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "state",
+            "raw_state",
+            "generation",
+            "version",
+            "uptime_ms",
+            "cpu_usage_percent",
+            "memory_assigned_bytes",
+            "network_adapters",
+            "capabilities",
+            "observed_at",
+            "observation_type"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "receipt": {
+          "additionalProperties": false,
+          "properties": {
+            "actor": {
+              "type": "string"
+            },
+            "class": {
+              "type": "string"
+            },
+            "completed_at": {
+              "type": "string"
+            },
+            "effective_backend": {
+              "type": "string"
+            },
+            "evidence_refs": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "fingerprint": {
+              "type": "string"
+            },
+            "idempotency_fingerprint": {
+              "type": "string"
+            },
+            "idempotency_key": {
+              "type": "string"
+            },
+            "observation_type": {
+              "type": "string"
+            },
+            "operation_kind": {
+              "type": "string"
+            },
+            "outcome": {
+              "additionalProperties": false,
+              "properties": {
+                "error_category": {
+                  "type": "string"
+                },
+                "error_message": {
+                  "type": "string"
+                },
+                "exit_code": {
+                  "type": "integer"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status",
+                "exit_code"
+              ],
+              "type": "object"
+            },
+            "receipt_id": {
+              "type": "string"
+            },
+            "redaction_status": {
+              "type": "string"
+            },
+            "rollback_ref": {
+              "type": "string"
+            },
+            "started_at": {
+              "type": "string"
+            },
+            "target": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "receipt_id",
+            "operation_kind",
+            "fingerprint",
+            "actor",
+            "target",
+            "class",
+            "effective_backend",
+            "started_at",
+            "completed_at",
+            "outcome",
+            "observation_type",
+            "redaction_status"
+          ],
+          "type": "object"
+        },
+        "schema_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "receipt"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Return host diagnostics and provider capabilities",
+    "inputSchema": {
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "name": "doctor",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "observed_at": {
+          "type": "string"
+        },
+        "ready": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "schema_version": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "status",
+        "ready",
+        "message",
+        "capabilities",
+        "observed_at"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Inspect detailed configuration/state of a VM",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "The machine GUID to inspect",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "name": "machine_inspect",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "machine": {
+          "additionalProperties": false,
+          "properties": {
+            "capabilities": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "cpu_usage_percent": {
+              "type": "integer"
+            },
+            "generation": {
+              "type": "integer"
+            },
+            "id": {
+              "type": "string"
+            },
+            "memory_assigned_bytes": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "name": {
+              "type": "string"
+            },
+            "network_adapters": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "ip_addresses": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": [
+                      "null",
+                      "array"
+                    ]
+                  },
+                  "mac_address": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "switch_name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "ip_addresses"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "observation_type": {
+              "type": "string"
+            },
+            "observed_at": {
+              "type": "string"
+            },
+            "raw_state": {
+              "type": "string"
+            },
+            "raw_status": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "uptime_ms": {
+              "type": "integer"
+            },
+            "version": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "state",
+            "raw_state",
+            "generation",
+            "version",
+            "uptime_ms",
+            "cpu_usage_percent",
+            "memory_assigned_bytes",
+            "network_adapters",
+            "capabilities",
+            "observed_at",
+            "observation_type"
+          ],
+          "type": "object"
+        },
+        "observation_type": {
+          "type": "string"
+        },
+        "schema_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "observation_type",
+        "machine"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "List all discovered virtual machines",
+    "inputSchema": {
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "name": "machine_list",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "machines": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "capabilities": {
+                "items": {
+                  "type": "string"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
+              "cpu_usage_percent": {
+                "type": "integer"
+              },
+              "generation": {
+                "type": "integer"
+              },
+              "id": {
+                "type": "string"
+              },
+              "memory_assigned_bytes": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "network_adapters": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "ip_addresses": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": [
+                        "null",
+                        "array"
+                      ]
+                    },
+                    "mac_address": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "switch_name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "ip_addresses"
+                  ],
+                  "type": "object"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
+              "observation_type": {
+                "type": "string"
+              },
+              "observed_at": {
+                "type": "string"
+              },
+              "raw_state": {
+                "type": "string"
+              },
+              "raw_status": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string"
+              },
+              "uptime_ms": {
+                "type": "integer"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "state",
+              "raw_state",
+              "generation",
+              "version",
+              "uptime_ms",
+              "cpu_usage_percent",
+              "memory_assigned_bytes",
+              "network_adapters",
+              "capabilities",
+              "observed_at",
+              "observation_type"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "observation_type": {
+          "type": "string"
+        },
+        "schema_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "observation_type",
+        "machines"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Start a virtual machine",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "The machine GUID to start",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "description": "Idempotency key for the operation",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Reason for starting the machine",
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Explicit timeout duration (e.g. 5m)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "reason",
+        "idempotency_key",
+        "timeout"
+      ],
+      "type": "object"
+    },
+    "name": "machine_start",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "machine": {
+          "additionalProperties": false,
+          "properties": {
+            "capabilities": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "cpu_usage_percent": {
+              "type": "integer"
+            },
+            "generation": {
+              "type": "integer"
+            },
+            "id": {
+              "type": "string"
+            },
+            "memory_assigned_bytes": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "name": {
+              "type": "string"
+            },
+            "network_adapters": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "ip_addresses": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": [
+                      "null",
+                      "array"
+                    ]
+                  },
+                  "mac_address": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "switch_name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "ip_addresses"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "observation_type": {
+              "type": "string"
+            },
+            "observed_at": {
+              "type": "string"
+            },
+            "raw_state": {
+              "type": "string"
+            },
+            "raw_status": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "uptime_ms": {
+              "type": "integer"
+            },
+            "version": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "state",
+            "raw_state",
+            "generation",
+            "version",
+            "uptime_ms",
+            "cpu_usage_percent",
+            "memory_assigned_bytes",
+            "network_adapters",
+            "capabilities",
+            "observed_at",
+            "observation_type"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "receipt": {
+          "additionalProperties": false,
+          "properties": {
+            "actor": {
+              "type": "string"
+            },
+            "class": {
+              "type": "string"
+            },
+            "completed_at": {
+              "type": "string"
+            },
+            "effective_backend": {
+              "type": "string"
+            },
+            "evidence_refs": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "fingerprint": {
+              "type": "string"
+            },
+            "idempotency_fingerprint": {
+              "type": "string"
+            },
+            "idempotency_key": {
+              "type": "string"
+            },
+            "observation_type": {
+              "type": "string"
+            },
+            "operation_kind": {
+              "type": "string"
+            },
+            "outcome": {
+              "additionalProperties": false,
+              "properties": {
+                "error_category": {
+                  "type": "string"
+                },
+                "error_message": {
+                  "type": "string"
+                },
+                "exit_code": {
+                  "type": "integer"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status",
+                "exit_code"
+              ],
+              "type": "object"
+            },
+            "receipt_id": {
+              "type": "string"
+            },
+            "redaction_status": {
+              "type": "string"
+            },
+            "rollback_ref": {
+              "type": "string"
+            },
+            "started_at": {
+              "type": "string"
+            },
+            "target": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "receipt_id",
+            "operation_kind",
+            "fingerprint",
+            "actor",
+            "target",
+            "class",
+            "effective_backend",
+            "started_at",
+            "completed_at",
+            "outcome",
+            "observation_type",
+            "redaction_status"
+          ],
+          "type": "object"
+        },
+        "schema_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "receipt"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Stop a virtual machine (shutdown/save/turn-off)",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "The machine GUID to stop",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "description": "Idempotency key for the operation",
+          "type": "string"
+        },
+        "mode": {
+          "description": "Stop mode (e.g. shutdown, save, or turn-off)",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Reason for stopping the machine",
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Explicit timeout duration (e.g. 5m)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "mode",
+        "reason",
+        "idempotency_key",
+        "timeout"
+      ],
+      "type": "object"
+    },
+    "name": "machine_stop",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "machine": {
+          "additionalProperties": false,
+          "properties": {
+            "capabilities": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "cpu_usage_percent": {
+              "type": "integer"
+            },
+            "generation": {
+              "type": "integer"
+            },
+            "id": {
+              "type": "string"
+            },
+            "memory_assigned_bytes": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "name": {
+              "type": "string"
+            },
+            "network_adapters": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "ip_addresses": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": [
+                      "null",
+                      "array"
+                    ]
+                  },
+                  "mac_address": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "switch_name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "ip_addresses"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "observation_type": {
+              "type": "string"
+            },
+            "observed_at": {
+              "type": "string"
+            },
+            "raw_state": {
+              "type": "string"
+            },
+            "raw_status": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "uptime_ms": {
+              "type": "integer"
+            },
+            "version": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "state",
+            "raw_state",
+            "generation",
+            "version",
+            "uptime_ms",
+            "cpu_usage_percent",
+            "memory_assigned_bytes",
+            "network_adapters",
+            "capabilities",
+            "observed_at",
+            "observation_type"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "receipt": {
+          "additionalProperties": false,
+          "properties": {
+            "actor": {
+              "type": "string"
+            },
+            "class": {
+              "type": "string"
+            },
+            "completed_at": {
+              "type": "string"
+            },
+            "effective_backend": {
+              "type": "string"
+            },
+            "evidence_refs": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "fingerprint": {
+              "type": "string"
+            },
+            "idempotency_fingerprint": {
+              "type": "string"
+            },
+            "idempotency_key": {
+              "type": "string"
+            },
+            "observation_type": {
+              "type": "string"
+            },
+            "operation_kind": {
+              "type": "string"
+            },
+            "outcome": {
+              "additionalProperties": false,
+              "properties": {
+                "error_category": {
+                  "type": "string"
+                },
+                "error_message": {
+                  "type": "string"
+                },
+                "exit_code": {
+                  "type": "integer"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status",
+                "exit_code"
+              ],
+              "type": "object"
+            },
+            "receipt_id": {
+              "type": "string"
+            },
+            "redaction_status": {
+              "type": "string"
+            },
+            "rollback_ref": {
+              "type": "string"
+            },
+            "started_at": {
+              "type": "string"
+            },
+            "target": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "receipt_id",
+            "operation_kind",
+            "fingerprint",
+            "actor",
+            "target",
+            "class",
+            "effective_backend",
+            "started_at",
+            "completed_at",
+            "outcome",
+            "observation_type",
+            "redaction_status"
+          ],
+          "type": "object"
+        },
+        "schema_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "receipt"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "List recent operations",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "description": "Limit the number of operations returned",
+          "type": "integer"
+        },
+        "machine": {
+          "description": "Filter by machine GUID",
+          "type": "string"
+        },
+        "state": {
+          "description": "Filter by operation state",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "operation_list",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "operations": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "actor": {
+                "type": "string"
+              },
+              "admitted_at": {
+                "type": "string"
+              },
+              "completed_at": {
+                "type": "string"
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "deadline": {
+                "type": "string"
+              },
+              "effective_class": {
+                "type": "string"
+              },
+              "error_category": {
+                "type": "string"
+              },
+              "error_message": {
+                "type": "string"
+              },
+              "fingerprint": {
+                "type": "string"
+              },
+              "idempotency_fingerprint": {
+                "type": "string"
+              },
+              "idempotency_key": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "operation_id": {
+                "type": "string"
+              },
+              "parameters": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "receipt_id": {
+                "type": "string"
+              },
+              "requested_class": {
+                "type": "string"
+              },
+              "running_at": {
+                "type": "string"
+              },
+              "schema_version": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string"
+              },
+              "target": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "schema_version",
+              "operation_id",
+              "kind",
+              "target",
+              "actor",
+              "state",
+              "created_at"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "schema_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "operations"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Show details of a specific operation",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "operation_id": {
+          "description": "The operation ID to show",
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation_id"
+      ],
+      "type": "object"
+    },
+    "name": "operation_show",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "operation": {
+          "additionalProperties": false,
+          "properties": {
+            "actor": {
+              "type": "string"
+            },
+            "admitted_at": {
+              "type": "string"
+            },
+            "completed_at": {
+              "type": "string"
+            },
+            "created_at": {
+              "type": "string"
+            },
+            "deadline": {
+              "type": "string"
+            },
+            "effective_class": {
+              "type": "string"
+            },
+            "error_category": {
+              "type": "string"
+            },
+            "error_message": {
+              "type": "string"
+            },
+            "fingerprint": {
+              "type": "string"
+            },
+            "idempotency_fingerprint": {
+              "type": "string"
+            },
+            "idempotency_key": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "operation_id": {
+              "type": "string"
+            },
+            "parameters": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "receipt_id": {
+              "type": "string"
+            },
+            "requested_class": {
+              "type": "string"
+            },
+            "running_at": {
+              "type": "string"
+            },
+            "schema_version": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "target": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "schema_version",
+            "operation_id",
+            "kind",
+            "target",
+            "actor",
+            "state",
+            "created_at"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "schema_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "operation"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Wait for an operation to complete",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "description": "Wait for events after sequence number",
+          "type": "string"
+        },
+        "operation_id": {
+          "description": "The operation ID to wait for",
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Explicit wait timeout duration (e.g. 5m)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation_id"
+      ],
+      "type": "object"
+    },
+    "name": "operation_wait",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "operation": {
+          "additionalProperties": false,
+          "properties": {
+            "actor": {
+              "type": "string"
+            },
+            "admitted_at": {
+              "type": "string"
+            },
+            "completed_at": {
+              "type": "string"
+            },
+            "created_at": {
+              "type": "string"
+            },
+            "deadline": {
+              "type": "string"
+            },
+            "effective_class": {
+              "type": "string"
+            },
+            "error_category": {
+              "type": "string"
+            },
+            "error_message": {
+              "type": "string"
+            },
+            "fingerprint": {
+              "type": "string"
+            },
+            "idempotency_fingerprint": {
+              "type": "string"
+            },
+            "idempotency_key": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "operation_id": {
+              "type": "string"
+            },
+            "parameters": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "receipt_id": {
+              "type": "string"
+            },
+            "requested_class": {
+              "type": "string"
+            },
+            "running_at": {
+              "type": "string"
+            },
+            "schema_version": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "target": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "schema_version",
+            "operation_id",
+            "kind",
+            "target",
+            "actor",
+            "state",
+            "created_at"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "schema_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "operation"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Show execution receipt details",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "receipt_id": {
+          "description": "The receipt ID to show",
+          "type": "string"
+        }
+      },
+      "required": [
+        "receipt_id"
+      ],
+      "type": "object"
+    },
+    "name": "receipt_show",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "receipt": {
+          "additionalProperties": false,
+          "properties": {
+            "actor": {
+              "type": "string"
+            },
+            "class": {
+              "type": "string"
+            },
+            "completed_at": {
+              "type": "string"
+            },
+            "effective_backend": {
+              "type": "string"
+            },
+            "evidence_refs": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "fingerprint": {
+              "type": "string"
+            },
+            "idempotency_fingerprint": {
+              "type": "string"
+            },
+            "idempotency_key": {
+              "type": "string"
+            },
+            "observation_type": {
+              "type": "string"
+            },
+            "operation_kind": {
+              "type": "string"
+            },
+            "outcome": {
+              "additionalProperties": false,
+              "properties": {
+                "error_category": {
+                  "type": "string"
+                },
+                "error_message": {
+                  "type": "string"
+                },
+                "exit_code": {
+                  "type": "integer"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status",
+                "exit_code"
+              ],
+              "type": "object"
+            },
+            "receipt_id": {
+              "type": "string"
+            },
+            "redaction_status": {
+              "type": "string"
+            },
+            "rollback_ref": {
+              "type": "string"
+            },
+            "started_at": {
+              "type": "string"
+            },
+            "target": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "receipt_id",
+            "operation_kind",
+            "fingerprint",
+            "actor",
+            "target",
+            "class",
+            "effective_backend",
+            "started_at",
+            "completed_at",
+            "outcome",
+            "observation_type",
+            "redaction_status"
+          ],
+          "type": "object"
+        },
+        "schema_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "receipt"
+      ],
+      "type": "object"
+    }
+  }
+]
