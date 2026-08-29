@@ -1,0 +1,75 @@
+version: 2
+project_name: agent-machine-control
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - id: amc
+    main: ./cmd/amc
+    binary: amc
+    env: [CGO_ENABLED=0]
+    goos: [linux, windows, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - >-
+        -s -w
+        -X github.com/Horcag/agent-machine-control/internal/buildinfo.version={{.Version}}
+        -X github.com/Horcag/agent-machine-control/internal/buildinfo.commit={{.Commit}}
+        -X github.com/Horcag/agent-machine-control/internal/buildinfo.date={{.Date}}
+  - id: amcd
+    main: ./cmd/amcd
+    binary: amcd
+    env: [CGO_ENABLED=0]
+    goos: [linux, windows, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - >-
+        -s -w
+        -X github.com/Horcag/agent-machine-control/internal/buildinfo.version={{.Version}}
+        -X github.com/Horcag/agent-machine-control/internal/buildinfo.commit={{.Commit}}
+        -X github.com/Horcag/agent-machine-control/internal/buildinfo.date={{.Date}}
+  - id: amc-mcp
+    main: ./cmd/amc-mcp
+    binary: amc-mcp
+    env: [CGO_ENABLED=0]
+    goos: [linux, windows, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - >-
+        -s -w
+        -X github.com/Horcag/agent-machine-control/internal/buildinfo.version={{.Version}}
+        -X github.com/Horcag/agent-machine-control/internal/buildinfo.commit={{.Commit}}
+        -X github.com/Horcag/agent-machine-control/internal/buildinfo.date={{.Date}}
+
+archives:
+  - ids: [amc, amcd, amc-mcp]
+    formats: [tar.gz]
+    files:
+      - LICENSE
+      - NOTICE
+      - README.md
+      - CHANGELOG.md
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64{{ else }}{{ .Arch }}{{ end }}
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  draft: true
+  prerelease: auto

@@ -1,0 +1,63 @@
+# Local planning and agent state
+/kanban/
+/.codex/
+/.agent-work/
+/local/
+/state/
+
+# Secrets and machine-specific configuration
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+*.kdbx
+credentials*.json
+secrets*.json
+
+# Runtime evidence that may contain private machine data
+/artifacts/
+/recordings/
+/screenshots/
+/transcripts/
+*.log
+*.trace
+*.dmp
+*.dump
+
+# Build and test output
+/bin/
+/dist/
+/coverage/
+coverage.out
+*.coverprofile
+*.test
+*.prof
+*.exe
+*.msi
+*.zip
+*.tar.gz
+*.sbom.json
+
+# Go workspace and tooling caches
+go.work
+go.work.sum
+/.cache/
+/.tmp/
+
+# Optional web UI dependencies and output
+/web/node_modules/
+/web/dist/
+/web/.vite/
+
+# Editors and operating systems
+/.idea/
+/.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
