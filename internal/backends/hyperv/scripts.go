@@ -1,6 +1,29 @@
 package hyperv
 
 const (
+	scriptPrincipalCheck = `$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+$principal = [System.Security.Principal.WindowsPrincipal]::new($identity)
+$adminSid = [System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')
+$hypervAdminSid = [System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-578')
+if (-not ($principal.IsInRole($adminSid) -or $principal.IsInRole($hypervAdminSid))) {`
+
+	scriptAccessPreflightDoctor = scriptPrincipalCheck + `
+    @{
+        schema_version = "1"
+        ready = $false
+        error_category = "access_denied"
+    } | ConvertTo-Json -Compress
+    exit 0
+}`
+
+	scriptAccessPreflightQuery = scriptPrincipalCheck + `
+    @{
+        schema_version = "1"
+        error_category = "access_denied"
+    } | ConvertTo-Json -Compress
+    exit 0
+}`
+
 	// ScriptDoctor verifies Hyper-V module presence and host query readiness.
 	ScriptDoctor = `$ErrorActionPreference = 'Stop'
 try {
@@ -13,6 +36,7 @@ try {
     } | ConvertTo-Json -Compress
     exit 0
 }
+` + scriptAccessPreflightDoctor + `
 try {
     Get-VMHost -ErrorAction Stop | Out-Null
     @{
@@ -43,6 +67,7 @@ try {
     } | ConvertTo-Json -Compress
     exit 0
 }
+` + scriptAccessPreflightQuery + `
 try {
     $vms = @(Get-VM -ErrorAction Stop)
     $results = @()
@@ -98,7 +123,7 @@ try {
         schema_version = "1"
         error_category = $cat
     } | ConvertTo-Json -Compress
-}`
+} `
 
 	// ScriptInspect inspects a single virtual machine using the target GUID from the environment.
 	ScriptInspect = `$ErrorActionPreference = 'Stop'
@@ -119,6 +144,7 @@ try {
     } | ConvertTo-Json -Compress
     exit 0
 }
+` + scriptAccessPreflightQuery + `
 try {
     $vmGuid = [guid]::Parse($targetId)
     $vm = Get-VM -Id $vmGuid -ErrorAction Stop

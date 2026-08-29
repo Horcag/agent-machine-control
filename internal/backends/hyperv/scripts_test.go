@@ -94,3 +94,71 @@ func TestScripts_VMIdGuidProperty(t *testing.T) {
 		}
 	}
 }
+
+func TestScripts_AccessPreflightSIDsAndPrincipalChecks(t *testing.T) {
+	scripts := map[string]string{
+		"ScriptDoctor":  hyperv.ScriptDoctor,
+		"ScriptList":    hyperv.ScriptList,
+		"ScriptInspect": hyperv.ScriptInspect,
+	}
+
+	requiredSnippets := []string{
+		"[System.Security.Principal.WindowsIdentity]::GetCurrent()",
+		"[System.Security.Principal.WindowsPrincipal]::new($identity)",
+		"[System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')",
+		"[System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-578')",
+		"$principal.IsInRole($adminSid)",
+		"$principal.IsInRole($hypervAdminSid)",
+		`error_category = "access_denied"`,
+	}
+
+	for name, script := range scripts {
+		for _, snippet := range requiredSnippets {
+			if !strings.Contains(script, snippet) {
+				t.Errorf("script %s missing required preflight snippet %q", name, snippet)
+			}
+		}
+
+		if strings.Contains(script, "whoami") {
+			t.Errorf("script %s must not invoke whoami", name)
+		}
+		if strings.Contains(script, "net localgroup") {
+			t.Errorf("script %s must not invoke net localgroup", name)
+		}
+	}
+}
+
+func assertOrder(t *testing.T, script, first, second string) {
+	t.Helper()
+	idx1 := strings.Index(script, first)
+	idx2 := strings.Index(script, second)
+	if idx1 == -1 {
+		t.Fatalf("missing expected pattern %q", first)
+	}
+	if idx2 == -1 {
+		t.Fatalf("missing expected pattern %q", second)
+	}
+	if idx1 >= idx2 {
+		t.Errorf("expected %q (%d) to appear before %q (%d)", first, idx1, second, idx2)
+	}
+}
+
+func TestScripts_PreflightOrdering(t *testing.T) {
+	t.Run("ScriptDoctor", func(t *testing.T) {
+		assertOrder(t, hyperv.ScriptDoctor, "Import-Module Hyper-V -ErrorAction Stop", "[System.Security.Principal.WindowsIdentity]::GetCurrent()")
+		assertOrder(t, hyperv.ScriptDoctor, "$principal.IsInRole($adminSid)", "Get-VMHost")
+	})
+
+	t.Run("ScriptList", func(t *testing.T) {
+		assertOrder(t, hyperv.ScriptList, "Import-Module Hyper-V -ErrorAction Stop", "[System.Security.Principal.WindowsIdentity]::GetCurrent()")
+		assertOrder(t, hyperv.ScriptList, "$principal.IsInRole($adminSid)", "Get-VM -ErrorAction Stop")
+		assertOrder(t, hyperv.ScriptList, "Get-VM -ErrorAction Stop", "Get-VMNetworkAdapter -VM $vm -ErrorAction Stop")
+	})
+
+	t.Run("ScriptInspect", func(t *testing.T) {
+		assertOrder(t, hyperv.ScriptInspect, "$env:AMC_TARGET_VM_ID", "Import-Module Hyper-V -ErrorAction Stop")
+		assertOrder(t, hyperv.ScriptInspect, "Import-Module Hyper-V -ErrorAction Stop", "[System.Security.Principal.WindowsIdentity]::GetCurrent()")
+		assertOrder(t, hyperv.ScriptInspect, "$principal.IsInRole($adminSid)", "Get-VM -Id $vmGuid -ErrorAction Stop")
+		assertOrder(t, hyperv.ScriptInspect, "Get-VM -Id $vmGuid -ErrorAction Stop", "Get-VMNetworkAdapter -VM $vm -ErrorAction Stop")
+	})
+}

@@ -57,10 +57,10 @@ The `amc machine inspect <guid>` command requires a valid 36-character Hyper-V V
 
 ### Hyper-V and PowerShell prerequisites
 
-Observation queries require `powershell.exe` in `PATH` and the Windows Hyper-V PowerShell module (`Hyper-V`).
+Observation queries require `powershell.exe` in `PATH`, the Windows Hyper-V PowerShell module (`Hyper-V`), and a Windows security token with membership in the local `Administrators` (`S-1-5-32-544`) or `Hyper-V Administrators` (`S-1-5-32-578`) group.
 
-- **Windows**: `powershell.exe` is available by default on Windows systems.
-- **WSL interop**: When running inside WSL, WSL interop discovers `powershell.exe` in the host Windows PATH (for example `/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe`) and queries the host Hyper-V instance.
+- **Windows**: `powershell.exe` is available by default on Windows systems. The current user token must belong to local `Administrators` or `Hyper-V Administrators`.
+- **WSL interop**: When running inside WSL, WSL interop discovers `powershell.exe` in the host Windows PATH (for example `/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe`) and queries the host Hyper-V instance. The host Windows security token must belong to local `Administrators` or `Hyper-V Administrators`.
 
 ### Exit categories and codes
 
