@@ -27,7 +27,7 @@ func TestCLI_MachineStart_RequiresDirectMode(t *testing.T) {
 	if code != cli.ExitBackendUnavailable {
 		t.Fatalf("expected ExitBackendUnavailable when --direct is omitted, got %d", code)
 	}
-	if !strings.Contains(stderr.String(), "daemon transport is not yet available; use '--direct'") {
+	if !strings.Contains(stderr.String(), "daemon is unavailable; run 'amcd run' or use '--direct'") {
 		t.Errorf("unexpected stderr: %s", stderr.String())
 	}
 }
@@ -221,5 +221,93 @@ func TestCLI_MachineMutation_PrompterRejection(t *testing.T) {
 
 	if code != cli.ExitDenied {
 		t.Fatalf("expected ExitDenied on prompt rejection, got %d", code)
+	}
+}
+
+func newMockBackendWithCheckpoint(snapID string) *mockBackend {
+	return &mockBackend{
+		listCheckpointsFn: func(_ context.Context, id string) ([]domain.CheckpointObservation, error) {
+			return []domain.CheckpointObservation{
+				{
+					ID:              snapID,
+					Name:            "baseline-snap",
+					VMID:            id,
+					CheckpointType:  "Standard",
+					CreatedAt:       time.Date(2026, 8, 29, 10, 0, 0, 0, time.UTC),
+					ObservedAt:      time.Date(2026, 8, 29, 10, 0, 0, 0, time.UTC),
+					ObservationType: domain.ObservationObserved,
+				},
+			}, nil
+		},
+		stopMachineFn: func(_ context.Context, id string, _ string) (domain.MachineObservation, error) {
+			return domain.MachineObservation{
+				ID:    id,
+				State: domain.MachineStateOff,
+			}, nil
+		},
+	}
+}
+
+func TestCLI_MachineStop_ModesAndErrors(t *testing.T) {
+	targetID := "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
+	snapID := "e4a523d4-6b99-4d62-a5e2-4752c0f20001"
+	backend := newMockBackendWithCheckpoint(snapID)
+	appInstance := setupTestApp(t, backend, &testPrompter{confirm: true})
+
+	var stdout, stderr bytes.Buffer
+
+	// 1. Direct stop with mode=save
+	code := appInstance.Run([]string{
+		"--direct", "machine", "stop", targetID,
+		"--mode", "save",
+		"--reason", "testing save",
+		"--idempotency-key", "key-stop-save-1",
+	}, &stdout, &stderr)
+	if code != cli.ExitSuccess {
+		t.Fatalf("expected ExitSuccess for stop mode=save, got %d; stderr: %s", code, stderr.String())
+	}
+
+	// 2. Direct stop with mode=turn-off
+	stdout.Reset()
+	stderr.Reset()
+	code = appInstance.Run([]string{
+		"--direct", "machine", "stop", targetID,
+		"--mode", "turn-off",
+		"--reason", "testing turn off",
+		"--idempotency-key", "key-stop-off-1",
+	}, &stdout, &stderr)
+	if code != cli.ExitSuccess {
+		t.Fatalf("expected ExitSuccess for stop mode=turn-off, got %d; stderr: %s", code, stderr.String())
+	}
+
+	// 3. Invalid mode
+	stderr.Reset()
+	code = appInstance.Run([]string{
+		"--direct", "machine", "stop", targetID,
+		"--mode", "invalid-mode",
+		"--reason", "testing invalid",
+		"--idempotency-key", "key-stop-invalid-1",
+	}, &stdout, &stderr)
+	if code != cli.ExitUsage {
+		t.Errorf("expected ExitUsage for invalid mode, got %d", code)
+	}
+}
+
+func TestCLI_MachineStop_DirectJSON(t *testing.T) {
+	targetID := "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
+	snapID := "e4a523d4-6b99-4d62-a5e2-4752c0f20001"
+	backend := newMockBackendWithCheckpoint(snapID)
+	appInstance := setupTestApp(t, backend, &testPrompter{confirm: true})
+
+	var stdout, stderr bytes.Buffer
+	code := appInstance.Run([]string{
+		"--direct", "machine", "stop", targetID,
+		"--mode", "shutdown",
+		"--reason", "testing direct stop json",
+		"--idempotency-key", "key-stop-direct-json-1",
+		"--json",
+	}, &stdout, &stderr)
+	if code != cli.ExitSuccess {
+		t.Fatalf("expected ExitSuccess for direct stop --json, got %d; stderr: %s", code, stderr.String())
 	}
 }

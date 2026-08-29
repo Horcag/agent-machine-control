@@ -235,3 +235,33 @@ func TestAdapter_RestoreCheckpoint_SuccessAndErrors(t *testing.T) {
 		t.Fatalf("expected ErrCheckpointNotFound, got %v", err)
 	}
 }
+
+func TestAdapter_MutationValidationAndCategories(t *testing.T) {
+	adapter := hyperv.New(hyperv.WithExecutor(&mockExecutor{}))
+	ctx := context.Background()
+
+	// Invalid GUIDs
+	if _, err := adapter.StartMachine(ctx, "invalid-guid"); err == nil {
+		t.Errorf("expected error for invalid GUID in StartMachine")
+	}
+	if _, err := adapter.StopMachine(ctx, "invalid-guid", "shutdown"); err == nil {
+		t.Errorf("expected error for invalid GUID in StopMachine")
+	}
+	if _, err := adapter.ListCheckpoints(ctx, "invalid-guid"); err == nil {
+		t.Errorf("expected error for invalid GUID in ListCheckpoints")
+	}
+	if _, err := adapter.CreateCheckpoint(ctx, "invalid-guid", "snap"); err == nil {
+		t.Errorf("expected error for invalid GUID in CreateCheckpoint")
+	}
+	if _, err := adapter.RestoreCheckpoint(ctx, "invalid-guid", "e4a523d4-6b99-4d62-a5e2-4752c0f20001"); err == nil {
+		t.Errorf("expected error for invalid VM GUID in RestoreCheckpoint")
+	}
+	if _, err := adapter.RestoreCheckpoint(ctx, "c4a523d4-6b99-4d62-a5e2-4752c0f20001", "invalid-chk-guid"); err == nil {
+		t.Errorf("expected error for invalid chk GUID in RestoreCheckpoint")
+	}
+
+	// Unrecognized mode in StopMachine
+	if _, err := adapter.StopMachine(ctx, "c4a523d4-6b99-4d62-a5e2-4752c0f20001", "invalid-mode"); err == nil {
+		t.Errorf("expected error for invalid mode in StopMachine")
+	}
+}

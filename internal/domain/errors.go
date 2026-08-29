@@ -58,4 +58,10 @@ var (
 	// Checkpoint observation errors.
 	ErrInvalidCheckpointID          = errors.New("domain: invalid checkpoint identifier/GUID")
 	ErrInvalidCheckpointObservation = errors.New("domain: invalid checkpoint observation")
+
+	// Operation lifecycle and event errors.
+	ErrInvalidOperationState  = errors.New("domain: invalid operation state")
+	ErrIllegalStateTransition = errors.New("domain: illegal operation state transition")
+	ErrInvalidOperationID     = errors.New("domain: invalid operation identifier")
+	ErrInvalidEventSequence   = errors.New("domain: invalid event sequence")
 )

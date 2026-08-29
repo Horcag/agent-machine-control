@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/app"
+	"github.com/Horcag/agent-machine-control/internal/daemon"
 	"github.com/Horcag/agent-machine-control/internal/domain"
 	"github.com/Horcag/agent-machine-control/internal/lease"
 	"github.com/Horcag/agent-machine-control/internal/receipt"
@@ -20,6 +21,8 @@ func runCheckpointRestore(
 	actor domain.ActorContext,
 	prompter Prompter,
 	nowFn func() time.Time,
+	directMode bool,
+	stateDir string,
 	args []string,
 	stdout, stderr io.Writer,
 ) int {
@@ -48,6 +51,51 @@ func runCheckpointRestore(
 	if err := domain.ValidateMachineGUID(checkpointID); err != nil {
 		fmt.Fprintf(stderr, "amc checkpoint restore: invalid checkpoint GUID %q\n", checkpointID)
 		return ExitUsage
+	}
+
+	if !directMode {
+		dReq := daemon.CreateOperationRequest{
+			Kind:           "checkpoint.restore",
+			Target:         targetID,
+			Reason:         common.Reason,
+			IdempotencyKey: common.IdempotencyKey,
+			TimeoutSeconds: int(common.Timeout.Seconds()),
+			Parameters:     map[string]any{"checkpoint_id": checkpointID},
+		}
+		return executeDaemonMutation(
+			ctx,
+			stateDir,
+			dReq,
+			common.Timeout,
+			common.Async,
+			common.JSON,
+			stdout, stderr,
+			"checkpoint restore",
+			func(w io.Writer, _ *daemon.OperationDTO, rcpt *receipt.DTO) {
+				fmt.Fprintf(w, "Checkpoint restored successfully.\n")
+				if rcpt != nil {
+					fmt.Fprintf(w, "Receipt ID:    %s\n", rcpt.ReceiptID)
+					fmt.Fprintf(w, "State:         Off\n")
+				}
+			},
+			func(w io.Writer, _ *daemon.OperationDTO, rcpt *receipt.DTO) error {
+				var rcptDTO receipt.DTO
+				if rcpt != nil {
+					rcptDTO = *rcpt
+				}
+				obsDTO := MachineOutputDTO{
+					ID:              targetID,
+					State:           domain.MachineStateOff,
+					ObservationType: domain.ObservationInferred,
+				}
+				envelope := MachineMutationOutputEnvelope{
+					SchemaVersion: SchemaVersion,
+					Receipt:       rcptDTO,
+					Machine:       &obsDTO,
+				}
+				return writeJSON(w, envelope)
+			},
+		)
 	}
 
 	appr := common.Approval

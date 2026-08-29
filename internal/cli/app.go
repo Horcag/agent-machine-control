@@ -19,24 +19,30 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/statedir"
 )
 
-// AppOption configures App dependencies.
-type AppOption func(*App)
-
-// WithClock configures a custom clock function on App.
-func WithClock(fn func() time.Time) AppOption {
-	return func(a *App) {
-		a.nowFn = fn
-	}
-}
-
-// App manages command routing and CLI dependencies.
+// App is the main CLI orchestrator.
 type App struct {
 	discoveryService *app.DiscoveryService
 	recoveryService  *app.RecoveryService
 	actor            domain.ActorContext
 	prompter         Prompter
 	directDefault    bool
+	stateDirDefault  string
 	nowFn            func() time.Time
+}
+
+// AppOption configures App dependencies.
+type AppOption func(*App)
+
+// WithClock configures a custom time source on App.
+func WithClock(fn func() time.Time) AppOption {
+	return func(a *App) {
+		a.nowFn = fn
+	}
+}
+
+// WithNow configures a custom time source on App.
+func WithNow(fn func() time.Time) AppOption {
+	return WithClock(fn)
 }
 
 func (a *App) now() time.Time {
@@ -74,6 +80,13 @@ func WithDirectMode(direct bool) AppOption {
 	}
 }
 
+// WithStateDir sets the default state directory on App.
+func WithStateDir(dir string) AppOption {
+	return func(a *App) {
+		a.stateDirDefault = dir
+	}
+}
+
 // NewApp creates a new App configured with the given DiscoveryService and options.
 func NewApp(service *app.DiscoveryService, opts ...AppOption) *App {
 	a := &App{
@@ -105,6 +118,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			WithRecoveryService(readOnlyRecoverySvc),
 			WithPrompter(&DefaultPrompter{Stdin: os.Stdin, Stdout: stderr}),
 			WithDirectMode(norm.Direct),
+			WithStateDir(norm.StateDir),
 		)
 		return appInstance.Run(args, stdout, stderr)
 	}
@@ -145,6 +159,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		WithActor(actCtx),
 		WithPrompter(&DefaultPrompter{Stdin: os.Stdin, Stdout: stderr}),
 		WithDirectMode(norm.Direct),
+		WithStateDir(norm.StateDir),
 	)
 
 	return appInstance.Run(args, stdout, stderr)
@@ -170,6 +185,11 @@ func isMutatingSubcommand(cmd, sub string) bool {
 
 // Run parses arguments and delegates execution to the appropriate command handler.
 func (a *App) Run(args []string, stdout, stderr io.Writer) int {
+	return a.RunWithContext(context.Background(), args, stdout, stderr)
+}
+
+// RunWithContext parses arguments and executes with a caller-supplied context.
+func (a *App) RunWithContext(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	norm, err := NormalizeGlobalFlags(args)
 	if err != nil {
 		fmt.Fprintf(stderr, "amc: %v\n", err)
@@ -179,6 +199,11 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) int {
 	if len(norm.CommandArgs) == 0 {
 		printUsage(stderr)
 		return ExitUsage
+	}
+
+	stateDir := a.stateDirDefault
+	if norm.StateDir != "" {
+		stateDir = norm.StateDir
 	}
 
 	directMode := a.directDefault || norm.Direct
@@ -197,17 +222,18 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) int {
 		return ExitSuccess
 
 	case "doctor":
-		return runDoctor(context.Background(), a.discoveryService, cmdArgs, stdout, stderr)
+		return runDoctor(ctx, a.discoveryService, cmdArgs, stdout, stderr)
 
 	case "machine":
 		return runMachine(
-			context.Background(),
+			ctx,
 			a.discoveryService,
 			a.recoveryService,
 			a.actor,
 			a.prompter,
 			a.now,
 			directMode,
+			stateDir,
 			cmdArgs,
 			stdout,
 			stderr,
@@ -215,12 +241,31 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) int {
 
 	case "checkpoint":
 		return runCheckpoint(
-			context.Background(),
+			ctx,
 			a.recoveryService,
 			a.actor,
 			a.prompter,
 			a.now,
 			directMode,
+			stateDir,
+			cmdArgs,
+			stdout,
+			stderr,
+		)
+
+	case "operation":
+		return runOperation(
+			ctx,
+			stateDir,
+			cmdArgs,
+			stdout,
+			stderr,
+		)
+
+	case "audit":
+		return runAudit(
+			ctx,
+			stateDir,
 			cmdArgs,
 			stdout,
 			stderr,
@@ -233,20 +278,26 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) int {
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: amc [--direct] <command> [subcommand] [flags] [args]")
+	fmt.Fprintln(w, "Usage: amc [--direct] [--state-dir <dir>] [--json] <command> [subcommand] [flags] [args]")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Commands:")
 	fmt.Fprintln(w, "  doctor                                   Check Hyper-V and host readiness")
 	fmt.Fprintln(w, "  machine list                             List discovered virtual machines")
 	fmt.Fprintln(w, "  machine inspect <guid>                   Inspect virtual machine configuration and state")
-	fmt.Fprintln(w, "  machine start <guid>                     Start virtual machine (requires --direct)")
-	fmt.Fprintln(w, "  machine stop <guid>                      Stop virtual machine (requires --direct)")
+	fmt.Fprintln(w, "  machine start <guid>                     Start virtual machine (routes to amcd by default)")
+	fmt.Fprintln(w, "  machine stop <guid>                      Stop virtual machine (routes to amcd by default)")
 	fmt.Fprintln(w, "  checkpoint list <guid>                   List virtual machine checkpoints")
-	fmt.Fprintln(w, "  checkpoint create <guid> --name <name>   Create checkpoint (requires --direct)")
-	fmt.Fprintln(w, "  checkpoint restore <guid> <chk-guid>     Restore checkpoint (requires --direct)")
+	fmt.Fprintln(w, "  checkpoint create <guid> --name <name>   Create checkpoint (routes to amcd by default)")
+	fmt.Fprintln(w, "  checkpoint restore <guid> <chk-guid>     Restore checkpoint (routes to amcd by default)")
+	fmt.Fprintln(w, "  operation list                           List operations")
+	fmt.Fprintln(w, "  operation show <operation-id>            Show details for a specific operation")
+	fmt.Fprintln(w, "  operation wait <operation-id>            Wait for operation terminal state")
+	fmt.Fprintln(w, "  operation cancel <operation-id>          Cancel in-flight operation")
+	fmt.Fprintln(w, "  audit tail                               Tail recent audit events")
+	fmt.Fprintln(w, "  audit show <receipt-id>                  Show execution receipt details")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Global Flags:")
-	fmt.Fprintln(w, "  --direct                                 Execute in-process direct recovery mode")
+	fmt.Fprintln(w, "  --direct                                 Execute in-process direct recovery mode (bypasses daemon)")
 	fmt.Fprintln(w, "  --state-dir <dir>                        Override state directory path")
 	fmt.Fprintln(w, "  --json                                   Output structured JSON envelope")
 	fmt.Fprintln(w, "  --help, -h                               Show help information")

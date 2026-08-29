@@ -9,6 +9,11 @@ var (
 	date    = "unknown"
 )
 
+// Version returns the current build version string.
+func Version() string {
+	return version
+}
+
 // String returns stable, human-readable build metadata.
 func String(name string) string {
 	return fmt.Sprintf("%s %s (commit %s, built %s)", name, version, commit, date)

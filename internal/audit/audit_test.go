@@ -203,3 +203,19 @@ func TestStore_StrictJSON_TrailingData(t *testing.T) {
 		t.Fatalf("expected CheckWritable to fail when owner.json has trailing JSON")
 	}
 }
+
+func TestStore_AdmissionAndTerminalValidation(t *testing.T) {
+	dir := t.TempDir()
+	store := audit.NewStore(dir)
+
+	// RecordAdmissionIntent invalid op
+	if err := store.RecordAdmissionIntent(domain.Operation{}); err == nil {
+		t.Errorf("expected error for invalid operation in RecordAdmissionIntent")
+	}
+
+	// CheckWritable on unwritable path
+	unwritableStore := audit.NewStore("/dev/null/impossible/audit/dir")
+	if err := unwritableStore.CheckWritable(); err == nil {
+		t.Errorf("expected error for unwritable audit path")
+	}
+}

@@ -35,7 +35,7 @@ func TestStore_Save_SyncDirFailure(t *testing.T) {
 	}
 
 	r := domain.Receipt{
-		ReceiptID:        "rcpt-sync-fail",
+		ReceiptID:        "rcpt-00000000000000000000000000000001",
 		OperationKind:    op.Kind,
 		Fingerprint:      fp,
 		IdempotencyKey:   op.IdempotencyKey,

@@ -151,3 +151,11 @@ func TestManager_Reclaim_LivenessCheckError_FailsClosed(t *testing.T) {
 		t.Fatalf("expected ErrLeaseConflict on liveness check error, got %v", err)
 	}
 }
+
+func TestManager_ReclaimEmptyDir(t *testing.T) {
+	mgr := lease.NewManager("/nonexistent/lease/dir")
+	reclaimed, err := mgr.ReclaimStaleLeases(context.Background())
+	if err != nil || len(reclaimed) != 0 {
+		t.Errorf("expected nil, nil on missing lease dir, got %v, %v", reclaimed, err)
+	}
+}

@@ -30,7 +30,7 @@ scenario that proves an invariant over several examples that exercise the same h
 | --- | --- | --- |
 | Unit | Domain, policy, parsing, state transitions, and deterministic failures. | Edit loop and CI |
 | Contract | Every backend and transport obeys shared capability and receipt contracts. | CI |
-| Integration | PowerShell, WMI, SSH, named pipes, filesystem, and MCP transport boundaries. | CI where hermetic; otherwise opt-in |
+| Integration | PowerShell, WMI, SSH, loopback HTTP/1.1, filesystem, and MCP transport boundaries. | CI where hermetic; otherwise opt-in |
 | Canary | Real Hyper-V, Windows desktop, PTY, installer, recovery, and secure desktop. | Explicit disposable environment |
 | Fuzz | Untrusted parsers, path handling, envelopes, and policy input boundaries. | Targeted locally and scheduled CI |
 

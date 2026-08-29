@@ -27,6 +27,15 @@ const (
 
 	// SubdirApprovals is the subdirectory name for consumed approvals tracking.
 	SubdirApprovals = "approvals"
+
+	// SubdirDaemon is the subdirectory name for daemon runtime metadata.
+	SubdirDaemon = "daemon"
+
+	// SubdirAuth is the subdirectory name for bearer token authentication files.
+	SubdirAuth = "auth"
+
+	// SubdirOperations is the subdirectory name for durable operation records.
+	SubdirOperations = "operations"
 )
 
 var (
@@ -77,6 +86,9 @@ func (s *StateDir) EnsureDirs() error {
 		s.ReceiptsDir(),
 		s.AuditDir(),
 		s.ApprovalsDir(),
+		s.DaemonDir(),
+		s.AuthDir(),
+		s.OperationsDir(),
 	}
 
 	for _, dir := range subdirs {
@@ -190,6 +202,21 @@ func (s *StateDir) AuditDir() string {
 // ApprovalsDir returns the path to the approvals subdirectory.
 func (s *StateDir) ApprovalsDir() string {
 	return filepath.Join(s.root, SubdirApprovals)
+}
+
+// DaemonDir returns the path to the daemon subdirectory.
+func (s *StateDir) DaemonDir() string {
+	return filepath.Join(s.root, SubdirDaemon)
+}
+
+// AuthDir returns the path to the auth subdirectory.
+func (s *StateDir) AuthDir() string {
+	return filepath.Join(s.root, SubdirAuth)
+}
+
+// OperationsDir returns the path to the operations subdirectory.
+func (s *StateDir) OperationsDir() string {
+	return filepath.Join(s.root, SubdirOperations)
 }
 
 func defaultStateDir() (string, error) {

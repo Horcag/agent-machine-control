@@ -160,3 +160,18 @@ func TestDoctorReport_Constructors(t *testing.T) {
 		}
 	})
 }
+
+func TestDiscoveryService_NilObserver(t *testing.T) {
+	svc := app.NewDiscoveryService(nil)
+	ctx := context.Background()
+
+	if _, err := svc.Doctor(ctx); err == nil {
+		t.Errorf("expected error for nil observer in Doctor")
+	}
+	if _, err := svc.List(ctx); err == nil {
+		t.Errorf("expected error for nil observer in List")
+	}
+	if _, err := svc.Inspect(ctx, "c4a523d4-6b99-4d62-a5e2-4752c0f20001"); err == nil {
+		t.Errorf("expected error for nil observer in Inspect")
+	}
+}

@@ -294,3 +294,25 @@ func TestStateDir_Windows_Default(t *testing.T) {
 	t.Setenv("ALLUSERSPROFILE", "")
 	_, _ = statedir.Resolve("")
 }
+
+func TestStateDir_NewSubdirs(t *testing.T) {
+	tempDir := t.TempDir()
+	sd, err := statedir.Resolve(tempDir)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	if sd.DaemonDir() != filepath.Join(tempDir, statedir.SubdirDaemon) {
+		t.Errorf("unexpected DaemonDir: %s", sd.DaemonDir())
+	}
+	if sd.AuthDir() != filepath.Join(tempDir, statedir.SubdirAuth) {
+		t.Errorf("unexpected AuthDir: %s", sd.AuthDir())
+	}
+	if sd.OperationsDir() != filepath.Join(tempDir, statedir.SubdirOperations) {
+		t.Errorf("unexpected OperationsDir: %s", sd.OperationsDir())
+	}
+
+	if err := sd.EnsureDirs(); err != nil {
+		t.Fatalf("EnsureDirs failed: %v", err)
+	}
+}

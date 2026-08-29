@@ -52,3 +52,20 @@ func TestDefaultLivenessChecker_IsAlive(t *testing.T) {
 		t.Logf("recycled start time correctly detected as dead")
 	}
 }
+
+func TestDefaultLivenessChecker_IsAliveWithStartTime(t *testing.T) {
+	provider := &lease.DefaultIdentityProvider{}
+	_, pid, startTime := provider.CurrentIdentity()
+	checker := &lease.DefaultLivenessChecker{}
+
+	alive, err := checker.IsAlive(pid, startTime)
+	if err != nil || !alive {
+		t.Errorf("expected current process with recorded startTime to be alive, got alive=%v err=%v", alive, err)
+	}
+
+	// Mismatched start time
+	alive, err = checker.IsAlive(pid, "9999999999")
+	if err != nil || alive {
+		t.Errorf("expected mismatched startTime to be considered dead, got alive=%v err=%v", alive, err)
+	}
+}

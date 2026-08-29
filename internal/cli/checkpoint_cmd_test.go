@@ -218,7 +218,7 @@ func TestCLI_CheckpointCreate_RequiresDirectMode(t *testing.T) {
 	if code != cli.ExitBackendUnavailable {
 		t.Fatalf("expected ExitBackendUnavailable when --direct is omitted, got %d", code)
 	}
-	if !strings.Contains(stderr.String(), "daemon transport is not yet available; use '--direct'") {
+	if !strings.Contains(stderr.String(), "daemon is unavailable; run 'amcd run' or use '--direct'") {
 		t.Errorf("unexpected stderr: %s", stderr.String())
 	}
 }
@@ -270,7 +270,7 @@ func TestCLI_CheckpointRestore_RequiresDirectMode(t *testing.T) {
 	if code != cli.ExitBackendUnavailable {
 		t.Fatalf("expected ExitBackendUnavailable when --direct is omitted, got %d", code)
 	}
-	if !strings.Contains(stderr.String(), "daemon transport is not yet available; use '--direct'") {
+	if !strings.Contains(stderr.String(), "daemon is unavailable; run 'amcd run' or use '--direct'") {
 		t.Errorf("unexpected stderr: %s", stderr.String())
 	}
 }
@@ -363,5 +363,77 @@ func TestCLI_Checkpoint_ValidationErrors(t *testing.T) {
 				t.Errorf("expected code %d, got %d. stderr: %s", tc.code, code, stderr.String())
 			}
 		})
+	}
+}
+
+func TestCLI_CheckpointList_HumanAndCreateMissingName(t *testing.T) {
+	targetID := "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
+	snapID := "e4a523d4-6b99-4d62-a5e2-4752c0f20001"
+	backend := &mockBackend{
+		listCheckpointsFn: func(_ context.Context, id string) ([]domain.CheckpointObservation, error) {
+			return []domain.CheckpointObservation{
+				{
+					ID:              snapID,
+					Name:            "baseline-snap",
+					VMID:            id,
+					CheckpointType:  "Standard",
+					CreatedAt:       time.Date(2026, 8, 29, 10, 0, 0, 0, time.UTC),
+					ObservedAt:      time.Date(2026, 8, 29, 10, 0, 0, 0, time.UTC),
+					ObservationType: domain.ObservationObserved,
+				},
+			}, nil
+		},
+	}
+	appInstance := setupTestApp(t, backend, nil)
+
+	// 1. Human checkpoint list
+	var stdout, stderr bytes.Buffer
+	code := appInstance.Run([]string{"checkpoint", "list", targetID}, &stdout, &stderr)
+	if code != cli.ExitSuccess {
+		t.Fatalf("checkpoint list human failed: %d", code)
+	}
+	if !strings.Contains(stdout.String(), "baseline-snap") {
+		t.Errorf("expected baseline-snap in output: %s", stdout.String())
+	}
+
+	// 2. Checkpoint create missing --name
+	stderr.Reset()
+	code = appInstance.Run([]string{"--direct", "checkpoint", "create", targetID, "--reason", "test", "--idempotency-key", "key-1"}, &stdout, &stderr)
+	if code != cli.ExitUsage {
+		t.Errorf("expected ExitUsage for missing --name, got %d", code)
+	}
+}
+
+func TestCLI_Checkpoint_UsageAndErrors(t *testing.T) {
+	appInstance := setupTestApp(t, &mockBackend{}, nil)
+	var stdout, stderr bytes.Buffer
+
+	// 1. Missing subcommand
+	if code := appInstance.Run([]string{"checkpoint"}, &stdout, &stderr); code != cli.ExitUsage {
+		t.Errorf("expected ExitUsage for missing subcommand, got %d", code)
+	}
+
+	// 2. Unknown subcommand
+	stderr.Reset()
+	if code := appInstance.Run([]string{"checkpoint", "unknown"}, &stdout, &stderr); code != cli.ExitUsage {
+		t.Errorf("expected ExitUsage for unknown subcommand, got %d", code)
+	}
+
+	// 3. Help
+	stdout.Reset()
+	if code := appInstance.Run([]string{"checkpoint", "help"}, &stdout, &stderr); code != cli.ExitSuccess {
+		t.Errorf("expected ExitSuccess for checkpoint help, got %d", code)
+	}
+
+	// 4. List missing target ID
+	stderr.Reset()
+	if code := appInstance.Run([]string{"checkpoint", "list"}, &stdout, &stderr); code != cli.ExitUsage {
+		t.Errorf("expected ExitUsage for checkpoint list without ID, got %d", code)
+	}
+
+	// 5. Restore missing arguments
+	stderr.Reset()
+	if code := appInstance.Run([]string{"checkpoint", "restore"}, &stdout, &stderr); code != cli.ExitUsage {
+		t.Errorf("expected ExitUsage for checkpoint restore without args, got %d", code)
 	}
 }

@@ -13,8 +13,9 @@ func TestReceipt_Validate(t *testing.T) {
 	completed := started.Add(2 * time.Second)
 	validFp := domain.Fingerprint("sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
 
+	canonicalID := domain.ReceiptID("rcpt-00000000000000000000000000000001")
 	baseReceipt := domain.Receipt{
-		ReceiptID:        "rcpt-001",
+		ReceiptID:        canonicalID,
 		OperationKind:    "machine.inspect",
 		Fingerprint:      validFp,
 		Actor:            "user:alice",
@@ -32,7 +33,7 @@ func TestReceipt_Validate(t *testing.T) {
 		RedactionStatus: domain.RedactionNotApplicable,
 	}
 
-	if baseReceipt.ReceiptID.String() != "rcpt-001" {
+	if baseReceipt.ReceiptID.String() != string(canonicalID) {
 		t.Errorf("ReceiptID.String() mismatch")
 	}
 

@@ -24,6 +24,7 @@ func runMachine(
 	prompter Prompter,
 	nowFn func() time.Time,
 	directMode bool,
+	stateDir string,
 	args []string,
 	stdout, stderr io.Writer,
 ) int {
@@ -38,9 +39,9 @@ func runMachine(
 	case "inspect":
 		return runMachineInspect(ctx, discoverySvc, args[1:], stdout, stderr)
 	case "start":
-		return runMachineStart(ctx, recoverySvc, actor, prompter, nowFn, directMode, args[1:], stdout, stderr)
+		return runMachineStart(ctx, recoverySvc, actor, prompter, nowFn, directMode, stateDir, args[1:], stdout, stderr)
 	case "stop":
-		return runMachineStop(ctx, recoverySvc, actor, prompter, nowFn, directMode, args[1:], stdout, stderr)
+		return runMachineStop(ctx, recoverySvc, actor, prompter, nowFn, directMode, stateDir, args[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		fmt.Fprintln(stdout, "Usage: amc machine <list|inspect|start|stop> [flags] [args]")
 		return ExitSuccess

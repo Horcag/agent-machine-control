@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/app"
+	"github.com/Horcag/agent-machine-control/internal/daemon"
 	"github.com/Horcag/agent-machine-control/internal/domain"
 	"github.com/Horcag/agent-machine-control/internal/receipt"
 )
@@ -22,6 +23,7 @@ func runCheckpoint(
 	prompter Prompter,
 	nowFn func() time.Time,
 	directMode bool,
+	stateDir string,
 	args []string,
 	stdout, stderr io.Writer,
 ) int {
@@ -34,17 +36,9 @@ func runCheckpoint(
 	case "list":
 		return runCheckpointList(ctx, recoverySvc, args[1:], stdout, stderr)
 	case "create":
-		if !directMode {
-			fmt.Fprintln(stderr, "amc checkpoint create: daemon transport is not yet available; use '--direct' for in-process recovery")
-			return ExitBackendUnavailable
-		}
-		return runCheckpointCreate(ctx, recoverySvc, actor, prompter, nowFn, args[1:], stdout, stderr)
+		return runCheckpointCreate(ctx, recoverySvc, actor, prompter, nowFn, directMode, stateDir, args[1:], stdout, stderr)
 	case "restore":
-		if !directMode {
-			fmt.Fprintln(stderr, "amc checkpoint restore: daemon transport is not yet available; use '--direct' for in-process recovery")
-			return ExitBackendUnavailable
-		}
-		return runCheckpointRestore(ctx, recoverySvc, actor, prompter, nowFn, args[1:], stdout, stderr)
+		return runCheckpointRestore(ctx, recoverySvc, actor, prompter, nowFn, directMode, stateDir, args[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		fmt.Fprintln(stdout, "Usage: amc checkpoint <list|create|restore> [flags] [args]")
 		return ExitSuccess
@@ -137,6 +131,8 @@ func runCheckpointCreate(
 	actor domain.ActorContext,
 	prompter Prompter,
 	nowFn func() time.Time,
+	directMode bool,
+	stateDir string,
 	args []string,
 	stdout, stderr io.Writer,
 ) int {
@@ -164,6 +160,10 @@ func runCheckpointCreate(
 	if err := domain.ValidateMachineGUID(targetID); err != nil {
 		fmt.Fprintf(stderr, "amc checkpoint create: invalid machine GUID %q\n", targetID)
 		return ExitUsage
+	}
+
+	if !directMode {
+		return executeDaemonCheckpointCreate(ctx, stateDir, targetID, *name, common, stdout, stderr)
 	}
 
 	appr := common.Approval
@@ -214,4 +214,60 @@ func runCheckpointCreate(
 	fmt.Fprintf(stdout, "Checkpoint ID:    %s\n", snap.ID)
 	fmt.Fprintf(stdout, "Checkpoint Name:  %s\n", snap.Name)
 	return ExitSuccess
+}
+
+func executeDaemonCheckpointCreate(
+	ctx context.Context,
+	stateDir string,
+	targetID string,
+	name string,
+	common *CommonFlags,
+	stdout, stderr io.Writer,
+) int {
+	dReq := daemon.CreateOperationRequest{
+		Kind:           "checkpoint.create",
+		Target:         targetID,
+		Reason:         common.Reason,
+		IdempotencyKey: common.IdempotencyKey,
+		TimeoutSeconds: int(common.Timeout.Seconds()),
+		Parameters:     map[string]any{"name": name},
+	}
+	return executeDaemonMutation(
+		ctx,
+		stateDir,
+		dReq,
+		common.Timeout,
+		common.Async,
+		common.JSON,
+		stdout, stderr,
+		"checkpoint create",
+		func(w io.Writer, _ *daemon.OperationDTO, rcpt *receipt.DTO) {
+			fmt.Fprintf(w, "Checkpoint created successfully.\n")
+			if rcpt != nil {
+				fmt.Fprintf(w, "Receipt ID:       %s\n", rcpt.ReceiptID)
+				if rcpt.RollbackRef != "" {
+					fmt.Fprintf(w, "Checkpoint ID:    %s\n", rcpt.RollbackRef)
+				}
+				fmt.Fprintf(w, "Checkpoint Name:  %s\n", name)
+			}
+		},
+		func(w io.Writer, _ *daemon.OperationDTO, rcpt *receipt.DTO) error {
+			var rcptDTO receipt.DTO
+			if rcpt != nil {
+				rcptDTO = *rcpt
+			}
+			snapDTO := CheckpointOutputDTO{
+				ID:              rcptDTO.RollbackRef,
+				Name:            name,
+				VMID:            targetID,
+				ObservationType: domain.ObservationInferred,
+			}
+			envelope := CheckpointMutationOutputEnvelope{
+				SchemaVersion: SchemaVersion,
+				Receipt:       rcptDTO,
+				Checkpoint:    &snapDTO,
+			}
+			return writeJSON(w, envelope)
+		},
+	)
 }

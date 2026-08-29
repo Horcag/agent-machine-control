@@ -301,3 +301,24 @@ func TestStore_ConcurrentMarkConsumed_ExactlyOneWinner(t *testing.T) {
 		t.Fatalf("expected %d ErrApprovalConsumed, got %d", numWorkers-1, consumedCount)
 	}
 }
+
+func TestStore_CorruptAndMissingFiles(t *testing.T) {
+	dir := t.TempDir()
+	store := approval.NewStore(dir)
+
+	// Symlink in approval file
+	targetFile := filepath.Join(dir, "target.json")
+	_ = os.WriteFile(targetFile, []byte("{}"), 0600)
+	symlinkFile := filepath.Join(dir, "app-symlink.json")
+	_ = os.Symlink(targetFile, symlinkFile)
+	_, err := store.IsConsumed("app-symlink")
+	if err == nil {
+		t.Errorf("expected error for symlink approval file")
+	}
+
+	// Missing file in LoadFromFile
+	_, err = approval.LoadFromFile(filepath.Join(dir, "nonexistent.json"))
+	if err == nil {
+		t.Errorf("expected error loading missing approval file")
+	}
+}

@@ -85,7 +85,7 @@ The following diagram illustrates the trust boundaries separating the system com
  [Direct Invocation]                                    [Approvals & Inspect]
          |                                                       |
          v                                                       v
-+-----------------------+     Named Pipe / Loopback     +---------------------+
++-----------------------+      HTTP/1.1 Loopback        +---------------------+
 |      CLI (`amc`)      | <---------------------------> |   Local UI Bundle   |
 |   (Local user context)|                               |      (`amc-ui`)     |
 +-----------------------+                               +---------------------+
@@ -165,9 +165,9 @@ The following diagram illustrates the trust boundaries separating the system com
    policy, and cannot cross the Windows secure-desktop / UAC boundary.
 10. **Local Operator UI (`amc-ui`)**: Web bundle served locally by `amcd` or presented as an MCP
     App. All operator actions initiated via the UI are authenticated and verified server-side.
-11. **Remote Transport**: Privileged transports bind to local Windows named pipes or loopback
-    interfaces by default. Any remote network transport requires TLS, mutual per-client
-    authentication, and firewall allowlisting.
+11. **Remote Transport**: Privileged transports bind to an authenticated IP-literal loopback HTTP/1.1
+    listener by default. Windows named pipes, remote TLS, and mutual per-client authentication remain
+    future transport work and are not implemented yet.
 12. **Evidence and Audit Storage**: Host-managed, append-only records containing sanitized execution
     traces, approval bindings, and integrity-hashed receipts stored with restricted filesystem
     permissions.

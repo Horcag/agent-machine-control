@@ -22,6 +22,7 @@ type CommonFlags struct {
 	Timeout        time.Duration
 	Approval       *domain.Approval
 	JSON           bool
+	Async          bool
 }
 
 // Prompter prompts the operator for interactive confirmation.
@@ -100,6 +101,7 @@ func parseCommonFlags(fs *flag.FlagSet, args []string, stderr io.Writer, opName 
 	idempotencyKey := fs.String("idempotency-key", "", "unique client idempotency key (required)")
 	timeoutStr := fs.String("timeout", "30s", "maximum operation duration (e.g. 30s, 1m)")
 	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON output")
+	asyncFlag := fs.Bool("async", false, "return operation handle immediately without waiting")
 	_ = fs.String("state-dir", "", "state directory path")
 
 	if err := fs.Parse(args); err != nil {
@@ -136,6 +138,7 @@ func parseCommonFlags(fs *flag.FlagSet, args []string, stderr io.Writer, opName 
 		Timeout:        timeout,
 		Approval:       nil,
 		JSON:           *jsonOutput,
+		Async:          *asyncFlag,
 	}, nil
 }
 

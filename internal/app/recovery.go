@@ -52,6 +52,8 @@ type MutationRequest struct {
 	Timeout        time.Duration
 	Deadline       time.Time
 	Approval       *domain.Approval
+	OnAdmitted     func(ctx context.Context) error
+	OnRunning      func(ctx context.Context) error
 }
 
 // RecoveryService orchestrates in-process direct recovery operations, policy, leases, and receipts.

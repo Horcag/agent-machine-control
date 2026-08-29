@@ -34,7 +34,7 @@ func TestStore_SaveAndLookupIdempotency_ExactMatch(t *testing.T) {
 	}
 
 	r := domain.Receipt{
-		ReceiptID:        "rcpt-1",
+		ReceiptID:        "rcpt-00000000000000000000000000000001",
 		OperationKind:    op.Kind,
 		Fingerprint:      fp,
 		IdempotencyKey:   op.IdempotencyKey,
@@ -86,7 +86,7 @@ func TestStore_LookupIdempotency_CrossActorCollision(t *testing.T) {
 
 	fpAlice, _ := opAlice.Fingerprint()
 	rAlice := domain.Receipt{
-		ReceiptID:        "rcpt-alice",
+		ReceiptID:        "rcpt-0000000000000000000000000000000a",
 		OperationKind:    opAlice.Kind,
 		Fingerprint:      fpAlice,
 		IdempotencyKey:   opAlice.IdempotencyKey,
@@ -136,7 +136,7 @@ func TestStore_LookupIdempotency_ParameterCollision(t *testing.T) {
 
 	fp1, _ := op1.Fingerprint()
 	r1 := domain.Receipt{
-		ReceiptID:        "rcpt-1",
+		ReceiptID:        "rcpt-00000000000000000000000000000001",
 		OperationKind:    op1.Kind,
 		Fingerprint:      fp1,
 		IdempotencyKey:   op1.IdempotencyKey,
@@ -190,7 +190,7 @@ func TestStore_LookupIdempotency_EmptyKey(t *testing.T) {
 
 func TestReceipt_DTO_Conversion_Errors(t *testing.T) {
 	dto := receipt.DTO{
-		ReceiptID:        "rcpt-1",
+		ReceiptID:        "rcpt-00000000000000000000000000000001",
 		OperationKind:    "machine.start",
 		Fingerprint:      "fp-1",
 		Actor:            "user:alice",
@@ -286,7 +286,7 @@ func TestStore_SymlinkAndOverlarge_FailsClosed(t *testing.T) {
 	// Trailing data test
 	_ = os.Remove(overlargePath)
 	trailingPath := dir + "/trailing.json"
-	_ = os.WriteFile(trailingPath, []byte(`{"receipt_id":"rcpt-1"} trailing bytes`), 0600)
+	_ = os.WriteFile(trailingPath, []byte(`{"receipt_id":"rcpt-00000000000000000000000000000001"} trailing bytes`), 0600)
 
 	_, err = store.LookupIdempotency(op)
 	if err == nil {
@@ -296,7 +296,7 @@ func TestStore_SymlinkAndOverlarge_FailsClosed(t *testing.T) {
 	// Invalid timestamp in cached receipt structure test
 	_ = os.Remove(trailingPath)
 	invalidDatePath := dir + "/invalid_date.json"
-	_ = os.WriteFile(invalidDatePath, []byte(`{"receipt_id":"rcpt-1","schema_version":"1","started_at":"bad-date","completed_at":"bad-date"}`), 0600)
+	_ = os.WriteFile(invalidDatePath, []byte(`{"receipt_id":"rcpt-00000000000000000000000000000001","schema_version":"1","started_at":"bad-date","completed_at":"bad-date"}`), 0600)
 
 	_, err = store.LookupIdempotency(op)
 	if err == nil {
@@ -306,7 +306,7 @@ func TestStore_SymlinkAndOverlarge_FailsClosed(t *testing.T) {
 	// Invalid target GUID validation failure in cached receipt
 	_ = os.Remove(invalidDatePath)
 	invalidTargetPath := dir + "/invalid_target.json"
-	_ = os.WriteFile(invalidTargetPath, []byte(`{"schema_version":"1","receipt_id":"rcpt-1","operation_kind":"machine.start","fingerprint":"fp-1","idempotency_key":"key-1","actor":"user:alice","target":"invalid-non-guid","class":"reversible_mutation","effective_backend":"hyperv","started_at":"2026-08-29T12:00:00Z","completed_at":"2026-08-29T12:00:01Z","outcome":{"status":"success","exit_code":0},"observation_type":"observed","rollback_ref":"ref-1","redaction_status":"applied"}`), 0600)
+	_ = os.WriteFile(invalidTargetPath, []byte(`{"schema_version":"1","receipt_id":"rcpt-00000000000000000000000000000001","operation_kind":"machine.start","fingerprint":"fp-1","idempotency_key":"key-1","actor":"user:alice","target":"invalid-non-guid","class":"reversible_mutation","effective_backend":"hyperv","started_at":"2026-08-29T12:00:00Z","completed_at":"2026-08-29T12:00:01Z","outcome":{"status":"success","exit_code":0},"observation_type":"observed","rollback_ref":"ref-1","redaction_status":"applied"}`), 0600)
 
 	_, err = store.LookupIdempotency(op)
 	if err == nil {
@@ -320,7 +320,7 @@ func TestStore_Save_UnwritableDir_Error(t *testing.T) {
 
 	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	r := domain.Receipt{
-		ReceiptID:        "rcpt-1",
+		ReceiptID:        "rcpt-00000000000000000000000000000001",
 		OperationKind:    "machine.start",
 		Fingerprint:      "fp-1",
 		IdempotencyKey:   "key-1",
@@ -423,7 +423,7 @@ func TestStore_Save_CannotOverwrite(t *testing.T) {
 
 	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	r := domain.Receipt{
-		ReceiptID:        "rcpt-1",
+		ReceiptID:        "rcpt-00000000000000000000000000000001",
 		OperationKind:    "machine.start",
 		Fingerprint:      fp,
 		IdempotencyKey:   "key-1",
@@ -469,24 +469,25 @@ func TestStore_StrictJSON_TrailingData(t *testing.T) {
 		t.Fatalf("Fingerprint failed: %v", err)
 	}
 
-	validJSON := `{"receipt_id":"rcpt-trailing","operation_kind":"machine.start","fingerprint":"` + string(fp) + `","idempotency_key":"key-trailing","actor":"user:alice","target":"a0b1c2d3-e4f5-6789-abcd-ef0123456789","class":"reversible_mutation","effective_backend":"hyperv","started_at":"2026-08-29T12:00:00Z","completed_at":"2026-08-29T12:00:01Z","outcome":{"status":"success","exit_code":0},"observation_type":"observed","rollback_ref":"chk-1","redaction_status":"applied"}`
+	canonicalID := "rcpt-0000000000000000000000000000000f"
+	validJSON := `{"receipt_id":"` + canonicalID + `","operation_kind":"machine.start","fingerprint":"` + string(fp) + `","idempotency_key":"key-trailing","actor":"user:alice","target":"a0b1c2d3-e4f5-6789-abcd-ef0123456789","class":"reversible_mutation","effective_backend":"hyperv","started_at":"2026-08-29T12:00:00Z","completed_at":"2026-08-29T12:00:01Z","outcome":{"status":"success","exit_code":0},"observation_type":"observed","rollback_ref":"chk-1","redaction_status":"applied"}`
 
 	// 1. Whitespace trailing is accepted
-	_ = os.WriteFile(dir+"/rcpt-trailing.json", []byte(validJSON+"\n \t \n"), 0600)
+	_ = os.WriteFile(dir+"/"+canonicalID+".json", []byte(validJSON+"\n \t \n"), 0600)
 	rcpt, err := store.LookupIdempotency(op)
 	if err != nil || rcpt == nil {
 		t.Fatalf("expected whitespace trailing data to succeed, got rcpt=%v, err=%v", rcpt, err)
 	}
 
 	// 2. Trailing second object is rejected
-	_ = os.WriteFile(dir+"/rcpt-trailing.json", []byte(validJSON+"\n{\"extra\":1}"), 0600)
+	_ = os.WriteFile(dir+"/"+canonicalID+".json", []byte(validJSON+"\n{\"extra\":1}"), 0600)
 	_, err = store.LookupIdempotency(op)
 	if err == nil {
 		t.Fatalf("expected error for trailing second object in receipt file")
 	}
 
 	// 3. Trailing scalar is rejected
-	_ = os.WriteFile(dir+"/rcpt-trailing.json", []byte(validJSON+"\n42"), 0600)
+	_ = os.WriteFile(dir+"/"+canonicalID+".json", []byte(validJSON+"\n42"), 0600)
 	_, err = store.LookupIdempotency(op)
 	if err == nil {
 		t.Fatalf("expected error for trailing scalar in receipt file")

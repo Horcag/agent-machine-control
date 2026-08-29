@@ -70,9 +70,45 @@ func ValidateApprovalID(s string) error {
 	return ValidateBoundedString(s, 1, 256, ErrInvalidApprovalRecord)
 }
 
-// ValidateReceiptID checks that a receipt identifier is non-empty and well-formed.
+// ValidateOperationID checks that an operation identifier matches the canonical op-<32 lowercase hex> format.
+func ValidateOperationID(s string) error {
+	if len(s) != 35 || !strings.HasPrefix(s, "op-") {
+		return fmt.Errorf("%w: operation ID must be 'op-' followed by 32 lowercase hex characters", ErrInvalidOperationID)
+	}
+	hexPart := s[3:]
+	for i := 0; i < len(hexPart); i++ {
+		c := hexPart[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return fmt.Errorf("%w: operation ID contains non-hexadecimal character %q", ErrInvalidOperationID, c)
+		}
+	}
+	return nil
+}
+
+// ValidateReceiptID checks that a receipt identifier matches the canonical rcpt-<32 lowercase hex> format.
 func ValidateReceiptID(s string) error {
-	return ValidateBoundedString(s, 1, 256, ErrInvalidReceiptID)
+	if len(s) != 37 || !strings.HasPrefix(s, "rcpt-") {
+		return fmt.Errorf("%w: receipt ID must be 'rcpt-' followed by 32 lowercase hex characters", ErrInvalidReceiptID)
+	}
+	hexPart := s[5:]
+	for i := 0; i < len(hexPart); i++ {
+		c := hexPart[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return fmt.Errorf("%w: receipt ID contains non-hexadecimal character %q", ErrInvalidReceiptID, c)
+		}
+	}
+	return nil
+}
+
+// ValidatePathSafeID checks that an identifier contains no path separators, traversal elements, or control characters.
+func ValidatePathSafeID(s string, errBase error) error {
+	if err := ValidateBoundedString(s, 1, 256, errBase); err != nil {
+		return err
+	}
+	if strings.Contains(s, "/") || strings.Contains(s, "\\") || strings.Contains(s, "..") {
+		return fmt.Errorf("%w: identifier cannot contain path separators or traversal characters", errBase)
+	}
+	return nil
 }
 
 // ValidateBackendID checks that an effective backend identifier is non-empty and well-formed.
@@ -97,6 +133,89 @@ func ValidateEvidenceRef(s string) error {
 		if unicode.IsSpace(r) {
 			return fmt.Errorf("%w: evidence ref contains space character", ErrInvalidEvidenceRef)
 		}
+	}
+	return nil
+}
+
+// ValidateOperationParameters validates that operation parameters strictly match canonical schemas for known kinds.
+func ValidateOperationParameters(kind OperationKind, params map[string]any) error {
+	switch kind {
+	case "machine.start":
+		return validateStartParams(params)
+	case "machine.stop":
+		return validateStopParams(params)
+	case "checkpoint.create":
+		return validateCheckpointCreateParams(params)
+	case "checkpoint.restore":
+		return validateCheckpointRestoreParams(params)
+	default:
+		return ErrInvalidOperationKind
+	}
+}
+
+func validateStartParams(params map[string]any) error {
+	if len(params) > 0 {
+		return fmt.Errorf("%w: machine.start does not accept parameters", ErrNonCanonicalParameter)
+	}
+	return nil
+}
+
+func validateStopParams(params map[string]any) error {
+	if len(params) == 0 {
+		return nil
+	}
+	if len(params) > 1 {
+		return fmt.Errorf("%w: machine.stop only accepts 'mode' parameter", ErrNonCanonicalParameter)
+	}
+	modeVal, ok := params["mode"]
+	if !ok {
+		return fmt.Errorf("%w: unexpected parameter for machine.stop", ErrNonCanonicalParameter)
+	}
+	mode, ok := modeVal.(string)
+	if !ok {
+		return fmt.Errorf("%w: mode must be a string", ErrNonCanonicalParameter)
+	}
+	if mode != "shutdown" && mode != "save" && mode != "turn-off" {
+		return fmt.Errorf("%w: invalid mode %q for machine.stop (must be shutdown, save, or turn-off)", ErrNonCanonicalParameter, mode)
+	}
+	return nil
+}
+
+func validateCheckpointCreateParams(params map[string]any) error {
+	if len(params) == 0 {
+		return nil
+	}
+	if len(params) > 1 {
+		return fmt.Errorf("%w: checkpoint.create only accepts 'name' parameter", ErrNonCanonicalParameter)
+	}
+	nameVal, ok := params["name"]
+	if !ok {
+		return fmt.Errorf("%w: unexpected parameter for checkpoint.create", ErrNonCanonicalParameter)
+	}
+	name, ok := nameVal.(string)
+	if !ok {
+		return fmt.Errorf("%w: name must be a string", ErrNonCanonicalParameter)
+	}
+	if err := ValidateBoundedString(name, 1, 256, ErrInvalidCheckpointObservation); err != nil {
+		return fmt.Errorf("%w: invalid checkpoint name: %w", ErrNonCanonicalParameter, err)
+	}
+	return nil
+}
+
+func validateCheckpointRestoreParams(params map[string]any) error {
+	if len(params) != 1 {
+		return fmt.Errorf("%w: checkpoint.restore requires exactly 'checkpoint_id' parameter", ErrNonCanonicalParameter)
+	}
+	chkVal, ok := params["checkpoint_id"]
+	if !ok {
+		return fmt.Errorf("%w: checkpoint.restore requires 'checkpoint_id' parameter", ErrNonCanonicalParameter)
+	}
+	chkID, ok := chkVal.(string)
+	if !ok {
+		return fmt.Errorf("%w: checkpoint_id must be a string", ErrNonCanonicalParameter)
+	}
+	if err := ValidateMachineGUID(chkID); err != nil {
+		return fmt.Errorf("%w: invalid checkpoint GUID: %w", ErrNonCanonicalParameter, err)
 	}
 	return nil
 }

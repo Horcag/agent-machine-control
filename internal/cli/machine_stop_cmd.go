@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/app"
+	"github.com/Horcag/agent-machine-control/internal/daemon"
 	"github.com/Horcag/agent-machine-control/internal/domain"
 	"github.com/Horcag/agent-machine-control/internal/policy"
 	"github.com/Horcag/agent-machine-control/internal/receipt"
@@ -21,14 +22,10 @@ func runMachineStop(
 	prompter Prompter,
 	nowFn func() time.Time,
 	directMode bool,
+	stateDir string,
 	args []string,
 	stdout, stderr io.Writer,
 ) int {
-	if !directMode {
-		fmt.Fprintln(stderr, "amc machine stop: daemon transport is not yet available; use '--direct' for in-process recovery")
-		return ExitBackendUnavailable
-	}
-
 	positionals, flagArgs := splitPositionalAndFlags(args)
 
 	flags := flag.NewFlagSet("machine stop", flag.ContinueOnError)
@@ -54,6 +51,27 @@ func runMachineStop(
 	if err := domain.ValidateMachineGUID(targetID); err != nil {
 		fmt.Fprintf(stderr, "amc machine stop: invalid machine GUID %q\n", targetID)
 		return ExitUsage
+	}
+
+	if !directMode {
+		dReq := daemon.CreateOperationRequest{
+			Kind:           "machine.stop",
+			Target:         targetID,
+			Reason:         common.Reason,
+			IdempotencyKey: common.IdempotencyKey,
+			TimeoutSeconds: int(common.Timeout.Seconds()),
+			Parameters:     map[string]any{"mode": *mode},
+		}
+		return executeMachineStateDaemonMutation(
+			ctx,
+			stateDir,
+			dReq,
+			common,
+			stdout, stderr,
+			"stop",
+			targetID,
+			domain.MachineStateOff,
+		)
 	}
 
 	req := app.MutationRequest{

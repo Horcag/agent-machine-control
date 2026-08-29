@@ -103,15 +103,9 @@ func (s *RecoveryService) executeMutation(
 
 	now := s.now()
 
-	// 3. Rollback point discovery & 4. Policy evaluation
-	rollbackState, rollbackRef := s.discoverRollback(ctx, op, req.TargetID)
-	decision, err := s.evaluateMutationPolicy(ctx, op, req, now, rollbackState)
+	// 3. Rollback discovery & 4. Policy evaluation & 5. Approval check
+	decision, rollbackRef, err := s.prepareAndAuthorizeMutation(ctx, op, req, now)
 	if err != nil {
-		return domain.Receipt{}, err
-	}
-
-	// 5. Approval Verification Check
-	if err := s.verifyApprovalUnconsumed(decision, req); err != nil {
 		return domain.Receipt{}, err
 	}
 
@@ -129,7 +123,11 @@ func (s *RecoveryService) executeMutation(
 		return domain.Receipt{}, err
 	}
 
-	// 8. Provider Execution
+	// 8. Lifecycle hooks & Provider Execution
+	if err := runLifecycleHooks(ctx, req, releaseLease); err != nil {
+		return domain.Receipt{}, err
+	}
+
 	startedAt, completedAt, runErr := s.runProviderExecution(ctx, req, execFn)
 
 	// 9. Receipt Persistence & Terminal Audit
@@ -139,6 +137,43 @@ func (s *RecoveryService) executeMutation(
 	releaseErr := releaseLease()
 
 	return s.finalizeMutation(receiptRecord, runErr, persistErr, releaseErr)
+}
+
+func (s *RecoveryService) prepareAndAuthorizeMutation(
+	ctx context.Context,
+	op domain.Operation,
+	req MutationRequest,
+	now time.Time,
+) (policy.Decision, string, error) {
+	rollbackState, rollbackRef := s.discoverRollback(ctx, op, req.TargetID)
+	decision, err := s.evaluateMutationPolicy(ctx, op, req, now, rollbackState)
+	if err != nil {
+		return policy.Decision{}, "", err
+	}
+	if err := s.verifyApprovalUnconsumed(decision, req); err != nil {
+		return policy.Decision{}, "", err
+	}
+	return decision, rollbackRef, nil
+}
+
+func runLifecycleHooks(ctx context.Context, req MutationRequest, releaseLease func() error) error {
+	if req.OnAdmitted != nil {
+		if err := req.OnAdmitted(ctx); err != nil {
+			if relErr := releaseLease(); relErr != nil {
+				return errors.Join(err, relErr)
+			}
+			return err
+		}
+	}
+	if req.OnRunning != nil {
+		if err := req.OnRunning(ctx); err != nil {
+			if relErr := releaseLease(); relErr != nil {
+				return errors.Join(err, relErr)
+			}
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *RecoveryService) checkPreconditions(op domain.Operation) (*domain.Receipt, error) {

@@ -44,7 +44,7 @@ internal/backends/hyperv host lifecycle, checkpoints, console image/input
 internal/guest/psdirect/ PowerShell Direct commands and bidirectional files
 internal/guest/ssh/      SSH and persistent terminal sessions
 internal/desktop/windows optional Windows-MCP/UIA sidecar adapter
-internal/transport/      named pipe, loopback HTTP, stdio
+internal/transport/      authenticated loopback HTTP/1.1, stdio
 internal/audit/          append-only redacted operation records
 web/                     shared standalone/MCP App operator UI
 ```
@@ -88,8 +88,9 @@ privilege or network path.
 
 ### Fast path and recovery path
 
-- Fast path: client -> `amcd` over a Windows named pipe or authenticated loopback/internal
-  HTTP -> cached session/backend.
+- Fast path: client -> `amcd` over an authenticated IP-literal loopback HTTP/1.1 listener -> cached session/backend.
+  Operator and local agent/MCP clients use separate bearer tokens stored in the local state directory
+  with scoped identities/permissions.
 - Recovery path: `amc --direct` -> local Hyper-V WMI/PowerShell Direct. It must not require
   MCP, the web UI, Windows-MCP, SSH, or `amcd`.
 - MCP path: agent -> `amc-mcp` -> `amcd`; selected safe read operations may use embedded direct
@@ -122,8 +123,11 @@ the standalone local web UI for clients without MCP Apps. Secrets never pass thr
 
 - Store guest credentials in Windows Credential Manager/DPAPI; never in scripts, configs, tool
   arguments, transcripts, or MCP results.
-- Bind privileged services to named pipe/loopback by default. Remote HTTP requires TLS,
-  authentication, per-client identity, and firewall allowlisting.
+- Bind privileged services to an authenticated HTTP/1.1 IP-literal loopback listener by default.
+  Browser Origin requests are rejected and plaintext HTTP/2 is disabled in the current implementation.
+  Windows named pipes/DACLs, Unix-domain sockets/peer credentials, Windows Job Objects, remote TLS/mTLS,
+  and equivalent native OS isolation are not implemented or verified yet; they remain future
+  transport/isolation work and must not be claimed as current protection.
 - Separate lifecycle, terminal, desktop, and destructive permissions.
 - Redact credentials, auth headers, private keys, clipboard contents, and configured patterns.
 - Make checkpoints and evidence capture explicit prerequisites for destructive sandbox tests.
