@@ -241,6 +241,9 @@ func (m *Manager) Read(_ context.Context, id domain.SessionID, caller domain.Act
 	if !caller.HasScope(domain.ScopeSessionRead) {
 		return nil, 0, 0, false, nil, domain.ErrSessionAccessDenied
 	}
+	if err := domain.ValidateSessionID(string(id)); err != nil {
+		return nil, 0, 0, false, nil, err
+	}
 
 	m.mu.RLock()
 	s, ok := m.sessions[id]
@@ -262,6 +265,9 @@ func (m *Manager) Read(_ context.Context, id domain.SessionID, caller domain.Act
 func (m *Manager) Write(ctx context.Context, id domain.SessionID, caller domain.ActorContext, data string, _, _ string) (int, error) {
 	if !caller.HasScope(domain.ScopeSessionWrite) {
 		return 0, domain.ErrSessionAccessDenied
+	}
+	if err := domain.ValidateSessionID(string(id)); err != nil {
+		return 0, err
 	}
 	if len(data) > domain.MaxSessionWriteBytes {
 		return 0, fmt.Errorf("%w: write exceeds maximum limit", domain.ErrNonCanonicalParameter)
@@ -309,6 +315,9 @@ func (m *Manager) Control(ctx context.Context, id domain.SessionID, caller domai
 	if !caller.HasScope(domain.ScopeSessionWrite) {
 		return domain.ErrSessionAccessDenied
 	}
+	if err := domain.ValidateSessionID(string(id)); err != nil {
+		return err
+	}
 
 	m.mu.RLock()
 	s, ok := m.sessions[id]
@@ -344,6 +353,9 @@ func (m *Manager) Control(ctx context.Context, id domain.SessionID, caller domai
 func (m *Manager) Close(ctx context.Context, id domain.SessionID, caller domain.ActorContext, _ string, force bool) (*domain.SessionObservation, error) {
 	if !caller.HasScope(domain.ScopeSessionClose) && !caller.HasScope(domain.ScopeSessionWrite) {
 		return nil, domain.ErrSessionAccessDenied
+	}
+	if err := domain.ValidateSessionID(string(id)); err != nil {
+		return nil, err
 	}
 
 	m.mu.RLock()

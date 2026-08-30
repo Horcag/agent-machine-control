@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/domain"
@@ -62,11 +60,17 @@ func ReconcileCrashedSessions(_ context.Context, sessionsDir string, now time.Ti
 	var reconciled []domain.SessionID
 
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") || !strings.HasPrefix(entry.Name(), "sess-") {
+		if entry.IsDir() {
 			continue
 		}
-
-		filePath := filepath.Join(sessionsDir, entry.Name())
+		candidateID, valid := sessionIDFromStateFilename(entry.Name())
+		if !valid {
+			continue
+		}
+		filePath, err := sessionStatePath(sessionsDir, candidateID)
+		if err != nil {
+			return reconciled, err
+		}
 		id, err := reconcileSessionFile(filePath, now)
 		if err != nil {
 			return reconciled, err

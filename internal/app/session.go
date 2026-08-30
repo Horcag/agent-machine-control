@@ -154,6 +154,9 @@ func (s *SessionService) ReadSession(ctx context.Context, id domain.SessionID, c
 	if !s.hasSensitiveEvidenceScope(caller) {
 		return nil, 0, 0, false, nil, domain.ErrSessionAccessDenied
 	}
+	if err := domain.ValidateSessionID(string(id)); err != nil {
+		return nil, 0, 0, false, nil, err
+	}
 	return s.sessionMgr.Read(ctx, id, caller, afterSeq, limitBytes)
 }
 
@@ -164,6 +167,9 @@ func (s *SessionService) WaitSession(ctx context.Context, id domain.SessionID, c
 	}
 	if !s.hasSensitiveEvidenceScope(caller) {
 		return nil, 0, 0, false, nil, domain.ErrSessionAccessDenied
+	}
+	if err := domain.ValidateSessionID(string(id)); err != nil {
+		return nil, 0, 0, false, nil, err
 	}
 	return s.sessionMgr.Wait(ctx, id, caller, settle, regexStr, afterSeq, timeout)
 }
@@ -180,6 +186,9 @@ func (s *SessionService) ListSessions(ctx context.Context, caller domain.ActorCo
 func (s *SessionService) GetSession(ctx context.Context, id domain.SessionID, caller domain.ActorContext) (*domain.SessionObservation, error) {
 	if !caller.HasScope(domain.ScopeSessionRead) {
 		return nil, domain.ErrSessionAccessDenied
+	}
+	if err := domain.ValidateSessionID(string(id)); err != nil {
+		return nil, err
 	}
 	return s.sessionMgr.Get(ctx, id, caller)
 }

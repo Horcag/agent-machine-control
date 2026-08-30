@@ -81,7 +81,7 @@ func TestReconcileCrashedSessionsLeavesTerminalRecordUntouched(t *testing.T) {
 	assertNoSessionTempFiles(t, dir)
 }
 
-func TestReconcileCrashedSessionsMalformedInputFailsClosed(t *testing.T) {
+func TestReconcileCrashedSessionsSkipsInvalidFilenameID(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "sess-corrupt.json")
 	original := []byte("invalid json")
@@ -89,8 +89,9 @@ func TestReconcileCrashedSessionsMalformedInputFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := sessions.ReconcileCrashedSessions(context.Background(), dir, time.Now().UTC()); err == nil {
-		t.Fatal("malformed session file unexpectedly reconciled")
+	reconciled, err := sessions.ReconcileCrashedSessions(context.Background(), dir, time.Now().UTC())
+	if err != nil || len(reconciled) != 0 {
+		t.Fatalf("invalid-filename reconciliation = %v, %v; want skipped", reconciled, err)
 	}
 	current, err := os.ReadFile(path)
 	if err != nil {
@@ -98,6 +99,27 @@ func TestReconcileCrashedSessionsMalformedInputFailsClosed(t *testing.T) {
 	}
 	if !bytes.Equal(current, original) {
 		t.Fatal("malformed session record was modified")
+	}
+	assertNoSessionTempFiles(t, dir)
+}
+
+func TestReconcileCrashedSessionsMalformedCanonicalRecordFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sess-0123456789abcdef0123456789abcdef.json")
+	original := []byte("invalid json")
+	if err := os.WriteFile(path, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := sessions.ReconcileCrashedSessions(context.Background(), dir, time.Now().UTC()); err == nil {
+		t.Fatal("malformed canonical session record unexpectedly reconciled")
+	}
+	current, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(current, original) {
+		t.Fatal("malformed canonical session record was modified")
 	}
 	assertNoSessionTempFiles(t, dir)
 }

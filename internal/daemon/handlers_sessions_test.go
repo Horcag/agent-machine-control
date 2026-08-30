@@ -209,6 +209,59 @@ func TestDaemonSessions_EndToEnd(t *testing.T) {
 	}
 }
 
+func TestDaemonSessions_EncodedRoutesFailClosed(t *testing.T) {
+	srv, endpoint, token, fakeSSH := setupTestDaemonWithSSH(t)
+	defer func() {
+		if err := srv.Shutdown(context.Background()); err != nil {
+			t.Errorf("shutdown daemon: %v", err)
+		}
+	}()
+	defer fakeSSH.Close()
+
+	status, data := doJSONReq(t, http.MethodPost, endpoint+"/v1/sessions", token, daemon.SessionOpenRequest{
+		Target:         "c4a523d4-6b99-4d62-a5e2-4752c0f20001",
+		Reason:         "encoded route containment",
+		IdempotencyKey: "encoded-route-open",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("open status = %d, body = %s", status, data)
+	}
+	var opened daemon.SessionOpenResponse
+	if err := json.Unmarshal(data, &opened); err != nil {
+		t.Fatal(err)
+	}
+	validID := opened.Session.SessionID
+
+	tests := []struct {
+		name string
+		path string
+	}{
+		{name: "invalid canonical ID", path: "/v1/sessions/not-a-session"},
+		{name: "dot dot", path: "/v1/sessions/%2e%2e"},
+		{name: "encoded backslash", path: "/v1/sessions/..%5coutside"},
+		{name: "encoded slash", path: "/v1/sessions/" + validID + "%2fread"},
+		{name: "mixed separators", path: "/v1/sessions/..%5coutside%2fread"},
+		{name: "double escape", path: "/v1/sessions/%252e%252e%255coutside"},
+		{name: "extra route segments", path: "/v1/sessions/" + validID + "/read/extra"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			status, body := doJSONReq(t, http.MethodGet, endpoint+tt.path, token, nil)
+			if status != http.StatusNotFound {
+				t.Fatalf("status = %d, want %d; body=%s", status, http.StatusNotFound, body)
+			}
+			if bytes.Contains(body, []byte("outside")) || bytes.Contains(body, []byte(validID)) {
+				t.Fatalf("error body disclosed route input: %s", body)
+			}
+		})
+	}
+
+	status, data = doJSONReq(t, http.MethodGet, endpoint+"/v1/sessions/"+validID, token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("valid session route status = %d, want %d; body=%s", status, http.StatusOK, data)
+	}
+}
+
 func TestDaemonSessions_SubSecondTimeoutsReachAppAndTransport(t *testing.T) {
 	dir := t.TempDir()
 	target := "c4a523d4-6b99-4d62-a5e2-4752c0f20001"

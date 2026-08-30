@@ -4,9 +4,9 @@ Agent Machine Control is a local-first control plane for virtual machines that g
 CLI automation, and MCP-capable agents the same policy-enforced operations.
 
 > [!WARNING]
-> This project is pre-alpha. The current binaries implement read-only discovery; mutations,
-> daemon/MCP/session/console control are not yet implemented. Do not use unreleased
-> development builds on production systems.
+> This project is pre-alpha. Discovery, privileged recovery mutations, daemon operations, MCP,
+> and persistent SSH/PTTY sessions are implemented, but live Windows acceptance and the remaining
+> release backlog are incomplete. Do not use unreleased development builds on production systems.
 
 ## Design goals
 
@@ -21,12 +21,12 @@ Hyper-V is the first backend and Windows 10 LTSC is the first acceptance target.
 leaves room for libvirt, VMware, and VirtualBox backends without pretending that their
 capabilities are identical.
 
-## Planned executables
+## Available executables
 
 | Binary | Purpose |
 | --- | --- |
 | `amc` | Human- and agent-friendly CLI, including local `--direct` recovery mode. |
-| `amcd` | Long-lived sessions, events, policy, audit, and operator UI. |
+| `amcd` | Authenticated operations, redacted receipts, audit, and persistent sessions. |
 | `amc-mcp` | Thin stdio and Streamable HTTP adapter over the shared application core. |
 
 ## Implemented commands
@@ -53,6 +53,11 @@ amc --direct checkpoint list <guid>
 amc --direct checkpoint create <guid> --name "pre-maintenance" --reason "snapshotting" --idempotency-key "k-3"
 amc --direct checkpoint restore <guid> <checkpoint-guid> --reason "reverting vm" --idempotency-key "k-4"
 ```
+
+Daemon-backed CLI commands and the MCP adapter expose the same application service for managed
+operations, receipts, audit records, and persistent guest SSH/PTTY sessions. See
+[Persistent SSH sessions](docs/ssh-sessions.md) for session setup, security boundaries, and the
+`session open`, `read`, `write`, `control`, `wait`, `list`, `show`, and `close` commands.
 
 ### JSON mode
 
@@ -84,9 +89,19 @@ Observation and recovery operations require `powershell.exe` in `PATH`, the Wind
 | `7` | `ExitDenied` | Policy evaluation denied the operation, or interactive confirmation was rejected. |
 | `8` | `ExitConflict` | Concurrent lease conflict, fencing violation, or idempotency key collision. |
 
-### Read-only and pre-alpha boundary
+### Privileged-operation boundary
 
-All implemented operations are strictly read-only observation commands (`host.diagnostics`, `machine.list`, `machine.inspect`, `network_adapter.observe`). Mutating, interactive, console, PTY, and sidecar operations are not supported in pre-alpha builds.
+Observation and mutation operations are scope-gated. Mutations carry an actor, reason, deadline,
+and idempotency key and pass through server-owned policy, lease, audit, approval, and redacted
+receipt handling. `amc --direct` keeps an independent in-process recovery path while using the same
+application contracts and shared host coordination. Persistent SSH/PTTY sessions require `amcd`;
+they do not make guest sidecars authoritative for policy, identity, approval, or audit truth.
+
+### Current release backlog
+
+Hyper-V console framebuffer capture and synthetic input, the optional Windows UIA sidecar, the
+operator web/MCP App UI, signed packaging, and the cross-client Windows canary are not complete.
+The repository does not claim live Windows acceptance for these capabilities.
 
 ## Build the bootstrap
 

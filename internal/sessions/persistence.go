@@ -25,7 +25,10 @@ func (m *Manager) persistSession(s *Session) error {
 	if err != nil {
 		return fmt.Errorf("sessions: failed to marshal session %s: %w", obs.ID, err)
 	}
-	filePath := filepath.Join(m.sessionsDir, fmt.Sprintf("%s.json", obs.ID))
+	filePath, err := sessionStatePath(m.sessionsDir, obs.ID)
+	if err != nil {
+		return fmt.Errorf("sessions: failed to resolve session %s state path: %w", obs.ID, err)
+	}
 	if err := replaceSessionFile(filePath, data); err != nil {
 		return fmt.Errorf("sessions: failed to persist session %s: %w", obs.ID, err)
 	}

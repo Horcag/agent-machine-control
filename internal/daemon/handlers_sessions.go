@@ -25,11 +25,30 @@ func (s *Server) dispatchSessions(w http.ResponseWriter, r *http.Request, path s
 		return
 	}
 
+	if escapedPathContainsSeparator(r.URL.EscapedPath()) {
+		s.mapSessionError(w, domain.ErrInvalidSessionID)
+		return
+	}
+	sessID, subparts, err := parseSessionSubroute(path)
+	if err != nil {
+		s.mapSessionError(w, err)
+		return
+	}
+	s.dispatchSessionSubroute(w, r, sessID, subparts)
+}
+
+func parseSessionSubroute(path string) (domain.SessionID, []string, error) {
 	rest := strings.TrimPrefix(path, "sessions/")
 	parts := strings.Split(rest, "/")
-	sessID := domain.SessionID(parts[0])
+	if err := domain.ValidateSessionID(parts[0]); err != nil {
+		return "", nil, err
+	}
+	return domain.SessionID(parts[0]), parts[1:], nil
+}
 
-	s.dispatchSessionSubroute(w, r, sessID, parts[1:])
+func escapedPathContainsSeparator(escapedPath string) bool {
+	escapedPath = strings.ToLower(escapedPath)
+	return strings.Contains(escapedPath, "%2f") || strings.Contains(escapedPath, "%5c")
 }
 
 func (s *Server) dispatchSessionAction(w http.ResponseWriter, r *http.Request, sessID domain.SessionID, action string) {

@@ -3,10 +3,7 @@ package sessions
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/domain"
@@ -16,6 +13,9 @@ import (
 func (m *Manager) Wait(ctx context.Context, id domain.SessionID, caller domain.ActorContext, settle time.Duration, regexStr string, afterSeq uint64, timeout time.Duration) ([]domain.SessionChunk, uint64, uint64, bool, *domain.SessionObservation, error) {
 	if !caller.HasScope(domain.ScopeSessionRead) {
 		return nil, 0, 0, false, nil, domain.ErrSessionAccessDenied
+	}
+	if err := domain.ValidateSessionID(string(id)); err != nil {
+		return nil, 0, 0, false, nil, err
 	}
 
 	m.mu.RLock()
@@ -42,23 +42,29 @@ func (m *Manager) Wait(ctx context.Context, id domain.SessionID, caller domain.A
 	return chunks, nextSeq, lossBytes, true, &obs, err
 }
 
-func (m *Manager) loadDiskSession(id domain.SessionID, caller domain.ActorContext) (*domain.SessionObservation, bool) {
-	if m.sessionsDir == "" {
-		return nil, false
+func (m *Manager) loadDiskSession(id domain.SessionID, caller domain.ActorContext) (*domain.SessionObservation, bool, error) {
+	if err := domain.ValidateSessionID(string(id)); err != nil {
+		return nil, false, err
 	}
-	filePath := filepath.Join(m.sessionsDir, fmt.Sprintf("%s.json", id))
+	if m.sessionsDir == "" {
+		return nil, false, nil
+	}
+	filePath, err := sessionStatePath(m.sessionsDir, id)
+	if err != nil {
+		return nil, false, err
+	}
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, false
+		return nil, false, nil
 	}
 	var obs domain.SessionObservation
 	if err := json.Unmarshal(data, &obs); err != nil {
-		return nil, false
+		return nil, false, nil
 	}
 	if string(caller.EffectiveActor) != string(obs.OwnerActor) && !caller.HasScope(domain.ScopeSessionAdmin) {
-		return nil, false
+		return nil, false, nil
 	}
-	return &obs, true
+	return &obs, true, nil
 }
 
 func (m *Manager) loadDiskSessions(target domain.MachineRef, caller domain.ActorContext, seen map[domain.SessionID]bool) []domain.SessionObservation {
@@ -72,15 +78,18 @@ func (m *Manager) loadDiskSessions(target domain.MachineRef, caller domain.Actor
 
 	var results []domain.SessionObservation
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") || !strings.HasPrefix(entry.Name(), "sess-") {
+		if entry.IsDir() {
 			continue
 		}
-		id := domain.SessionID(strings.TrimSuffix(entry.Name(), ".json"))
+		id, valid := sessionIDFromStateFilename(entry.Name())
+		if !valid {
+			continue
+		}
 		if seen[id] {
 			continue
 		}
-		obs, ok := m.loadDiskSession(id, caller)
-		if !ok {
+		obs, ok, err := m.loadDiskSession(id, caller)
+		if err != nil || !ok {
 			continue
 		}
 		if target != "" && obs.Target != target {
@@ -97,7 +106,6 @@ func (m *Manager) List(_ context.Context, caller domain.ActorContext, target dom
 	if !caller.HasScope(domain.ScopeSessionRead) {
 		return nil, domain.ErrSessionAccessDenied
 	}
-
 	seen := make(map[domain.SessionID]bool)
 	var result []domain.SessionObservation
 
@@ -128,6 +136,9 @@ func (m *Manager) Get(_ context.Context, id domain.SessionID, caller domain.Acto
 	if !caller.HasScope(domain.ScopeSessionRead) {
 		return nil, domain.ErrSessionAccessDenied
 	}
+	if err := domain.ValidateSessionID(string(id)); err != nil {
+		return nil, err
+	}
 
 	m.mu.RLock()
 	s, ok := m.sessions[id]
@@ -142,7 +153,9 @@ func (m *Manager) Get(_ context.Context, id domain.SessionID, caller domain.Acto
 		return &obs, nil
 	}
 
-	if obs, found := m.loadDiskSession(id, caller); found {
+	if obs, found, err := m.loadDiskSession(id, caller); err != nil {
+		return nil, err
+	} else if found {
 		return obs, nil
 	}
 
@@ -152,6 +165,9 @@ func (m *Manager) Get(_ context.Context, id domain.SessionID, caller domain.Acto
 // MutationTarget resolves only the target needed to authorize a session mutation.
 // It enforces ownership without requiring or disclosing session:read metadata.
 func (m *Manager) MutationTarget(id domain.SessionID, caller domain.ActorContext) (domain.MachineRef, error) {
+	if err := domain.ValidateSessionID(string(id)); err != nil {
+		return "", err
+	}
 	m.mu.RLock()
 	s, ok := m.sessions[id]
 	m.mu.RUnlock()
@@ -164,7 +180,9 @@ func (m *Manager) MutationTarget(id domain.SessionID, caller domain.ActorContext
 		s.mu.RUnlock()
 		return target, nil
 	}
-	if obs, found := m.loadDiskSession(id, caller); found {
+	if obs, found, err := m.loadDiskSession(id, caller); err != nil {
+		return "", err
+	} else if found {
 		return obs.Target, nil
 	}
 	return "", domain.ErrSessionNotFound
