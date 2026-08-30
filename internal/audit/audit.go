@@ -92,6 +92,7 @@ type Store struct {
 	mu               sync.Mutex
 	nowFn            func() time.Time
 	syncDirFn        func(dir string) error
+	closeFn          func(*os.File) error
 	livenessChecker  lease.LivenessChecker
 	identityProvider lease.IdentityProvider
 	lockTimeout      time.Duration
@@ -108,6 +109,7 @@ func NewStore(dir string, opts ...Option) *Store {
 		dir:              dir,
 		nowFn:            time.Now,
 		syncDirFn:        statedir.SyncDir,
+		closeFn:          (*os.File).Close,
 		livenessChecker:  &lease.DefaultLivenessChecker{},
 		identityProvider: &lease.DefaultIdentityProvider{},
 		lockTimeout:      5 * time.Second,
@@ -348,17 +350,24 @@ func (s *Store) writeEventContext(ctx context.Context, event Event) error {
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrAuditUnavailable, err)
 	}
-	defer func() { _ = f.Close() }()
 	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
 		return fmt.Errorf("%w: %v", ErrAuditUnavailable, err)
 	}
 	if s.postAppendHook != nil {
 		s.postAppendHook()
 	}
 	if err := f.Sync(); err != nil {
+		_ = f.Close()
 		return fmt.Errorf("%w: audit event appended but file sync failed: %v", ErrAuditUnavailable, err)
 	}
-	_ = f.Close()
+	closeFn := s.closeFn
+	if closeFn == nil {
+		closeFn = (*os.File).Close
+	}
+	if closeErr := closeFn(f); closeErr != nil {
+		return fmt.Errorf("%w: audit event appended but file close failed: %w", ErrAuditUnavailable, closeErr)
+	}
 	syncFn := s.syncDirFn
 	if syncFn == nil {
 		syncFn = statedir.SyncDir

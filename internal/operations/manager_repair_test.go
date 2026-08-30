@@ -56,7 +56,10 @@ func (b *repairBlockingBackend) StartMachine(ctx context.Context, id string) (do
 		}
 	}
 	if b.entered != nil {
-		b.entered <- struct{}{}
+		select {
+		case b.entered <- struct{}{}:
+		default:
+		}
 	}
 	if b.blockChannel != nil {
 		select {
@@ -234,6 +237,9 @@ func TestManager_Over100ConcurrentBlockedBackendCapacity(t *testing.T) {
 
 	if otherErrCount.Load() > 0 {
 		t.Errorf("unexpected errors during concurrent submit: %d", otherErrCount.Load())
+	}
+	if got := acceptedCount.Load(); got > 100 {
+		t.Fatalf("accepted backend calls = %d, capacity must not exceed 100", got)
 	}
 	if acceptedCount.Load() != 100 || busyCount.Load() != int64(totalSubmitters-100) {
 		t.Fatalf("capacity outcomes = accepted %d busy %d, want 100/%d", acceptedCount.Load(), busyCount.Load(), totalSubmitters-100)

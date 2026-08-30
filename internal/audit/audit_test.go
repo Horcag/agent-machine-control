@@ -1,4 +1,4 @@
-package audit_test
+package audit
 
 import (
 	"bytes"
@@ -10,14 +10,33 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Horcag/agent-machine-control/internal/audit"
 	"github.com/Horcag/agent-machine-control/internal/domain"
 )
+
+func testTerminalReceipt() domain.Receipt {
+	return domain.Receipt{
+		ReceiptID:              "rcpt-0123456789abcdef0123456789abcdef",
+		OperationKind:          "session.write",
+		Fingerprint:            "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+		IdempotencyFingerprint: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+		IdempotencyKey:         "audit-close-key",
+		Actor:                  "agent:audit-close",
+		Target:                 "c4a523d4-6b99-4d62-a5e2-4752c0f20001",
+		Class:                  domain.ClassReversibleMutation,
+		EffectiveBackend:       "amcd",
+		StartedAt:              time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC),
+		CompletedAt:            time.Date(2026, 8, 30, 12, 0, 1, 0, time.UTC),
+		Outcome:                domain.ExecutionOutcome{Status: domain.OutcomeSuccess},
+		ObservationType:        domain.ObservationObserved,
+		RollbackRef:            "e4a523d4-6b99-4d62-a5e2-4752c0f20001",
+		RedactionStatus:        domain.RedactionApplied,
+	}
+}
 
 func TestStore_AdmissionAndTerminalOutcome(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	store := audit.NewStore(dir, audit.WithClock(func() time.Time { return now }))
+	store := NewStore(dir, WithClock(func() time.Time { return now }))
 
 	if err := store.CheckWritable(); err != nil {
 		t.Fatalf("expected writable store, got %v", err)
@@ -62,7 +81,7 @@ func TestStore_AdmissionAndTerminalOutcome(t *testing.T) {
 	}
 
 	// Read log file
-	logFile := filepath.Join(dir, audit.AuditFileName)
+	logFile := filepath.Join(dir, AuditFileName)
 	content, err := os.ReadFile(logFile)
 	if err != nil {
 		t.Fatalf("failed to read audit log: %v", err)
@@ -76,8 +95,8 @@ func TestStore_AdmissionAndTerminalOutcome(t *testing.T) {
 func TestEnsureTerminalOutcomeCancellationAfterAppendFinishesDurability(t *testing.T) {
 	dir := t.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())
-	store := audit.NewStore(dir, audit.WithPostAppendHook(cancel))
-	want := terminalReceipt()
+	store := NewStore(dir, WithPostAppendHook(cancel))
+	want := testTerminalReceipt()
 
 	if err := store.EnsureTerminalOutcomeContext(ctx, want); err != nil {
 		t.Fatalf("committed audit event was reclassified by cancellation: %v", err)
@@ -85,10 +104,10 @@ func TestEnsureTerminalOutcomeCancellationAfterAppendFinishesDurability(t *testi
 	if !errors.Is(ctx.Err(), context.Canceled) {
 		t.Fatalf("context error = %v, want canceled after append", ctx.Err())
 	}
-	if err := audit.NewStore(dir).EnsureTerminalOutcome(want); err != nil {
+	if err := NewStore(dir).EnsureTerminalOutcome(want); err != nil {
 		t.Fatalf("exact retry after committed cancellation failed: %v", err)
 	}
-	content, err := os.ReadFile(filepath.Join(dir, audit.AuditFileName))
+	content, err := os.ReadFile(filepath.Join(dir, AuditFileName))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,10 +116,59 @@ func TestEnsureTerminalOutcomeCancellationAfterAppendFinishesDurability(t *testi
 	}
 }
 
+func TestEnsureTerminalOutcomeCloseFailurePreservesCommittedEvidence(t *testing.T) {
+	dir := t.TempDir()
+	closeErr := errors.New("synthetic audit close failure")
+	dirSyncCalls := 0
+	closeCalls := 0
+	store := NewStore(dir, WithSyncDir(func(string) error {
+		dirSyncCalls++
+		return nil
+	}))
+	store.closeFn = func(f *os.File) error {
+		closeCalls++
+		if err := f.Close(); err != nil {
+			t.Fatalf("real file close failed before injection: %v", err)
+		}
+		return closeErr
+	}
+	want := testTerminalReceipt()
+
+	err := store.EnsureTerminalOutcome(want)
+	if !errors.Is(err, ErrAuditUnavailable) || !errors.Is(err, closeErr) {
+		t.Fatalf("close failure = %v, want ErrAuditUnavailable and injected cause", err)
+	}
+	if closeCalls != 1 {
+		t.Fatalf("close calls = %d, want exactly one", closeCalls)
+	}
+	if dirSyncCalls != 0 {
+		t.Fatalf("directory sync calls = %d, want none after failed close", dirSyncCalls)
+	}
+	content, err := os.ReadFile(filepath.Join(dir, AuditFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lines := bytes.Count(content, []byte{'\n'}); lines != 1 {
+		t.Fatalf("audit event count after close failure = %d, want exactly one", lines)
+	}
+
+	store.closeFn = (*os.File).Close
+	if err := store.EnsureTerminalOutcome(want); err != nil {
+		t.Fatalf("exact recovery after close failure failed: %v", err)
+	}
+	content, err = os.ReadFile(filepath.Join(dir, AuditFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lines := bytes.Count(content, []byte{'\n'}); lines != 1 {
+		t.Fatalf("audit event count after exact recovery = %d, want exactly one", lines)
+	}
+}
+
 func TestStore_Unwritable_FailsClosed(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		want := errors.New("synthetic Windows storage failure")
-		store := audit.NewStore(t.TempDir(), audit.WithWritableHook(func(context.Context) error { return want }))
+		store := NewStore(t.TempDir(), WithWritableHook(func(context.Context) error { return want }))
 		if err := store.CheckWritable(); !errors.Is(err, want) {
 			t.Fatalf("injected unwritable error = %v", err)
 		}
@@ -113,7 +181,7 @@ func TestStore_Unwritable_FailsClosed(t *testing.T) {
 	}
 	defer func() { _ = os.Chmod(unwritableDir, 0700) }()
 
-	store := audit.NewStore(unwritableDir)
+	store := NewStore(unwritableDir)
 	if err := store.CheckWritable(); err == nil {
 		t.Fatalf("expected error for unwritable store")
 	}
@@ -121,7 +189,7 @@ func TestStore_Unwritable_FailsClosed(t *testing.T) {
 
 func TestStore_WritableHookFailsClosed(t *testing.T) {
 	want := errors.New("synthetic writable boundary")
-	store := audit.NewStore(t.TempDir(), audit.WithWritableHook(func(context.Context) error { return want }))
+	store := NewStore(t.TempDir(), WithWritableHook(func(context.Context) error { return want }))
 	if err := store.CheckWritable(); !errors.Is(err, want) {
 		t.Fatalf("writable hook error = %v", err)
 	}
@@ -160,9 +228,9 @@ func TestStore_DeadLockOwner_Reclaimed(t *testing.T) {
 		aliveMap: map[int]bool{8888: false}, // dead process!
 	}
 	ident := &mockAuditIdentityProvider{runtimeID: "test-runtime", pid: 9999, startTime: "200"}
-	store := audit.NewStore(dir,
-		audit.WithLivenessChecker(checker),
-		audit.WithIdentityProvider(ident),
+	store := NewStore(dir,
+		WithLivenessChecker(checker),
+		WithIdentityProvider(ident),
 	)
 
 	if err := store.CheckWritable(); err != nil {
@@ -202,10 +270,10 @@ func TestStore_LockReclaim_Blocked(t *testing.T) {
 				aliveMap: map[int]bool{8888: tc.alive},
 			}
 			ident := &mockAuditIdentityProvider{runtimeID: tc.callerRun, pid: 9999, startTime: "200"}
-			store := audit.NewStore(dir,
-				audit.WithLivenessChecker(checker),
-				audit.WithIdentityProvider(ident),
-				audit.WithLockTimeout(50*time.Millisecond),
+			store := NewStore(dir,
+				WithLivenessChecker(checker),
+				WithIdentityProvider(ident),
+				WithLockTimeout(50*time.Millisecond),
 			)
 
 			if err := store.CheckWritable(); err == nil {
@@ -228,10 +296,10 @@ func TestStore_StrictJSON_TrailingData(t *testing.T) {
 		aliveMap: map[int]bool{8888: false},
 	}
 	ident := &mockAuditIdentityProvider{runtimeID: "test-runtime", pid: 9999, startTime: "200"}
-	store := audit.NewStore(dir,
-		audit.WithLivenessChecker(checker),
-		audit.WithIdentityProvider(ident),
-		audit.WithLockTimeout(50*time.Millisecond),
+	store := NewStore(dir,
+		WithLivenessChecker(checker),
+		WithIdentityProvider(ident),
+		WithLockTimeout(50*time.Millisecond),
 	)
 
 	if err := store.CheckWritable(); err != nil {
@@ -250,7 +318,7 @@ func TestStore_StrictJSON_TrailingData(t *testing.T) {
 
 func TestStore_AdmissionAndTerminalValidation(t *testing.T) {
 	dir := t.TempDir()
-	store := audit.NewStore(dir)
+	store := NewStore(dir)
 
 	// RecordAdmissionIntent invalid op
 	if err := store.RecordAdmissionIntent(domain.Operation{}); err == nil {
@@ -258,7 +326,7 @@ func TestStore_AdmissionAndTerminalValidation(t *testing.T) {
 	}
 
 	// CheckWritable on unwritable path
-	unwritableStore := audit.NewStore("/dev/null/impossible/audit/dir")
+	unwritableStore := NewStore("/dev/null/impossible/audit/dir")
 	if err := unwritableStore.CheckWritable(); err == nil {
 		t.Errorf("expected error for unwritable audit path")
 	}
@@ -278,16 +346,16 @@ func TestStore_LockCleanupFailuresAreReturnedAndJoined(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			store := audit.NewStore(dir,
-				audit.WithEnsureHook(func(context.Context, audit.Event) error { return tc.operation }),
-				audit.WithRemoveFunc(func(path string) error {
+			store := NewStore(dir,
+				WithEnsureHook(func(context.Context, Event) error { return tc.operation }),
+				WithRemoveFunc(func(path string) error {
 					if filepath.Base(path) == tc.failBase {
 						return cleanupErr
 					}
 					return os.Remove(path)
 				}),
 			)
-			err := store.EnsureTerminalOutcome(terminalReceipt())
+			err := store.EnsureTerminalOutcome(testTerminalReceipt())
 			if !errors.Is(err, cleanupErr) {
 				t.Fatalf("cleanup error = %v, want injected removal failure", err)
 			}
