@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,6 +20,143 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/statedir"
 	gossh "golang.org/x/crypto/ssh"
 )
+
+type deadlineGuardTransport struct {
+	dialCalls    atomic.Int32
+	cancelOnDial context.CancelFunc
+	channel      *deadlineGuardChannel
+}
+
+func (t *deadlineGuardTransport) Dial(context.Context, domain.MachineRef, uint16, uint16, string) (guestssh.Channel, error) {
+	t.dialCalls.Add(1)
+	if t.cancelOnDial != nil {
+		t.cancelOnDial()
+	}
+	return t.channel, nil
+}
+
+type deadlineGuardChannel struct {
+	done         chan struct{}
+	doneOnce     sync.Once
+	writeCalls   atomic.Int32
+	controlCalls atomic.Int32
+	closeCalls   atomic.Int32
+}
+
+func newDeadlineGuardChannel() *deadlineGuardChannel {
+	return &deadlineGuardChannel{done: make(chan struct{})}
+}
+
+func (c *deadlineGuardChannel) Read([]byte) (int, error) { <-c.done; return 0, io.EOF }
+func (c *deadlineGuardChannel) Write(context.Context, []byte) (int, error) {
+	c.writeCalls.Add(1)
+	return 0, nil
+}
+func (c *deadlineGuardChannel) SendControl(context.Context, domain.ControlKey) error {
+	c.controlCalls.Add(1)
+	return nil
+}
+func (c *deadlineGuardChannel) Resize(uint16, uint16) error { return nil }
+func (c *deadlineGuardChannel) Close(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c.doneOnce.Do(func() {
+		c.closeCalls.Add(1)
+		close(c.done)
+	})
+	return nil
+}
+func (c *deadlineGuardChannel) Wait() (int, error) { <-c.done; return 0, nil }
+
+func deadlineGuardActor(t *testing.T) domain.ActorContext {
+	t.Helper()
+	scopes := domain.NewScopeSet(domain.ScopeSessionOpen, domain.ScopeSessionRead, domain.ScopeSessionWrite, domain.ScopeSessionClose)
+	actor, err := domain.NewActorContext("agent:deadline", "agent:deadline", scopes, scopes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return actor
+}
+
+func deadlineGuardOperation(actor domain.ActorContext, key string) domain.Operation {
+	return domain.Operation{
+		Kind: "session.open", Target: "c4a523d4-6b99-4d62-a5e2-4752c0f20001", Actor: actor,
+		Reason: "verify expired context guard", Deadline: time.Now().Add(time.Minute), IdempotencyKey: key,
+		Classification: domain.ClassReversibleMutation, EvidenceSensitivity: domain.EvidenceSensitivityStandard,
+	}
+}
+
+func TestManagerOpenRejectsExpiredContextAndCleansLateChannel(t *testing.T) {
+	actor := deadlineGuardActor(t)
+
+	t.Run("expired before dial", func(t *testing.T) {
+		transport := &deadlineGuardTransport{channel: newDeadlineGuardChannel()}
+		mgr := sessions.NewManager(t.TempDir(), transport, time.Now)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if _, err := mgr.Open(ctx, deadlineGuardOperation(actor, "expired-before-dial"), 80, 24, "xterm"); !errors.Is(err, context.Canceled) {
+			t.Fatalf("Open error = %v, want context canceled", err)
+		}
+		if got := transport.dialCalls.Load(); got != 0 {
+			t.Fatalf("dial calls = %d, want 0", got)
+		}
+	})
+
+	t.Run("transport returns after expiry", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		channel := newDeadlineGuardChannel()
+		transport := &deadlineGuardTransport{cancelOnDial: cancel, channel: channel}
+		mgr := sessions.NewManager(t.TempDir(), transport, time.Now)
+		if _, err := mgr.Open(ctx, deadlineGuardOperation(actor, "expired-after-dial"), 80, 24, "xterm"); !errors.Is(err, context.Canceled) {
+			t.Fatalf("Open error = %v, want context canceled", err)
+		}
+		if got := transport.dialCalls.Load(); got != 1 {
+			t.Fatalf("dial calls = %d, want 1", got)
+		}
+		if got := channel.closeCalls.Load(); got != 1 {
+			t.Fatalf("cleanup close calls = %d, want 1", got)
+		}
+		listed, err := mgr.List(context.Background(), actor, "")
+		if err != nil || len(listed) != 0 {
+			t.Fatalf("published sessions = %+v, err %v", listed, err)
+		}
+	})
+}
+
+func TestManagerExpiredContextsNeverReachSessionEffects(t *testing.T) {
+	actor := deadlineGuardActor(t)
+	channel := newDeadlineGuardChannel()
+	transport := &deadlineGuardTransport{channel: channel}
+	mgr := sessions.NewManager(t.TempDir(), transport, time.Now)
+	obs, err := mgr.Open(context.Background(), deadlineGuardOperation(actor, "open-for-expired-effects"), 80, 24, "xterm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := mgr.Write(ctx, obs.ID, actor, "x", "expired write", "expired-write"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Write error = %v, want context canceled", err)
+	}
+	if err := mgr.Control(ctx, obs.ID, actor, domain.ControlKeyCtrlC, "expired control", "expired-control"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Control error = %v, want context canceled", err)
+	}
+	if _, err := mgr.Close(ctx, obs.ID, actor, "expired close", false); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Close error = %v, want context canceled", err)
+	}
+	if got := channel.writeCalls.Load(); got != 0 {
+		t.Fatalf("write calls = %d, want 0", got)
+	}
+	if got := channel.controlCalls.Load(); got != 0 {
+		t.Fatalf("control calls = %d, want 0", got)
+	}
+	if got := channel.closeCalls.Load(); got != 0 {
+		t.Fatalf("close calls = %d, want 0", got)
+	}
+	if _, err := mgr.Close(context.Background(), obs.ID, actor, "test cleanup", false); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func setupTestManager(t *testing.T) (*sessions.Manager, *fakeserver.FakeSSHServer, domain.ActorContext, domain.ActorContext, string) {
 	tempDir := t.TempDir()

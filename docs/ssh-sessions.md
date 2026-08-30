@@ -118,10 +118,13 @@ All session mutations (`session.open`, `session.write`, `session.control`, `sess
 
 ### Deadlines and close semantics
 
-The required mutation timeout is forwarded through MCP, client, daemon DTO, application execution
-context, TCP dial, SSH handshake, PTY/session/shell requests, writes, controls, and close. Transport
-cancellation uses connection deadlines and never leaves a detached goroutine able to perform a late
-guest write.
+The required mutation timeout is one end-to-end budget beginning at the application service. It
+includes flight coordination, lease acquisition, server-owned safety resolution, policy and approval,
+durable reservation, TCP dial, SSH handshake, PTY/session/shell requests, writes, controls, and close;
+the budget is never reset at the transport boundary. If it expires before a guest effect begins, AMC
+records and finalizes an aborted zero-effect result, releases the lease, and exact retry cannot perform
+the effect. Transport cancellation uses connection deadlines and never leaves a detached goroutine able
+to perform a late guest write.
 
 Normal close reports success only after transport close succeeds. On transport failure, `force=false`
 leaves local state `closing` (indeterminate) and records a non-success outcome. `force=true` permits

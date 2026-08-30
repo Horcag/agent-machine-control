@@ -236,8 +236,8 @@ func TestDaemonSessions_SubSecondTimeoutsReachAppAndTransport(t *testing.T) {
 	status, data := doJSONReq(t, http.MethodPost, srv.Endpoint()+"/v1/sessions", token, daemon.SessionOpenRequest{
 		Target: target, Reason: "sub-second open", IdempotencyKey: "subsecond-open", TimeoutMillis: 250,
 	})
-	if status != http.StatusOK {
-		t.Fatalf("sub-second open status=%d body=%s", status, data)
+	if !assertSubSecondTransportOutcome(t, transport, "open", status) {
+		return
 	}
 	var opened daemon.SessionOpenResponse
 	if err := json.Unmarshal(data, &opened); err != nil {
@@ -245,18 +245,14 @@ func TestDaemonSessions_SubSecondTimeoutsReachAppAndTransport(t *testing.T) {
 	}
 	sessionPath := srv.Endpoint() + "/v1/sessions/" + opened.Session.SessionID
 
-	status, data = doJSONReq(t, http.MethodPost, sessionPath+"/write", token, daemon.SessionWriteRequest{
+	status, _ = doJSONReq(t, http.MethodPost, sessionPath+"/write", token, daemon.SessionWriteRequest{
 		Data: "x", Reason: "sub-second write", IdempotencyKey: "subsecond-write", TimeoutMillis: 250,
 	})
-	if status != http.StatusOK {
-		t.Fatalf("sub-second write status=%d body=%s", status, data)
-	}
-	status, data = doJSONReq(t, http.MethodPost, sessionPath+"/control", token, daemon.SessionControlRequest{
+	assertSubSecondTransportOutcome(t, transport, "write", status)
+	status, _ = doJSONReq(t, http.MethodPost, sessionPath+"/control", token, daemon.SessionControlRequest{
 		Key: "ctrl-c", Reason: "sub-second control", IdempotencyKey: "subsecond-control", TimeoutMillis: 250,
 	})
-	if status != http.StatusOK {
-		t.Fatalf("sub-second control status=%d body=%s", status, data)
-	}
+	assertSubSecondTransportOutcome(t, transport, "control", status)
 
 	waitStarted := time.Now()
 	status, _ = doJSONReq(t, http.MethodPost, sessionPath+"/wait", token, daemon.SessionWaitRequest{
@@ -269,21 +265,10 @@ func TestDaemonSessions_SubSecondTimeoutsReachAppAndTransport(t *testing.T) {
 		t.Fatalf("40ms daemon wait lasted %v", elapsed)
 	}
 
-	status, data = doJSONReq(t, http.MethodPost, sessionPath+"/close", token, daemon.SessionCloseRequest{
+	status, _ = doJSONReq(t, http.MethodPost, sessionPath+"/close", token, daemon.SessionCloseRequest{
 		Reason: "sub-second close", IdempotencyKey: "subsecond-close", TimeoutMillis: 250,
 	})
-	if status != http.StatusOK {
-		t.Fatalf("sub-second close status=%d body=%s", status, data)
-	}
-
-	transport.mu.Lock()
-	defer transport.mu.Unlock()
-	for _, operation := range []string{"open", "write", "control", "close"} {
-		remaining, ok := transport.remaining[operation]
-		if !ok || remaining <= 0 || remaining > 250*time.Millisecond {
-			t.Errorf("%s transport deadline remaining=%v present=%v, want (0, 250ms]", operation, remaining, ok)
-		}
-	}
+	assertSubSecondTransportOutcome(t, transport, "close", status)
 }
 
 func TestDaemonSessions_ErrorBranches(t *testing.T) {

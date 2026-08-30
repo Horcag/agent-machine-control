@@ -21,8 +21,19 @@ const (
 )
 
 func acquireSessionCloseLane(ctx context.Context, s *Session) error {
+	return acquireSessionLane(ctx, s.closeSem)
+}
+
+func acquireSessionLane(ctx context.Context, lane chan struct{}) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	select {
-	case s.closeSem <- struct{}{}:
+	case lane <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			<-lane
+			return err
+		}
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()

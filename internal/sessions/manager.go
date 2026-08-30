@@ -87,6 +87,26 @@ func (m *Manager) authorize(caller domain.ActorContext, s *Session) bool {
 	return string(caller.EffectiveActor) == string(s.obs.OwnerActor)
 }
 
+func (m *Manager) dialSessionChannel(ctx context.Context, op domain.Operation, cols, rows uint16, term string) (guestssh.Channel, error) {
+	if m.transport == nil {
+		return nil, errors.New("sessions: transport is unconfigured")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	channel, err := m.transport.Dial(ctx, op.Target, cols, rows, term)
+	if err != nil {
+		return nil, err
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), sessionCleanupTimeout)
+		defer cancel()
+		_, _ = closeChannel(cleanupCtx, channel)
+		return nil, ctxErr
+	}
+	return channel, nil
+}
+
 // Open establishes a new persistent SSH terminal session or returns an existing idempotent session.
 func (m *Manager) Open(ctx context.Context, op domain.Operation, cols, rows uint16, term string) (*domain.SessionObservation, error) {
 	if !op.Actor.HasScope(domain.ScopeSessionOpen) && !op.Actor.HasScope(domain.ScopeSessionWrite) {
@@ -123,11 +143,7 @@ func (m *Manager) Open(ctx context.Context, op domain.Operation, cols, rows uint
 	}
 	m.mu.Unlock()
 
-	if m.transport == nil {
-		return nil, errors.New("sessions: transport is unconfigured")
-	}
-
-	channel, err := m.transport.Dial(ctx, op.Target, cols, rows, term)
+	channel, err := m.dialSessionChannel(ctx, op, cols, rows, term)
 	if err != nil {
 		return nil, err
 	}
@@ -265,12 +281,10 @@ func (m *Manager) Write(ctx context.Context, id domain.SessionID, caller domain.
 		return 0, domain.ErrSessionClosed
 	}
 
-	select {
-	case s.writeSem <- struct{}{}:
-		defer func() { <-s.writeSem }()
-	case <-ctx.Done():
-		return 0, ctx.Err()
+	if err := acquireSessionLane(ctx, s.writeSem); err != nil {
+		return 0, err
 	}
+	defer func() { <-s.writeSem }()
 
 	n, err := s.channel.Write(ctx, []byte(data))
 	if err != nil {
@@ -310,12 +324,10 @@ func (m *Manager) Control(ctx context.Context, id domain.SessionID, caller domai
 		return domain.ErrSessionClosed
 	}
 
-	select {
-	case s.writeSem <- struct{}{}:
-		defer func() { <-s.writeSem }()
-	case <-ctx.Done():
-		return ctx.Err()
+	if err := acquireSessionLane(ctx, s.writeSem); err != nil {
+		return err
 	}
+	defer func() { <-s.writeSem }()
 
 	if err := s.channel.SendControl(ctx, key); err != nil {
 		return err
@@ -341,7 +353,7 @@ func (m *Manager) Close(ctx context.Context, id domain.SessionID, caller domain.
 		return nil, domain.ErrSessionNotFound
 	}
 	if err := acquireSessionCloseLane(ctx, s); err != nil {
-		return nil, ctx.Err()
+		return nil, err
 	}
 	defer releaseSessionCloseLane(s)
 	return m.finalizeSession(ctx, s, finalizationExplicitClose, nil, nil, force)

@@ -276,7 +276,12 @@ func (s *SessionService) executeMutation(
 	execute func(context.Context) (int, *domain.SessionObservation, int, error),
 ) (int, *domain.SessionObservation, domain.Receipt, error) {
 	startedAt := s.now()
-	n, obs, exitCode, runErr := execute(execCtx)
+	var n, exitCode int
+	var obs *domain.SessionObservation
+	runErr := execCtx.Err()
+	if runErr == nil {
+		n, obs, exitCode, runErr = execute(execCtx)
+	}
 	completedAt := s.now()
 	if !completedAt.After(startedAt) {
 		completedAt = startedAt.Add(time.Millisecond)
@@ -335,6 +340,14 @@ func (s *SessionService) admitSessionMutation(
 	if err != nil {
 		_ = releaseLease()
 		return nil, nil, err
+	}
+	if ctx.Err() != nil {
+		return &admittedSessionMutation{
+			op: op, fp: fp, idFp: idFp,
+			decision:     policy.Decision{Type: policy.DecisionAllow, EffectiveClass: op.Classification},
+			safety:       safety,
+			releaseLease: releaseLease,
+		}, nil, nil
 	}
 	decision, denialReceipt, err := s.evaluateAndAdmit(op, safety, approval, now, fp, idFp)
 	if err != nil {

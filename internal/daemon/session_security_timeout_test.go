@@ -37,6 +37,33 @@ func (t *deadlineCaptureTransport) record(ctx context.Context, name string) {
 	t.remaining[name] = time.Until(deadline)
 }
 
+func (t *deadlineCaptureTransport) remainingFor(name string) (time.Duration, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	remaining, ok := t.remaining[name]
+	return remaining, ok
+}
+
+func assertSubSecondTransportOutcome(t *testing.T, transport *deadlineCaptureTransport, operation string, status int) bool {
+	t.Helper()
+	remaining, called := transport.remainingFor(operation)
+	switch status {
+	case http.StatusOK:
+		if !called || remaining <= 0 || remaining > 250*time.Millisecond {
+			t.Fatalf("%s transport deadline remaining=%v present=%v, want (0, 250ms]", operation, remaining, called)
+		}
+		return true
+	case http.StatusGatewayTimeout:
+		if called {
+			t.Fatalf("%s transport was called after admission exhausted its budget: remaining=%v", operation, remaining)
+		}
+		return false
+	default:
+		t.Fatalf("%s status=%d, want 200 with positive transport budget or 504 with zero transport effect", operation, status)
+		return false
+	}
+}
+
 func (t *deadlineCaptureTransport) Dial(ctx context.Context, _ domain.MachineRef, _, _ uint16, _ string) (guestssh.Channel, error) {
 	t.record(ctx, "open")
 	reader, writer := io.Pipe()
