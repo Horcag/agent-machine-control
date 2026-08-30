@@ -15,10 +15,6 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/lease"
 )
 
-func (s *Store) withLock(fn func() error) error {
-	return s.withLockContext(context.Background(), fn)
-}
-
 func (s *Store) withLockContext(ctx context.Context, fn func() error) error {
 	if err := ctx.Err(); err != nil {
 		return err

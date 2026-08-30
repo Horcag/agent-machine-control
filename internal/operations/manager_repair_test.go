@@ -23,6 +23,8 @@ import (
 
 type repairBlockingBackend struct {
 	started      atomic.Int64
+	current      atomic.Int64
+	maxCurrent   atomic.Int64
 	blockChannel chan struct{}
 }
 
@@ -44,6 +46,14 @@ func (b *repairBlockingBackend) Capabilities(_ context.Context, _ string) (domai
 
 func (b *repairBlockingBackend) StartMachine(ctx context.Context, id string) (domain.MachineObservation, error) {
 	b.started.Add(1)
+	current := b.current.Add(1)
+	defer b.current.Add(-1)
+	for {
+		observed := b.maxCurrent.Load()
+		if current <= observed || b.maxCurrent.CompareAndSwap(observed, current) {
+			break
+		}
+	}
 	if b.blockChannel != nil {
 		select {
 		case <-b.blockChannel:
@@ -197,14 +207,14 @@ func TestManager_Over100ConcurrentBlockedBackendCapacity(t *testing.T) {
 				Target:              domain.MachineRef(fmt.Sprintf("target-%04d", idx)),
 				Actor:               actor,
 				Reason:              "capacity stress test",
-				Deadline:            time.Now().Add(30 * time.Second),
+				Deadline:            time.Now().Add(5 * time.Minute),
 				IdempotencyKey:      fmt.Sprintf("idemp-cap-%04d", idx),
 				RequiredScopes:      []string{"machine:write"},
 				RequiredCapability:  "machine:start",
 				Classification:      domain.ClassReversibleMutation,
 				EvidenceSensitivity: domain.EvidenceSensitivityStandard,
 			}
-			_, _, err := mgr.Submit(context.Background(), op, 30*time.Second)
+			_, _, err := mgr.Submit(context.Background(), op, 5*time.Minute)
 			switch {
 			case err == nil:
 				acceptedCount.Add(1)
@@ -223,6 +233,9 @@ func TestManager_Over100ConcurrentBlockedBackendCapacity(t *testing.T) {
 	}
 	if acceptedCount.Load() > 100 {
 		t.Errorf("expected at most 100 live operations admitted, got %d", acceptedCount.Load())
+	}
+	if got := backend.maxCurrent.Load(); got > 100 {
+		t.Errorf("backend concurrency = %d, want at most 100", got)
 	}
 	if acceptedCount.Load()+busyCount.Load() != int64(totalSubmitters) {
 		t.Errorf("expected accepted + busy == %d, got %d + %d", totalSubmitters, acceptedCount.Load(), busyCount.Load())

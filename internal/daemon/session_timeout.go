@@ -9,6 +9,10 @@ import (
 // ErrInvalidSessionTimeout indicates a malformed, conflicting, or unrepresentable timeout.
 var ErrInvalidSessionTimeout = errors.New("daemon: invalid session timeout")
 
+// MaxSessionMutationTimeout is the shared upper bound for authenticated HTTP,
+// CLI, and MCP session requests.
+const MaxSessionMutationTimeout = time.Hour
+
 // ResolveSessionTimeout decodes the compatible seconds/milliseconds wire fields without ambiguity.
 func ResolveSessionTimeout(seconds, millis int64, fallback time.Duration) (time.Duration, error) {
 	if seconds < 0 || millis < 0 {
@@ -24,10 +28,21 @@ func ResolveSessionTimeout(seconds, millis int64, fallback time.Duration) (time.
 		return 0, fmt.Errorf("%w: timeout_ms overflows time.Duration", ErrInvalidSessionTimeout)
 	}
 	if seconds != 0 {
-		return time.Duration(seconds) * time.Second, nil
+		timeout := time.Duration(seconds) * time.Second
+		if timeout > MaxSessionMutationTimeout {
+			return 0, fmt.Errorf("%w: timeout exceeds maximum %s", ErrInvalidSessionTimeout, MaxSessionMutationTimeout)
+		}
+		return timeout, nil
 	}
 	if millis != 0 {
-		return time.Duration(millis) * time.Millisecond, nil
+		timeout := time.Duration(millis) * time.Millisecond
+		if timeout > MaxSessionMutationTimeout {
+			return 0, fmt.Errorf("%w: timeout exceeds maximum %s", ErrInvalidSessionTimeout, MaxSessionMutationTimeout)
+		}
+		return timeout, nil
+	}
+	if fallback > MaxSessionMutationTimeout {
+		return 0, fmt.Errorf("%w: fallback timeout exceeds maximum %s", ErrInvalidSessionTimeout, MaxSessionMutationTimeout)
 	}
 	return fallback, nil
 }

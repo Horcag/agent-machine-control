@@ -1,6 +1,7 @@
 package sessions
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -39,6 +40,13 @@ func (m *Manager) persistSession(s *Session) error {
 }
 
 func replaceSessionFile(filePath string, data []byte) error {
+	return replaceSessionFileContext(context.Background(), filePath, data)
+}
+
+func replaceSessionFileContext(ctx context.Context, filePath string, data []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	dir := filepath.Dir(filePath)
 	tmp, err := os.CreateTemp(dir, ".session-*.tmp")
 	if err != nil {
@@ -54,6 +62,9 @@ func replaceSessionFile(filePath string, data []byte) error {
 		return err
 	}
 	if _, err := tmp.Write(data); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := tmp.Sync(); err != nil {

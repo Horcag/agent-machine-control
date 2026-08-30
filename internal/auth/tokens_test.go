@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -45,7 +46,7 @@ func TestAuth_LoadOrCreate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat failed: %v", err)
 	}
-	if opFi.Mode().Perm() != 0600 {
+	if runtime.GOOS != "windows" && opFi.Mode().Perm() != 0600 {
 		t.Errorf("expected token mode 0600, got %o", opFi.Mode().Perm())
 	}
 }
@@ -190,13 +191,15 @@ func TestAuth_Errors(t *testing.T) {
 		t.Errorf("expected error for non-hex token file")
 	}
 
-	// Insecure permissions
-	insecureFile := filepath.Join(dir, auth.OperatorTokenFileName)
-	_ = os.WriteFile(insecureFile, []byte(strings.Repeat("a", 64)+"\n"), 0600)
-	_ = os.Chmod(insecureFile, 0644)
-	_, err = auth.LoadOrCreate(dir)
-	if err == nil {
-		t.Errorf("expected error for insecure permissions token file")
+	if runtime.GOOS != "windows" {
+		// Insecure POSIX permissions.
+		insecureFile := filepath.Join(dir, auth.OperatorTokenFileName)
+		_ = os.WriteFile(insecureFile, []byte(strings.Repeat("a", 64)+"\n"), 0600)
+		_ = os.Chmod(insecureFile, 0644)
+		_, err = auth.LoadOrCreate(dir)
+		if err == nil {
+			t.Errorf("expected error for insecure permissions token file")
+		}
 	}
 
 	// Oversize file

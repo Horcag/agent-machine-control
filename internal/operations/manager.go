@@ -30,6 +30,7 @@ type Manager struct {
 
 	closing      atomic.Bool
 	liveOpsCount atomic.Int64
+	capacity     chan struct{}
 	wg           sync.WaitGroup
 
 	mu                 sync.Mutex
@@ -67,6 +68,7 @@ func NewManager(
 		inFlight:           make(map[string]*inFlightEntry),
 		liveCancels:        make(map[string]context.CancelCauseFunc),
 		finalizationErrors: make(map[string]error),
+		capacity:           make(chan struct{}, 100),
 	}
 	for _, opt := range opts {
 		opt(m)
@@ -96,10 +98,6 @@ func (m *Manager) Submit(ctx context.Context, op domain.Operation, timeout time.
 	if m.closing.Load() {
 		return nil, false, ErrManagerShuttingDown
 	}
-	if m.liveOpsCount.Load() >= 100 {
-		return nil, false, ErrManagerBusy
-	}
-
 	fp, err := validateSubmission(op)
 	if err != nil {
 		return nil, false, err
@@ -111,10 +109,6 @@ func (m *Manager) Submit(ctx context.Context, op domain.Operation, timeout time.
 	if m.closing.Load() {
 		return nil, false, ErrManagerShuttingDown
 	}
-	if m.liveOpsCount.Load() >= 100 {
-		return nil, false, ErrManagerBusy
-	}
-
 	// 1. Check in-flight and on-disk idempotency
 	if op.IdempotencyKey != "" {
 		if rec, found, matchErr := m.checkInFlightAndDisk(op, fp); found || matchErr != nil {
@@ -124,9 +118,15 @@ func (m *Manager) Submit(ctx context.Context, op domain.Operation, timeout time.
 			return rec, found, matchErr
 		}
 	}
+	select {
+	case m.capacity <- struct{}{}:
+	default:
+		return nil, false, ErrManagerBusy
+	}
 
 	rec, execCtx, err := m.initializeNewRecord(ctx, op, fp)
 	if err != nil {
+		<-m.capacity
 		return nil, false, err
 	}
 

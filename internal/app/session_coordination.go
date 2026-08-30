@@ -11,10 +11,13 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/sessions"
 )
 
-func (s *SessionService) evaluatePolicy(op domain.Operation, rollbackState policy.RollbackState, approval *domain.Approval, now time.Time) (policy.Decision, error) {
-	auditWritable := s.auditStore != nil && s.auditStore.CheckWritable() == nil &&
-		s.receiptStore != nil && s.receiptStore.CheckWritable() == nil &&
-		s.mutationJournal != nil && s.mutationJournal.CheckWritable() == nil
+func (s *SessionService) evaluatePolicy(ctx context.Context, op domain.Operation, rollbackState policy.RollbackState, approval *domain.Approval, now time.Time) (policy.Decision, error) {
+	auditWritable := s.auditStore != nil && s.auditStore.CheckWritableContext(ctx) == nil &&
+		s.receiptStore != nil && s.receiptStore.CheckWritableContext(ctx) == nil &&
+		s.mutationJournal != nil && s.mutationJournal.CheckWritableContext(ctx) == nil
+	if err := ctx.Err(); err != nil {
+		return policy.Decision{}, err
+	}
 
 	evalInput := policy.EvaluationInput{
 		Operation:               op,
@@ -97,6 +100,14 @@ func (s *SessionService) acquireMutationLease(
 	}, nil
 }
 
+// mutationLeaseFingerprint binds immutable request identity while deliberately
+// excluding the safety classification that is resolved only after lease ownership.
+func mutationLeaseFingerprint(op domain.Operation) (domain.Fingerprint, error) {
+	leaseOp := op.Clone()
+	leaseOp.Classification = domain.ClassReversibleMutation
+	return leaseOp.Fingerprint()
+}
+
 func (s *SessionService) resolveSafety(ctx context.Context, target domain.MachineRef) SafetyResolution {
 	if s.safetyResolver == nil {
 		return SafetyResolution{Classification: domain.ClassDestructivePrivileged}
@@ -108,7 +119,7 @@ func (s *SessionService) resolveSafety(ctx context.Context, target domain.Machin
 	return sr
 }
 
-func (s *SessionService) checkDestructiveApproval(approval *domain.Approval) error {
+func (s *SessionService) checkDestructiveApproval(ctx context.Context, approval *domain.Approval) error {
 	if approval == nil {
 		return &PolicyDeniedError{
 			Reason:  policy.DenialApprovalRequired,
@@ -118,10 +129,13 @@ func (s *SessionService) checkDestructiveApproval(approval *domain.Approval) err
 	if s.approvalStore == nil {
 		return errors.New("app: approval store is unavailable")
 	}
-	if err := s.approvalStore.CheckWritable(); err != nil {
+	if err := s.approvalStore.CheckWritableContext(ctx); err != nil {
 		return fmt.Errorf("app: approval store is unwritable: %w", err)
 	}
-	consumed, err := s.approvalStore.IsConsumed(string(approval.ID))
+	if err := s.approvalStore.ValidateIssuedContext(ctx, *approval); err != nil {
+		return fmt.Errorf("app: approval provenance is invalid: %w", err)
+	}
+	consumed, err := s.approvalStore.IsConsumedContext(ctx, string(approval.ID))
 	if err != nil {
 		return err
 	}
@@ -131,14 +145,14 @@ func (s *SessionService) checkDestructiveApproval(approval *domain.Approval) err
 	return nil
 }
 
-func (s *SessionService) prepareAuditAndApproval(decision policy.Decision, op domain.Operation, approval *domain.Approval, now time.Time) error {
+func (s *SessionService) prepareAuditAndApproval(ctx context.Context, decision policy.Decision, op domain.Operation, approval *domain.Approval, now time.Time) error {
 	if s.auditStore != nil {
-		if err := s.auditStore.RecordAdmissionIntent(op); err != nil {
+		if err := s.auditStore.RecordAdmissionIntentContext(ctx, op); err != nil {
 			return err
 		}
 	}
 	if decision.EffectiveClass.RequiresApproval() && approval != nil && s.approvalStore != nil {
-		if err := s.approvalStore.MarkConsumed(*approval, now); err != nil {
+		if err := s.approvalStore.MarkConsumedContext(ctx, *approval, now); err != nil {
 			return fmt.Errorf("app: failed to record approval consumption: %w", err)
 		}
 	}
@@ -173,21 +187,25 @@ func waitForInFlight(ctx context.Context, entry *inFlightSessionCall) (sessionMu
 }
 
 func (s *SessionService) evaluateAndAdmit(
+	ctx context.Context,
 	op domain.Operation,
 	safetyRes SafetyResolution,
 	approval *domain.Approval,
 	now time.Time,
 	fp, idFp domain.Fingerprint,
 ) (policy.Decision, *domain.Receipt, error) {
-	decision, pErr := s.evaluatePolicy(op, safetyRes.RollbackState, approval, now)
+	decision, pErr := s.evaluatePolicy(ctx, op, safetyRes.RollbackState, approval, now)
 	if pErr != nil {
-		rcpt, persistErr := s.persistOutcome(op, fp, idFp, decision, now, now, pErr, "", nil, 7, false)
+		if err := ctx.Err(); err != nil {
+			return decision, nil, err
+		}
+		rcpt, persistErr := s.persistOutcome(ctx, op, fp, idFp, decision, now, now, pErr, "", nil, 7, false)
 		return decision, &rcpt, errors.Join(pErr, persistErr)
 	}
 
 	if decision.EffectiveClass.RequiresApproval() {
-		if aErr := s.checkDestructiveApproval(approval); aErr != nil {
-			rcpt, persistErr := s.persistOutcome(op, fp, idFp, decision, now, now, aErr, "", nil, 7, false)
+		if aErr := s.checkDestructiveApproval(ctx, approval); aErr != nil {
+			rcpt, persistErr := s.persistOutcome(ctx, op, fp, idFp, decision, now, now, aErr, "", nil, 7, false)
 			return decision, &rcpt, errors.Join(aErr, persistErr)
 		}
 	}
@@ -289,7 +307,7 @@ func (s *SessionService) admitSessionMutation(
 			releaseLease: releaseLease,
 		}, nil, nil
 	}
-	decision, denialReceipt, err := s.evaluateAndAdmit(op, safety, approval, now, fp, idFp)
+	decision, denialReceipt, err := s.evaluateAndAdmit(ctx, op, safety, approval, now, fp, idFp)
 	if err != nil {
 		return nil, denialReceipt, errors.Join(err, releaseLease())
 	}
@@ -306,13 +324,22 @@ func (s *SessionService) reserveAndPrepareMutation(ctx context.Context, admitted
 	if _, err := s.mutationJournal.ReserveContext(ctx, admitted.op, now); err != nil {
 		return errors.Join(err, admitted.releaseLease())
 	}
-	if err := s.prepareAuditAndApproval(admitted.decision, admitted.op, approval, now); err != nil {
+	if err := s.prepareAuditAndApproval(ctx, admitted.decision, admitted.op, approval, now); err != nil {
 		cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		cancelErr := s.mutationJournal.CancelContext(cancelCtx, admitted.op)
 		cancel()
 		return errors.Join(err, cancelErr, admitted.releaseLease())
 	}
 	return nil
+}
+
+func (s *SessionService) releaseUnexecutedApproval(ctx context.Context, admitted *admittedSessionMutation, approval *domain.Approval, result sessionMutationResult) error {
+	if approval == nil || !admitted.decision.EffectiveClass.RequiresApproval() || result.EffectApplied {
+		return nil
+	}
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	return s.approvalStore.ReleaseUnexecutedContext(releaseCtx, *approval)
 }
 
 func (s *SessionService) coordinateSessionMutation(
@@ -324,6 +351,10 @@ func (s *SessionService) coordinateSessionMutation(
 	execute func(context.Context) (sessionMutationResult, error),
 ) (sessionMutationResult, *domain.Receipt, error) {
 	initialFP, idFp, err := s.validateAndFingerprint(op)
+	if err != nil {
+		return sessionMutationResult{}, nil, err
+	}
+	leaseFP, err := mutationLeaseFingerprint(op)
 	if err != nil {
 		return sessionMutationResult{}, nil, err
 	}
@@ -357,7 +388,7 @@ func (s *SessionService) coordinateSessionMutation(
 			Message: "raw approval objects require an authenticated session administrator",
 		}
 		decision := policy.Decision{Type: policy.DecisionDeny, EffectiveClass: op.Classification}
-		rcpt, persistErr := s.persistOutcome(op, initialFP, idFp, decision, now, now, denial, "", nil, 7, false)
+		rcpt, persistErr := s.persistOutcome(ctx, op, initialFP, idFp, decision, now, now, denial, "", nil, 7, false)
 		finalErr := errors.Join(denial, persistErr)
 		entry.rcpt = rcpt
 		entry.hasReceipt = true
@@ -365,7 +396,7 @@ func (s *SessionService) coordinateSessionMutation(
 		return sessionMutationResult{}, &rcpt, finalErr
 	}
 
-	admitted, denialRcpt, err := s.admitSessionMutation(ctx, op, approval, timeout, initialFP)
+	admitted, denialRcpt, err := s.admitSessionMutation(ctx, op, approval, timeout, leaseFP)
 	if err != nil {
 		entry.err = err
 		if denialRcpt != nil {
@@ -380,6 +411,7 @@ func (s *SessionService) coordinateSessionMutation(
 	}
 
 	result, rcpt, mutErr := s.executeMutation(ctx, admitted.op, admitted.fp, admitted.idFp, admitted.safety, execute)
+	mutErr = errors.Join(mutErr, s.releaseUnexecutedApproval(ctx, admitted, approval, result))
 	releaseErr := admitted.releaseLease()
 
 	entry.result = result

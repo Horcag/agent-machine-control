@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -77,9 +78,11 @@ func TestStateDir_EnsureDirs(t *testing.T) {
 			t.Errorf("expected %q to be a directory", dir)
 		}
 		// On POSIX, check permissions
-		perm := info.Mode().Perm()
-		if perm != statedir.DirPerm {
-			t.Errorf("expected permission %o for %q, got %o", statedir.DirPerm, dir, perm)
+		if runtime.GOOS != "windows" {
+			perm := info.Mode().Perm()
+			if perm != statedir.DirPerm {
+				t.Errorf("expected permission %o for %q, got %o", statedir.DirPerm, dir, perm)
+			}
 		}
 	}
 }
@@ -91,17 +94,17 @@ func TestStateDir_SubdirGetters(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if sd.LeasesDir() != filepath.Join(root, "leases") {
-		t.Errorf("expected leases dir %q, got %q", filepath.Join(root, "leases"), sd.LeasesDir())
+	if sd.LeasesDir() != filepath.Join(sd.Root(), "leases") {
+		t.Errorf("expected leases dir under resolved root, got %q", sd.LeasesDir())
 	}
-	if sd.ReceiptsDir() != filepath.Join(root, "receipts") {
-		t.Errorf("expected receipts dir %q, got %q", filepath.Join(root, "receipts"), sd.ReceiptsDir())
+	if sd.ReceiptsDir() != filepath.Join(sd.Root(), "receipts") {
+		t.Errorf("expected receipts dir under resolved root, got %q", sd.ReceiptsDir())
 	}
-	if sd.AuditDir() != filepath.Join(root, "audit") {
-		t.Errorf("expected audit dir %q, got %q", filepath.Join(root, "audit"), sd.AuditDir())
+	if sd.AuditDir() != filepath.Join(sd.Root(), "audit") {
+		t.Errorf("expected audit dir under resolved root, got %q", sd.AuditDir())
 	}
-	if sd.ApprovalsDir() != filepath.Join(root, "approvals") {
-		t.Errorf("expected approvals dir %q, got %q", filepath.Join(root, "approvals"), sd.ApprovalsDir())
+	if sd.ApprovalsDir() != filepath.Join(sd.Root(), "approvals") {
+		t.Errorf("expected approvals dir under resolved root, got %q", sd.ApprovalsDir())
 	}
 }
 
@@ -131,7 +134,9 @@ func TestStateDir_SubdirSymlink(t *testing.T) {
 	_ = os.MkdirAll(realLeases, 0700)
 
 	symlinkLeases := filepath.Join(root, "leases")
-	_ = os.Symlink(realLeases, symlinkLeases)
+	if err := os.Symlink(realLeases, symlinkLeases); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
 
 	sd, err := statedir.Resolve(root)
 	if err != nil {
@@ -152,7 +157,7 @@ func TestStateDir_RejectSymlink(t *testing.T) {
 
 	symlinkDir := filepath.Join(tempDir, "symlink_dir")
 	if err := os.Symlink(realDir, symlinkDir); err != nil {
-		t.Fatalf("failed to create symlink: %v", err)
+		t.Skipf("symlink creation unavailable: %v", err)
 	}
 
 	sd, err := statedir.Resolve(symlinkDir)
@@ -166,6 +171,9 @@ func TestStateDir_RejectSymlink(t *testing.T) {
 }
 
 func TestStateDir_InsecurePermFix(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX mode enforcement is not the Windows DACL contract")
+	}
 	cases := []struct {
 		name string
 		mode os.FileMode
@@ -208,7 +216,7 @@ func TestStateDir_ParentSymlinkComponent(t *testing.T) {
 
 	symlinkParent := filepath.Join(tempDir, "symlink_parent")
 	if err := os.Symlink(realParent, symlinkParent); err != nil {
-		t.Fatalf("failed to create symlink parent: %v", err)
+		t.Skipf("symlink creation unavailable: %v", err)
 	}
 
 	stateRoot := filepath.Join(symlinkParent, "nested", "state")
@@ -223,6 +231,9 @@ func TestStateDir_ParentSymlinkComponent(t *testing.T) {
 }
 
 func TestStateDir_WSL_And_Defaults(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("WSL detection is Linux-specific")
+	}
 	// WSL env flags
 	t.Setenv("WSL_DISTRO_NAME", "Ubuntu")
 	t.Setenv("WSL_INTEROP", "/run/WSL/1_interop")
@@ -237,6 +248,9 @@ func TestStateDir_WSL_And_Defaults(t *testing.T) {
 }
 
 func TestStateDir_NonWSL_POSIX_Defaults(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX defaults are not the Windows state contract")
+	}
 	t.Setenv(statedir.EnvStateDir, "")
 	t.Setenv("AMC_TEST_NON_WSL", "1")
 
@@ -264,6 +278,9 @@ func TestStateDir_NonWSL_POSIX_Defaults(t *testing.T) {
 }
 
 func TestStateDir_WSL_ResolutionFailure(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("WSL resolution is Linux-specific")
+	}
 	t.Setenv(statedir.EnvStateDir, "")
 	t.Setenv("WSL_DISTRO_NAME", "Ubuntu")
 	t.Setenv("AMC_TEST_WSL_FAIL", "1")

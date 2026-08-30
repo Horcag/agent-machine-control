@@ -408,6 +408,12 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		}
 	}
 
+	// The singleton and endpoint remain authoritative while any admitted manager
+	// work has not drained. A later Shutdown call can resume cleanup safely.
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+
 	// 2. Close event hub to close all subscriber channels and unblock waiting SSE handlers
 	if s.eventHub != nil {
 		if err := s.eventHub.Close(); err != nil {
@@ -418,7 +424,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	// 3. Gracefully shutdown HTTP server
 	if s.httpServer != nil {
 		if err := s.httpServer.Shutdown(ctx); err != nil {
-			errs = append(errs, fmt.Errorf("daemon: http server shutdown failed: %w", err))
+			return fmt.Errorf("daemon: http server shutdown failed; singleton ownership retained: %w", err)
 		}
 	}
 

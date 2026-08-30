@@ -118,29 +118,6 @@ func NewMutationJournal(dir string, opts ...MutationJournalOption) *MutationJour
 	return j
 }
 
-// CheckWritable verifies that the journal can create and remove durable markers.
-func (j *MutationJournal) CheckWritable() error {
-	if j == nil || j.dir == "" {
-		return errors.New("sessions: mutation journal is unavailable")
-	}
-	if err := j.ensureDir(); err != nil {
-		return err
-	}
-	probe := filepath.Join(j.dir, fmt.Sprintf(".write-test-%d", time.Now().UnixNano()))
-	f, err := os.OpenFile(probe, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		return err
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(probe)
-		return err
-	}
-	if err := os.Remove(probe); err != nil {
-		return err
-	}
-	return statedir.SyncDir(j.dir)
-}
-
 func (j *MutationJournal) ensureDir() error {
 	fi, err := os.Lstat(j.dir)
 	if err == nil {

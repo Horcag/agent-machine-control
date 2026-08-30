@@ -31,6 +31,7 @@ type dynamicClassRetryHarness struct {
 	svc       *app.SessionService
 	transport *trackingTransport
 	safety    *dynamicClassSafetyResolver
+	approvals *approval.Store
 	actor     domain.ActorContext
 	target    string
 	now       time.Time
@@ -51,13 +52,14 @@ func newDynamicClassRetryHarness(t *testing.T, resolution app.SafetyResolution) 
 	safety := &dynamicClassSafetyResolver{resolution: resolution}
 	now := time.Date(2026, 8, 30, 10, 0, 0, 0, time.UTC)
 	mgr := sessions.NewManager(sd.SessionsDir(), transport, time.Now)
+	approvalStore := approval.NewStore(sd.ApprovalsDir())
 	svc := app.NewSessionService(
 		mgr,
 		safety,
 		nil,
 		audit.NewStore(sd.AuditDir()),
 		receipt.NewStore(sd.ReceiptsDir()),
-		approval.NewStore(sd.ApprovalsDir()),
+		approvalStore,
 		app.WithSessionClock(func() time.Time { return now }),
 	)
 
@@ -77,6 +79,7 @@ func newDynamicClassRetryHarness(t *testing.T, resolution app.SafetyResolution) 
 		svc:       svc,
 		transport: transport,
 		safety:    safety,
+		approvals: approvalStore,
 		actor:     actor,
 		target:    "c4a523d4-6b99-4d62-a5e2-4752c0f20001",
 		now:       now,
@@ -137,7 +140,7 @@ func destructiveOpenApproval(t *testing.T, h *dynamicClassRetryHarness, params a
 		t.Fatalf("compute approval fingerprint: %v", err)
 	}
 
-	return &domain.Approval{
+	issued := &domain.Approval{
 		ID:              "app-0123456789abcdef0123456789abcdef",
 		Actor:           params.Caller.EffectiveActor,
 		Target:          domain.MachineRef(params.Target),
@@ -147,6 +150,10 @@ func destructiveOpenApproval(t *testing.T, h *dynamicClassRetryHarness, params a
 		IssuedAt:        h.now.Add(-time.Minute),
 		ExpiresAt:       h.now.Add(time.Hour),
 	}
+	if err := h.approvals.Issue(*issued); err != nil {
+		t.Fatalf("issue approval: %v", err)
+	}
+	return issued
 }
 
 func assertTransportEffects(t *testing.T, transport *trackingTransport, dial int32) {

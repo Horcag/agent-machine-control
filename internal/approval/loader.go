@@ -37,9 +37,8 @@ func LoadFromFile(path string) (*domain.Approval, error) {
 		return nil, ErrFileTooLarge
 	}
 
-	// Reject world-writable files on POSIX
-	if fi.Mode().Perm()&0002 != 0 {
-		return nil, ErrInsecurePermissions
+	if err := validateApprovalFilePrivacy(cleanPath, fi); err != nil {
+		return nil, err
 	}
 
 	file, err := os.Open(cleanPath)

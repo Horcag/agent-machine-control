@@ -150,6 +150,14 @@ func validateNoSymlinkComponents(path string) error {
 			return err
 		}
 		if fi.Mode()&os.ModeSymlink != 0 {
+			canonical, allowed, aliasErr := allowedSystemPathAlias(current)
+			if aliasErr != nil {
+				return aliasErr
+			}
+			if allowed {
+				current = canonical
+				continue
+			}
 			return fmt.Errorf("%w: symlink component detected at %q", ErrSymlinkNotAllowed, current)
 		}
 	}
@@ -170,7 +178,7 @@ func validateExistingDir(dir string, fi os.FileInfo) error {
 			}
 		}
 	}
-	return nil
+	return ensurePlatformPrivateDirectory(dir)
 }
 
 func createAndValidateDir(dir string) error {
@@ -188,7 +196,7 @@ func createAndValidateDir(dir string) error {
 			return fmt.Errorf("%w: failed to enforce mode 0700 on %q: %v", ErrInsecurePermissions, dir, err)
 		}
 	}
-	return nil
+	return ensurePlatformPrivateDirectory(dir)
 }
 
 // Root returns the root state directory path.

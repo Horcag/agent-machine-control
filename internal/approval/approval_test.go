@@ -1,6 +1,7 @@
 package approval_test
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -175,6 +176,12 @@ func TestStore_MarkConsumed(t *testing.T) {
 	if err != nil || consumed {
 		t.Fatalf("expected not consumed, got consumed=%v, err=%v", consumed, err)
 	}
+	if err := store.MarkConsumed(app, now.Add(time.Minute)); !errors.Is(err, approval.ErrApprovalNotIssued) {
+		t.Fatalf("forged approval consumption error = %v, want ErrApprovalNotIssued", err)
+	}
+	if err := store.Issue(app); err != nil {
+		t.Fatalf("Issue failed: %v", err)
+	}
 
 	if err := store.MarkConsumed(app, now.Add(time.Minute)); err != nil {
 		t.Fatalf("MarkConsumed failed: %v", err)
@@ -205,6 +212,82 @@ func TestStore_MarkConsumed(t *testing.T) {
 	badStore := approval.NewStore(filepath.Join(dir, "nonexistent-subdir"))
 	if err := badStore.MarkConsumed(app, now); err == nil {
 		t.Fatalf("expected error on MarkConsumed with non-existent directory")
+	}
+}
+
+func TestStore_IssueAndValidateProvenance(t *testing.T) {
+	dir := t.TempDir()
+	store := approval.NewStore(dir)
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	issued := domain.Approval{
+		ID: "app-issued-1", Actor: "user:operator", Target: "a0b1c2d3-e4f5-6789-abcd-ef0123456789",
+		AuthorizedClass: domain.ClassDestructivePrivileged,
+		Fingerprint:     "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+		IdempotencyKey:  "issued-key-1", IssuedAt: now, ExpiresAt: now.Add(time.Hour),
+	}
+	if err := store.Issue(issued); err != nil {
+		t.Fatalf("Issue failed: %v", err)
+	}
+	if err := store.ValidateIssuedContext(context.Background(), issued); err != nil {
+		t.Fatalf("ValidateIssuedContext failed: %v", err)
+	}
+	if err := store.Issue(issued); err == nil {
+		t.Fatal("duplicate issuance unexpectedly replaced immutable authority")
+	}
+	copied := issued
+	copied.IdempotencyKey = "copied-key"
+	if err := store.ValidateIssuedContext(context.Background(), copied); !errors.Is(err, approval.ErrApprovalNotIssued) {
+		t.Fatalf("copied approval error = %v, want ErrApprovalNotIssued", err)
+	}
+	missing := issued
+	missing.ID = "app-missing-issued"
+	if err := store.ValidateIssuedContext(context.Background(), missing); !errors.Is(err, approval.ErrApprovalNotIssued) {
+		t.Fatalf("missing approval error = %v, want ErrApprovalNotIssued", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := store.IssueContext(ctx, missing); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled issuance error = %v", err)
+	}
+	if err := store.ValidateIssuedContext(ctx, issued); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled validation error = %v", err)
+	}
+	if err := store.MarkConsumedContext(ctx, issued, now.Add(time.Minute)); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled consumption error = %v", err)
+	}
+	if err := store.Issue(domain.Approval{}); err == nil {
+		t.Fatal("invalid approval was issued")
+	}
+	corrupt := issued
+	corrupt.ID = "app-corrupt-issued"
+	if err := os.WriteFile(filepath.Join(dir, string(corrupt.ID)+".issued.json"), []byte("not-json"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ValidateIssuedContext(context.Background(), corrupt); err == nil {
+		t.Fatal("corrupt issuance record was accepted")
+	}
+}
+
+func TestStore_ReleasesConsumedApprovalOnlyForMatchingUnexecutedAuthority(t *testing.T) {
+	store := approval.NewStore(t.TempDir())
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	issued := domain.Approval{
+		ID: "app-release-1", Actor: "user:operator", Target: "a0b1c2d3-e4f5-6789-abcd-ef0123456789",
+		AuthorizedClass: domain.ClassDestructivePrivileged,
+		Fingerprint:     "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+		IdempotencyKey:  "release-key-1", IssuedAt: now, ExpiresAt: now.Add(time.Hour),
+	}
+	if err := store.Issue(issued); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkConsumed(issued, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReleaseUnexecutedContext(context.Background(), issued); err != nil {
+		t.Fatal(err)
+	}
+	if consumed, err := store.IsConsumed(string(issued.ID)); err != nil || consumed {
+		t.Fatalf("released approval consumed=%v err=%v", consumed, err)
 	}
 }
 
@@ -280,6 +363,9 @@ func TestStore_ConcurrentMarkConsumed_ExactlyOneWinner(t *testing.T) {
 		IssuedAt:        now,
 		ExpiresAt:       now.Add(time.Hour),
 	}
+	if err := store.Issue(app); err != nil {
+		t.Fatalf("Issue failed: %v", err)
+	}
 
 	numWorkers := 10
 	var successCount int
@@ -325,14 +411,14 @@ func TestStore_CorruptAndMissingFiles(t *testing.T) {
 	targetFile := filepath.Join(dir, "target.json")
 	_ = os.WriteFile(targetFile, []byte("{}"), 0600)
 	symlinkFile := filepath.Join(dir, "app-symlink.json")
-	_ = os.Symlink(targetFile, symlinkFile)
-	_, err := store.IsConsumed("app-symlink")
-	if err == nil {
-		t.Errorf("expected error for symlink approval file")
+	if err := os.Symlink(targetFile, symlinkFile); err == nil {
+		if _, err := store.IsConsumed("app-symlink"); err == nil {
+			t.Errorf("expected error for symlink approval file")
+		}
 	}
 
 	// Missing file in LoadFromFile
-	_, err = approval.LoadFromFile(filepath.Join(dir, "nonexistent.json"))
+	_, err := approval.LoadFromFile(filepath.Join(dir, "nonexistent.json"))
 	if err == nil {
 		t.Errorf("expected error loading missing approval file")
 	}

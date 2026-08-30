@@ -8,6 +8,9 @@ import (
 )
 
 var (
+	// ErrApprovalNotIssued indicates the server has no matching immutable issuance record.
+	ErrApprovalNotIssued = errors.New("approval: approval was not issued by this server")
+
 	// ErrSymlinkNotAllowed indicates an approval file is a symlink.
 	ErrSymlinkNotAllowed = errors.New("approval: approval file cannot be a symbolic link")
 

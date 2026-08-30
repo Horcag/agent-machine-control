@@ -50,7 +50,10 @@ func NewLocalKeyProvider(sd *statedir.StateDir) *LocalKeyProvider {
 	return &LocalKeyProvider{stateDir: sd}
 }
 
-func validateStrictFile(path string) ([]byte, error) {
+func validateStrictFileContext(ctx context.Context, path string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	cleaned := filepath.Clean(path)
 	walkPaths, err := strictFileWalkPaths(
 		cleaned,
@@ -63,6 +66,9 @@ func validateStrictFile(path string) ([]byte, error) {
 	}
 
 	for _, current := range walkPaths {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		fi, err := os.Lstat(current)
 		if err != nil {
 			return nil, err
@@ -79,11 +85,33 @@ func validateStrictFile(path string) ([]byte, error) {
 	if !fi.Mode().IsRegular() {
 		return nil, fmt.Errorf("security: %q is not a regular file", cleaned)
 	}
+	if fi.Size() > maxProtectedFileSize {
+		return nil, fmt.Errorf("security: file %q exceeds maximum size", cleaned)
+	}
 	if runtime.GOOS != "windows" && fi.Mode().Perm()&0077 != 0 {
 		return nil, fmt.Errorf("security: file %q has insecure permissions %04o; must be 0600", cleaned, fi.Mode().Perm())
 	}
 
-	return os.ReadFile(cleaned)
+	file, err := os.Open(cleaned)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return io.ReadAll(&contextFileReader{ctx: ctx, reader: io.LimitReader(file, maxProtectedFileSize+1)})
+}
+
+const maxProtectedFileSize = 64 * 1024
+
+type contextFileReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r *contextFileReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(p)
 }
 
 func strictFileWalkPaths(cleaned, volume, separator string, absolute bool) ([]string, error) {
@@ -127,6 +155,11 @@ func strictFileWalkPaths(cleaned, volume, separator string, absolute bool) ([]st
 
 // GetMachineConfig loads the server-owned machine configuration.
 func (p *LocalKeyProvider) GetMachineConfig(target domain.MachineRef) (*MachineSSHConfig, error) {
+	return p.GetMachineConfigContext(context.Background(), target)
+}
+
+// GetMachineConfigContext loads server-owned machine configuration within the caller's deadline.
+func (p *LocalKeyProvider) GetMachineConfigContext(ctx context.Context, target domain.MachineRef) (*MachineSSHConfig, error) {
 	if p.stateDir == nil {
 		return nil, errors.New("ssh: state directory is unconfigured")
 	}
@@ -136,7 +169,7 @@ func (p *LocalKeyProvider) GetMachineConfig(target domain.MachineRef) (*MachineS
 	}
 
 	cfgPath := filepath.Join(p.stateDir.MachinesDir(), targetID, "config.json")
-	data, err := validateStrictFile(cfgPath)
+	data, err := validateStrictFileContext(ctx, cfgPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("%w: machine config not found for %s", domain.ErrSessionNotFound, targetID)
@@ -158,12 +191,12 @@ func (p *LocalKeyProvider) GetMachineConfig(target domain.MachineRef) (*MachineS
 }
 
 // GetClientSigner loads and parses a private key file for the target.
-func (p *LocalKeyProvider) GetClientSigner(_ context.Context, target domain.MachineRef) (gossh.Signer, error) {
+func (p *LocalKeyProvider) GetClientSigner(ctx context.Context, target domain.MachineRef) (gossh.Signer, error) {
 	if p.stateDir == nil {
 		return nil, errors.New("ssh: state directory is unconfigured")
 	}
 	alias := "default"
-	cfg, err := p.GetMachineConfig(target)
+	cfg, err := p.GetMachineConfigContext(ctx, target)
 	if err == nil && cfg.DefaultKeyAlias != "" {
 		alias = cfg.DefaultKeyAlias
 	}
@@ -172,7 +205,7 @@ func (p *LocalKeyProvider) GetClientSigner(_ context.Context, target domain.Mach
 		return nil, fmt.Errorf("ssh: invalid key alias: %w", err)
 	}
 
-	data, err := loadPrivateKeyMaterial(p.stateDir.KeysDir(), alias)
+	data, err := loadPrivateKeyMaterialContext(ctx, p.stateDir.KeysDir(), alias)
 	if err != nil {
 		return nil, fmt.Errorf("ssh: failed to load protected private key for configured alias: %w", err)
 	}
@@ -193,8 +226,8 @@ func zeroBytes(data []byte) {
 }
 
 // GetHostKeyCallback constructs a strict host key pinning validator.
-func (p *LocalKeyProvider) GetHostKeyCallback(_ context.Context, target domain.MachineRef) (gossh.HostKeyCallback, error) {
-	cfg, err := p.GetMachineConfig(target)
+func (p *LocalKeyProvider) GetHostKeyCallback(ctx context.Context, target domain.MachineRef) (gossh.HostKeyCallback, error) {
+	cfg, err := p.GetMachineConfigContext(ctx, target)
 	if err != nil {
 		return nil, err
 	}
@@ -216,8 +249,8 @@ func (p *LocalKeyProvider) GetHostKeyCallback(_ context.Context, target domain.M
 }
 
 // GetGuestUser returns the effective SSH username for the target VM.
-func (p *LocalKeyProvider) GetGuestUser(_ context.Context, target domain.MachineRef) (string, error) {
-	cfg, err := p.GetMachineConfig(target)
+func (p *LocalKeyProvider) GetGuestUser(ctx context.Context, target domain.MachineRef) (string, error) {
+	cfg, err := p.GetMachineConfigContext(ctx, target)
 	if err == nil && cfg.User != "" {
 		return cfg.User, nil
 	}
@@ -225,8 +258,8 @@ func (p *LocalKeyProvider) GetGuestUser(_ context.Context, target domain.Machine
 }
 
 // GetGuestEndpoint returns the connection address (e.g. 192.168.100.2:22 or 127.0.0.1:2222) for the target VM.
-func (p *LocalKeyProvider) GetGuestEndpoint(_ context.Context, target domain.MachineRef) (string, error) {
-	cfg, err := p.GetMachineConfig(target)
+func (p *LocalKeyProvider) GetGuestEndpoint(ctx context.Context, target domain.MachineRef) (string, error) {
+	cfg, err := p.GetMachineConfigContext(ctx, target)
 	if err != nil {
 		return "", err
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -72,6 +73,14 @@ func TestStore_AdmissionAndTerminalOutcome(t *testing.T) {
 }
 
 func TestStore_Unwritable_FailsClosed(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		want := errors.New("synthetic Windows storage failure")
+		store := audit.NewStore(t.TempDir(), audit.WithWritableHook(func(context.Context) error { return want }))
+		if err := store.CheckWritable(); !errors.Is(err, want) {
+			t.Fatalf("injected unwritable error = %v", err)
+		}
+		return
+	}
 	dir := t.TempDir()
 	unwritableDir := filepath.Join(dir, "readonly")
 	if err := os.Mkdir(unwritableDir, 0500); err != nil {
@@ -82,6 +91,14 @@ func TestStore_Unwritable_FailsClosed(t *testing.T) {
 	store := audit.NewStore(unwritableDir)
 	if err := store.CheckWritable(); err == nil {
 		t.Fatalf("expected error for unwritable store")
+	}
+}
+
+func TestStore_WritableHookFailsClosed(t *testing.T) {
+	want := errors.New("synthetic writable boundary")
+	store := audit.NewStore(t.TempDir(), audit.WithWritableHook(func(context.Context) error { return want }))
+	if err := store.CheckWritable(); !errors.Is(err, want) {
+		t.Fatalf("writable hook error = %v", err)
 	}
 }
 

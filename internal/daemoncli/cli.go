@@ -96,9 +96,19 @@ func runDaemon(args []string, stdout, stderr io.Writer) int {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = srv.Shutdown(shutdownCtx)
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		return reportShutdownFailure(stderr, err)
+	}
 
 	return ExitSuccess
+}
+
+func reportShutdownFailure(stderr io.Writer, err error) int {
+	if err == nil {
+		return ExitSuccess
+	}
+	fmt.Fprintln(stderr, "amcd: shutdown failed; daemon ownership retained for safe retry")
+	return ExitBackendUnavailable
 }
 
 func statusDaemon(args []string, stdout, stderr io.Writer) int {

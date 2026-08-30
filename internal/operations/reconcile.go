@@ -23,13 +23,16 @@ func ReconcileCrashedOperations(
 	eventHub *events.Hub,
 	now time.Time,
 ) ([]string, error) {
-	records, err := ListRecords(dir, ListOptions{Limit: 1000})
+	records, err := ListRecordsContext(ctx, dir, ListOptions{Limit: 1000})
 	if err != nil {
 		return nil, err
 	}
 
 	var reconciled []string
 	for _, rec := range records {
+		if err := ctx.Err(); err != nil {
+			return reconciled, err
+		}
 		if rec.State.IsTerminal() {
 			continue
 		}
@@ -40,12 +43,12 @@ func ReconcileCrashedOperations(
 		rec.ErrorMessage = "daemon terminated unexpectedly during execution"
 		rec.CompletedAt = now
 
-		rcptID, err := ensureSyntheticReceipt(&rec, receiptStore, auditStore, now)
+		rcptID, err := ensureSyntheticReceiptContext(ctx, &rec, receiptStore, auditStore, now)
 		if err != nil {
 			return reconciled, fmt.Errorf("operations: failed to create synthetic receipt during crash recovery: %w", err)
 		}
 
-		if err := SaveRecord(dir, rec); err != nil {
+		if err := SaveRecordContext(ctx, dir, rec); err != nil {
 			return reconciled, fmt.Errorf("operations: failed to persist reconciled record %s: %w", rec.ID, err)
 		}
 
@@ -70,6 +73,16 @@ func ReconcileCrashedOperations(
 }
 
 func ensureSyntheticReceipt(
+	rec *domain.OperationRecord,
+	receiptStore *receipt.Store,
+	auditStore *audit.Store,
+	now time.Time,
+) (string, error) {
+	return ensureSyntheticReceiptContext(context.Background(), rec, receiptStore, auditStore, now)
+}
+
+func ensureSyntheticReceiptContext(
+	ctx context.Context,
 	rec *domain.OperationRecord,
 	receiptStore *receipt.Store,
 	auditStore *audit.Store,
@@ -104,12 +117,12 @@ func ensureSyntheticReceipt(
 		ObservationType: domain.ObservationInferred,
 		RedactionStatus: domain.RedactionApplied,
 	}
-	if err := receiptStore.Save(rcpt); err != nil {
+	if err := receiptStore.EnsureContext(ctx, rcpt); err != nil {
 		return "", fmt.Errorf("failed to save synthetic receipt: %w", err)
 	}
 	rec.ReceiptID = domain.ReceiptID(generated)
 	if auditStore != nil {
-		if err := auditStore.RecordTerminalOutcome(rcpt); err != nil {
+		if err := auditStore.EnsureTerminalOutcomeContext(ctx, rcpt); err != nil {
 			return generated, fmt.Errorf("failed to record synthetic audit outcome: %w", err)
 		}
 	}

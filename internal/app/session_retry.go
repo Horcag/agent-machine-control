@@ -63,12 +63,21 @@ func (s *SessionService) lookupSessionRetry(ctx context.Context, op domain.Opera
 	if cached == nil {
 		return 0, nil, nil, false, nil
 	}
-	rcpt, retryErr := s.handleExactRetry(cached)
+	rcpt, retryErr := s.handleExactRetry(ctx, cached)
 	return 0, nil, rcpt, true, retryErr
 }
 
-func (s *SessionService) handleExactRetry(cached *domain.Receipt) (*domain.Receipt, error) {
+func (s *SessionService) handleExactRetry(ctx context.Context, cached *domain.Receipt) (*domain.Receipt, error) {
 	if cached.Outcome.Status == domain.OutcomeDenied {
+		if s.auditStore == nil {
+			return cached, errors.New("app: cached denial audit store is unavailable")
+		}
+		if err := s.auditStore.EnsureTerminalOutcomeContext(ctx, *cached); err != nil {
+			return cached, fmt.Errorf("app: cached denial audit reconciliation failed: %w", err)
+		}
+		if err := s.auditStore.VerifyTerminalOutcomeContext(ctx, *cached); err != nil {
+			return cached, fmt.Errorf("app: cached denial audit verification failed: %w", err)
+		}
 		return cached, &PolicyDeniedError{Reason: policy.DenialReason(cached.Outcome.ErrorCategory), Message: cached.Outcome.ErrorMessage}
 	}
 	return cached, errors.New("app: terminal session receipt is missing its durable mutation reservation")
@@ -140,6 +149,9 @@ func replayMutationResult(reservation *sessions.MutationReservation, rcpt *domai
 	case domain.OutcomeDenied:
 		return result.BytesWritten, result.Observation, rcpt, &PolicyDeniedError{Reason: policy.DenialReason(rcpt.Outcome.ErrorCategory), Message: rcpt.Outcome.ErrorMessage}
 	case domain.OutcomeAborted:
+		if rcpt.Outcome.ErrorCategory == "caller_canceled" {
+			return result.BytesWritten, result.Observation, rcpt, context.Canceled
+		}
 		return result.BytesWritten, result.Observation, rcpt, context.DeadlineExceeded
 	case domain.OutcomeFailed:
 		return result.BytesWritten, result.Observation, rcpt, errors.New("session mutation failed")

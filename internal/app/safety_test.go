@@ -162,11 +162,7 @@ func TestSafetyResolver_RejectsUnknownMissingAndBrokenCheckpointChains(t *testin
 		checkpoints []domain.CheckpointObservation
 	}{
 		{name: "unknown provider status", checkpoints: []domain.CheckpointObservation{func() domain.CheckpointObservation { c := base; c.CheckpointType = ""; return c }()}},
-		{name: "provider missing marker", checkpoints: []domain.CheckpointObservation{func() domain.CheckpointObservation {
-			c := base
-			c.CheckpointType = "Microsoft:Hyper-V:Snapshot:Missing"
-			return c
-		}()}},
+		{name: "blank provider status", checkpoints: []domain.CheckpointObservation{func() domain.CheckpointObservation { c := base; c.CheckpointType = "  "; return c }()}},
 		{name: "missing parent", checkpoints: []domain.CheckpointObservation{func() domain.CheckpointObservation { c := base; c.ParentID = parentID; return c }()}},
 		{name: "cyclic parent", checkpoints: []domain.CheckpointObservation{
 			func() domain.CheckpointObservation { c := base; c.ParentID = parentID; return c }(),

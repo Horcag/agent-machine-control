@@ -28,6 +28,10 @@ type MachineConfigLoader interface {
 	GetMachineSafetyConfig(target domain.MachineRef) (*MachineSafetyConfig, error)
 }
 
+type contextMachineConfigLoader interface {
+	GetMachineSafetyConfigContext(context.Context, domain.MachineRef) (*MachineSafetyConfig, error)
+}
+
 // SafetyResolver determines dynamic safety classification for session operations on target VMs.
 type SafetyResolver interface {
 	ResolveSafety(ctx context.Context, target domain.MachineRef) (SafetyResolution, error)
@@ -60,7 +64,16 @@ func (r *DefaultSafetyResolver) ResolveSafety(ctx context.Context, target domain
 		return destructive, nil
 	}
 
-	cfg, err := r.configLoader.GetMachineSafetyConfig(target)
+	var cfg *MachineSafetyConfig
+	var err error
+	if loader, ok := r.configLoader.(contextMachineConfigLoader); ok {
+		cfg, err = loader.GetMachineSafetyConfigContext(ctx, target)
+	} else {
+		if err := ctx.Err(); err != nil {
+			return destructive, err
+		}
+		cfg, err = r.configLoader.GetMachineSafetyConfig(target)
+	}
 	if err != nil || cfg == nil {
 		return destructive, nil
 	}
@@ -102,7 +115,7 @@ func validCheckpointChain(checkpoint domain.CheckpointObservation, checkpoints m
 			return false
 		}
 		seen[checkpoint.ID] = struct{}{}
-		if checkpoint.Validate() != nil || checkpoint.VMID != target || checkpoint.CheckpointType == "" || strings.EqualFold(checkpoint.CheckpointType, "Microsoft:Hyper-V:Snapshot:Missing") {
+		if checkpoint.Validate() != nil || checkpoint.VMID != target || strings.TrimSpace(checkpoint.CheckpointType) == "" {
 			return false
 		}
 		if requireProduction && !strings.EqualFold(checkpoint.CheckpointType, "Production") {

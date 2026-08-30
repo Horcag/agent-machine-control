@@ -158,6 +158,35 @@ func TestManagerCloseRetriesIncompleteCleanup(t *testing.T) {
 	}
 }
 
+func TestManagerForceCloseRetainsIncompleteCleanupForRetryAndShutdown(t *testing.T) {
+	channel := newLifecycleChannel(
+		guestssh.CloseOutcome{Complete: false, Err: context.DeadlineExceeded},
+		guestssh.CloseOutcome{Complete: false, Err: context.DeadlineExceeded},
+		guestssh.CloseOutcome{Complete: true},
+	)
+	dir := t.TempDir()
+	mgr, actor, id := openLifecycleSession(t, dir, channel)
+
+	first, err := mgr.Close(context.Background(), id, actor, "forced close", true)
+	if !errors.Is(err, context.DeadlineExceeded) || first.State != domain.SessionStateClosing || first.ClosedAt != nil {
+		t.Fatalf("forced close = %+v err %v, want durable retryable cleanup-pending state", first, err)
+	}
+	loaded, err := sessions.NewManager(dir, nil, time.Now).Get(context.Background(), id, actor)
+	if err != nil || loaded.State != domain.SessionStateClosing || loaded.ClosedAt != nil {
+		t.Fatalf("persisted forced close = %+v err %v, want cleanup-pending truth", loaded, err)
+	}
+	if err := mgr.Shutdown(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("first shutdown error = %v, want retained cleanup timeout", err)
+	}
+	retried, err := mgr.Close(context.Background(), id, actor, "retry cleanup", true)
+	if err != nil || retried.State != domain.SessionStateClosed {
+		t.Fatalf("retry close = %+v err %v, want cleanup completion", retried, err)
+	}
+	if got := channel.closeCalls.Load(); got != 3 {
+		t.Fatalf("transport close calls = %d, want forced close, shutdown retry, and explicit retry", got)
+	}
+}
+
 func TestManagerReplaysCompletedCleanupFailure(t *testing.T) {
 	channel := newLifecycleChannel(guestssh.CloseOutcome{Complete: true, Err: errSyntheticCleanup})
 	dir := t.TempDir()

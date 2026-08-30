@@ -111,6 +111,9 @@ func executeStopWithApproval(
 		}
 		newIdempotencyKey := domain.DeriveApprovalIdempotencyKey(common.IdempotencyKey)
 		if promptedAppr, dl, ok := promptForApproval(prompter, nowFn, req.Actor, req.TargetID, "machine.stop", domain.CapabilityMachineStop, initialClass, common.Reason, newIdempotencyKey, common.Timeout, params, promptMsg); ok {
+			if issueErr := recoverySvc.IssueApproval(ctx, *promptedAppr); issueErr != nil {
+				return domain.Receipt{}, domain.MachineObservation{}, issueErr
+			}
 			req.Approval = promptedAppr
 			req.Deadline = dl
 			req.IdempotencyKey = newIdempotencyKey

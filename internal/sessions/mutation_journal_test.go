@@ -247,6 +247,23 @@ func TestMutationJournalLifecycleAndCollisionIsolation(t *testing.T) {
 	assertJournalFinalizationLifecycle(t, journal, op, now)
 }
 
+func TestMutationJournalCheckWritableContextCancellationAndHook(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	journal := sessions.NewMutationJournal(t.TempDir())
+	if err := journal.CheckWritableContext(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled CheckWritableContext error = %v", err)
+	}
+	want := errors.New("synthetic writable boundary")
+	journal = sessions.NewMutationJournal(t.TempDir(), sessions.WithMutationJournalContextHook(func(context.Context, string) error { return want }))
+	if err := journal.CheckWritableContext(context.Background()); !errors.Is(err, want) {
+		t.Fatalf("hooked CheckWritableContext error = %v", err)
+	}
+	if err := (*sessions.MutationJournal)(nil).CheckWritableContext(context.Background()); err == nil {
+		t.Fatal("nil journal unexpectedly writable")
+	}
+}
+
 func TestMutationJournalCancelAndMissingReservation(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "mutations")
 	op := journalOperation(t, "idem-journal-cancel")

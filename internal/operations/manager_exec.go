@@ -14,6 +14,7 @@ import (
 func (m *Manager) executeOperation(ctx context.Context, rec domain.OperationRecord, op domain.Operation, timeout time.Duration) {
 	defer m.wg.Done()
 	defer m.liveOpsCount.Add(-1)
+	defer func() { <-m.capacity }()
 	defer func() {
 		m.mu.Lock()
 		delete(m.liveCancels, rec.ID)

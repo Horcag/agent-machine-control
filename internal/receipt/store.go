@@ -172,25 +172,6 @@ func NewStore(dir string, opts ...Option) *Store {
 	return s
 }
 
-// CheckWritable verifies that a new durable receipt can be created in the store.
-func (s *Store) CheckWritable() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	probe := filepath.Join(s.dir, fmt.Sprintf(".write-test-%d", time.Now().UnixNano()))
-	f, err := os.OpenFile(probe, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		return err
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(probe)
-		return err
-	}
-	if err := os.Remove(probe); err != nil {
-		return err
-	}
-	return statedir.SyncDir(s.dir)
-}
-
 // MaxReceiptFileSize is the maximum allowed receipt file size (64 KB).
 const MaxReceiptFileSize = 64 * 1024
 
@@ -401,6 +382,12 @@ func (s *Store) LookupIdempotencyContext(ctx context.Context, op domain.Operatio
 		return nil, nil
 	}
 	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := validateReceiptRoot(s.dir); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	if s.lookupHook != nil {

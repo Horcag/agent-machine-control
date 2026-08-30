@@ -113,6 +113,22 @@ func TestAdapter_ListCheckpoints_ArrayAndSingleAndEmpty(t *testing.T) {
 			t.Fatalf("expected 0 checkpoints, got %d", len(list))
 		}
 	})
+
+}
+
+func TestAdapterMissingSnapshotStatusIsNormalizedFailClosed(t *testing.T) {
+	now := time.Date(2026, 8, 29, 15, 0, 0, 0, time.UTC)
+	jsonPayload := `{"schema_version":"1","checkpoints":{"id":"e4a523d4-6b99-4d62-a5e2-4752c0f20001","name":"missing","vm_id":"c4a523d4-6b99-4d62-a5e2-4752c0f20001","checkpoint_type":"Microsoft:Hyper-V:Snapshot:Missing","creation_time":"2026-08-29T10:00:00Z"}}`
+	mock := &mockExecutor{executeFn: func(context.Context, string, []string, []string) ([]byte, []byte, error) {
+		return []byte(jsonPayload), nil, nil
+	}}
+	list, err := hyperv.New(hyperv.WithExecutor(mock), hyperv.WithNowFunc(func() time.Time { return now })).ListCheckpoints(context.Background(), "c4a523d4-6b99-4d62-a5e2-4752c0f20001")
+	if err != nil || len(list) != 1 {
+		t.Fatalf("normalized checkpoint list = %+v err %v", list, err)
+	}
+	if list[0].CheckpointType != "" {
+		t.Fatalf("normalized checkpoint type = %q, want backend-neutral unknown status", list[0].CheckpointType)
+	}
 }
 
 func TestAdapter_CreateCheckpoint_SuccessAndErrors(t *testing.T) {

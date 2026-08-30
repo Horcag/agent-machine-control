@@ -137,6 +137,13 @@ func finalizeNaturalExit(s *Session, now time.Time, exitCode *int, waitErr error
 }
 
 func finalizeShutdown(s *Session, now time.Time, closeComplete bool, closeErr error) {
+	if !closeComplete {
+		s.terminalErr = errors.Join(s.naturalWaitErr, closeErr)
+		s.obs.State = domain.SessionStateClosing
+		s.obs.ClosedAt = nil
+		s.obs.ErrorMessage = "transport_cleanup_incomplete"
+		return
+	}
 	s.closed = true
 	s.obs.ClosedAt = &now
 	s.terminalErr = errors.Join(s.naturalWaitErr, closeErr)
@@ -156,11 +163,12 @@ func finalizeShutdown(s *Session, now time.Time, closeComplete bool, closeErr er
 	}
 }
 
-func finalizeExplicitClose(s *Session, now time.Time, closeComplete bool, closeErr error, force bool) {
+func finalizeExplicitClose(s *Session, now time.Time, closeComplete bool, closeErr error, _ bool) {
 	s.terminalErr = errors.Join(s.naturalWaitErr, closeErr)
-	if !closeComplete && !force {
+	if !closeComplete {
+		s.obs.State = domain.SessionStateClosing
 		s.obs.ClosedAt = nil
-		s.obs.ErrorMessage = "transport_close_incomplete"
+		s.obs.ErrorMessage = "transport_cleanup_incomplete"
 		return
 	}
 	s.closed = true

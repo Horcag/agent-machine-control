@@ -71,6 +71,11 @@ func WithEnsureHook(fn func(context.Context, Event) error) Option {
 	return func(s *Store) { s.ensureHook = fn }
 }
 
+// WithWritableHook injects a context-aware writability boundary for deterministic platform tests.
+func WithWritableHook(fn func(context.Context) error) Option {
+	return func(s *Store) { s.writableHook = fn }
+}
+
 // WithRemoveFunc injects lock cleanup removal for deterministic failure tests.
 func WithRemoveFunc(fn func(string) error) Option {
 	return func(s *Store) { s.removeFn = fn }
@@ -87,6 +92,7 @@ type Store struct {
 	lockTimeout      time.Duration
 	appendHook       func(Event) error
 	ensureHook       func(context.Context, Event) error
+	writableHook     func(context.Context) error
 	removeFn         func(string) error
 }
 
@@ -155,10 +161,25 @@ func (s *Store) logPath() string {
 
 // CheckWritable verifies that the audit log file and directory can be written to.
 func (s *Store) CheckWritable() error {
-	s.mu.Lock()
+	return s.CheckWritableContext(context.Background())
+}
+
+// CheckWritableContext verifies writability within the caller's deadline.
+func (s *Store) CheckWritableContext(ctx context.Context) error {
+	if s.writableHook != nil {
+		if err := s.writableHook(ctx); err != nil {
+			return err
+		}
+	}
+	if err := lockAuditStoreContext(ctx, &s.mu); err != nil {
+		return err
+	}
 	defer s.mu.Unlock()
 
-	return s.withLock(func() error {
+	return s.withLockContext(ctx, func() error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		testFile := filepath.Join(s.dir, fmt.Sprintf(".write_test_%d", time.Now().UnixNano()))
 		f, err := os.OpenFile(testFile, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0600)
 		if err != nil {
@@ -172,6 +193,11 @@ func (s *Store) CheckWritable() error {
 
 // RecordAdmissionIntent writes an admission intent audit event.
 func (s *Store) RecordAdmissionIntent(op domain.Operation) error {
+	return s.RecordAdmissionIntentContext(context.Background(), op)
+}
+
+// RecordAdmissionIntentContext writes an admission intent within the caller's deadline.
+func (s *Store) RecordAdmissionIntentContext(ctx context.Context, op domain.Operation) error {
 	fp, err := op.Fingerprint()
 	if err != nil {
 		return fmt.Errorf("audit: failed to compute fingerprint: %w", err)
@@ -188,7 +214,7 @@ func (s *Store) RecordAdmissionIntent(op domain.Operation) error {
 		IdempotencyKey: op.IdempotencyKey,
 	}
 
-	return s.appendEvent(event)
+	return s.appendEventContext(ctx, event)
 }
 
 // RecordTerminalOutcome writes a terminal outcome audit event.
@@ -286,7 +312,13 @@ func findExactTerminalOutcome(events []Event, receipt domain.Receipt) (bool, err
 }
 
 func (s *Store) appendEvent(event Event) error {
-	s.mu.Lock()
+	return s.appendEventContext(context.Background(), event)
+}
+
+func (s *Store) appendEventContext(ctx context.Context, event Event) error {
+	if err := lockAuditStoreContext(ctx, &s.mu); err != nil {
+		return err
+	}
 	defer s.mu.Unlock()
 	if s.appendHook != nil {
 		if err := s.appendHook(event); err != nil {
@@ -294,11 +326,7 @@ func (s *Store) appendEvent(event Event) error {
 		}
 	}
 
-	return s.withLock(func() error { return s.writeEvent(event) })
-}
-
-func (s *Store) writeEvent(event Event) error {
-	return s.writeEventContext(context.Background(), event)
+	return s.withLockContext(ctx, func() error { return s.writeEventContext(ctx, event) })
 }
 
 func (s *Store) writeEventContext(ctx context.Context, event Event) error {

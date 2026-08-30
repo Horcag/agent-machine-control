@@ -18,15 +18,16 @@ func classifyRunError(runErr error, effectOccurred bool) (domain.OutcomeStatus, 
 	case effectOccurred:
 		return domain.OutcomeFailed, 1, "", ""
 	case errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runErr, domain.ErrMissingDeadline):
-		return domain.OutcomeAborted, 1, "", ""
+		return domain.OutcomeAborted, 1, "deadline_exceeded", "operation deadline exceeded"
 	case errors.Is(runErr, context.Canceled):
-		return domain.OutcomeAborted, 1, "", ""
+		return domain.OutcomeAborted, 1, "caller_canceled", "operation canceled by caller"
 	default:
 		return domain.OutcomeFailed, 1, "", ""
 	}
 }
 
 func (s *SessionService) persistOutcome(
+	ctx context.Context,
 	op domain.Operation,
 	fp, idFp domain.Fingerprint,
 	_ policy.Decision,
@@ -41,7 +42,7 @@ func (s *SessionService) persistOutcome(
 	if err != nil {
 		return domain.Receipt{}, err
 	}
-	return rcpt, s.persistTerminalOutcome(rcpt)
+	return rcpt, s.persistTerminalOutcomeContext(ctx, rcpt)
 }
 
 func (s *SessionService) buildOutcomeReceipt(
@@ -77,10 +78,6 @@ func (s *SessionService) buildOutcomeReceipt(
 		ObservationType: domain.ObservationObserved, RollbackRef: effectiveRollback,
 		RedactionStatus: domain.RedactionApplied, EvidenceRefs: evidenceRefs,
 	}, nil
-}
-
-func (s *SessionService) persistTerminalOutcome(rcpt domain.Receipt) error {
-	return s.persistTerminalOutcomeContext(context.Background(), rcpt)
 }
 
 func (s *SessionService) persistTerminalOutcomeContext(ctx context.Context, rcpt domain.Receipt) error {

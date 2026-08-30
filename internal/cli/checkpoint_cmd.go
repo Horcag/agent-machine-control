@@ -177,6 +177,10 @@ func runCheckpointCreate(
 			return ExitDenied
 		}
 		appr = promptedAppr
+		if err := recoverySvc.IssueApproval(ctx, *appr); err != nil {
+			fmt.Fprintln(stderr, "amc checkpoint create: failed to issue server approval")
+			return ExitBackendUnavailable
+		}
 		reqDeadline = dl
 	}
 

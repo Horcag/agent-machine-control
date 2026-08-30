@@ -177,7 +177,7 @@ func (m *Manager) removeOwnedPath(path string) error {
 	if removeFn == nil {
 		removeFn = os.Remove
 	}
-	if err := removeFn(path); err != nil && !os.IsNotExist(err) {
+	if err := removePathBounded(removeFn, path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil

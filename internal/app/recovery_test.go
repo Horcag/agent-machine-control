@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -290,7 +291,7 @@ func TestRecoveryService_UnwritableAudit_FailsClosed_ZeroProviderCalls(t *testin
 func TestRecoveryService_StopMachine_TurnOff_RequiresApproval(t *testing.T) {
 	targetID := "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
 	backend := &mockBackend{}
-	svc, _ := setupTestRecovery(t, backend)
+	svc, dir := setupTestRecovery(t, backend)
 
 	actor, _ := domain.NewActorContext("user:admin", "user:admin", domain.NewScopeSet("machine:write"), domain.NewScopeSet("machine:write"))
 	req := app.MutationRequest{
@@ -337,6 +338,9 @@ func TestRecoveryService_StopMachine_TurnOff_RequiresApproval(t *testing.T) {
 	req.Deadline = op.Deadline
 	req.Approval = &appr
 	req.IdempotencyKey = "key-stop-turnoff-2"
+	if err := approval.NewStore(filepath.Join(dir, "approvals")).Issue(appr); err != nil {
+		t.Fatal(err)
+	}
 
 	rcpt, obs, err := svc.StopMachine(context.Background(), req, "turn-off")
 	if err != nil {

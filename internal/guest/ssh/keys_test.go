@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/Horcag/agent-machine-control/internal/domain"
@@ -98,12 +99,14 @@ func TestLocalKeyProvider_Success(t *testing.T) {
 
 	kp := ssh.NewLocalKeyProvider(sd)
 
-	signer, err := kp.GetClientSigner(ctx, domain.MachineRef(guid))
-	if err != nil {
-		t.Fatalf("GetClientSigner failed: %v", err)
-	}
-	if signer == nil {
-		t.Fatal("expected non-nil signer")
+	if runtime.GOOS != "windows" {
+		signer, err := kp.GetClientSigner(ctx, domain.MachineRef(guid))
+		if err != nil {
+			t.Fatalf("GetClientSigner failed: %v", err)
+		}
+		if signer == nil {
+			t.Fatal("expected non-nil signer")
+		}
 	}
 
 	user, err := kp.GetGuestUser(ctx, domain.MachineRef(guid))
@@ -200,6 +203,9 @@ func TestLocalKeyProvider_RejectsNonCanonicalNestedConfiguration(t *testing.T) {
 }
 
 func TestLocalKeyProvider_SymlinkRejection(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("plaintext key symlink behavior is POSIX-specific; Windows uses DPAPI and DACL tests")
+	}
 	ctx := context.Background()
 	guid := testTargetGUID
 	sd, _, _ := setupTestStateDirWithKey(t, "")
@@ -249,9 +255,11 @@ func TestLocalKeyProvider_GettersAndErrors(t *testing.T) {
 	}
 
 	// Signer with default key
-	signer, err := kp.GetClientSigner(ctx, domain.MachineRef(guid))
-	if err != nil || signer == nil {
-		t.Fatalf("expected signer for default key, got: %v", err)
+	if runtime.GOOS != "windows" {
+		signer, err := kp.GetClientSigner(ctx, domain.MachineRef(guid))
+		if err != nil || signer == nil {
+			t.Fatalf("expected signer for default key, got: %v", err)
+		}
 	}
 
 	// Nil stateDir error

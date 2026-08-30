@@ -98,18 +98,9 @@ func runCheckpointRestore(
 		)
 	}
 
-	appr := common.Approval
-	var reqDeadline time.Time
-	if appr == nil && prompter != nil {
-		promptMsg := fmt.Sprintf("Destructive operation checkpoint.restore on %s requires confirmation", targetID)
-		params := map[string]any{"checkpoint_id": checkpointID}
-		promptedAppr, dl, ok := promptForApproval(prompter, nowFn, actor, targetID, "checkpoint.restore", domain.CapabilityCheckpointRestore, domain.ClassDestructivePrivileged, common.Reason, common.IdempotencyKey, common.Timeout, params, promptMsg)
-		if !ok {
-			fmt.Fprintln(stderr, "amc checkpoint restore: operation aborted by operator")
-			return ExitDenied
-		}
-		appr = promptedAppr
-		reqDeadline = dl
+	appr, reqDeadline, approvalExit := prepareCheckpointRestoreApproval(ctx, recoverySvc, actor, prompter, nowFn, targetID, checkpointID, common, stderr)
+	if approvalExit != ExitSuccess {
+		return approvalExit
 	}
 
 	req := app.MutationRequest{
@@ -145,6 +136,33 @@ func runCheckpointRestore(
 	fmt.Fprintf(stdout, "Receipt ID:    %s\n", rcpt.ReceiptID)
 	fmt.Fprintf(stdout, "State:         %s\n", obs.State)
 	return ExitSuccess
+}
+
+func prepareCheckpointRestoreApproval(
+	ctx context.Context,
+	recoverySvc *app.RecoveryService,
+	actor domain.ActorContext,
+	prompter Prompter,
+	nowFn func() time.Time,
+	targetID, checkpointID string,
+	common *CommonFlags,
+	stderr io.Writer,
+) (*domain.Approval, time.Time, int) {
+	if common.Approval != nil || prompter == nil {
+		return common.Approval, time.Time{}, ExitSuccess
+	}
+	promptMsg := fmt.Sprintf("Destructive operation checkpoint.restore on %s requires confirmation", targetID)
+	params := map[string]any{"checkpoint_id": checkpointID}
+	appr, deadline, ok := promptForApproval(prompter, nowFn, actor, targetID, "checkpoint.restore", domain.CapabilityCheckpointRestore, domain.ClassDestructivePrivileged, common.Reason, common.IdempotencyKey, common.Timeout, params, promptMsg)
+	if !ok {
+		fmt.Fprintln(stderr, "amc checkpoint restore: operation aborted by operator")
+		return nil, time.Time{}, ExitDenied
+	}
+	if err := recoverySvc.IssueApproval(ctx, *appr); err != nil {
+		fmt.Fprintln(stderr, "amc checkpoint restore: failed to issue server approval")
+		return nil, time.Time{}, ExitBackendUnavailable
+	}
+	return appr, deadline, ExitSuccess
 }
 
 func mapMutationError(err error, stderr io.Writer, opName string) int {

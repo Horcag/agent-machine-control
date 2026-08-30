@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -46,14 +48,7 @@ func (c *interceptConn) Read(ctx context.Context) (jsonrpc.Message, error) {
 }
 
 func TestBinaryStdioIntegration(t *testing.T) {
-	tmpDir := t.TempDir()
-	binaryPath := filepath.Join(tmpDir, "amc-mcp")
-	buildCmd := exec.Command("go", "build", "-o", binaryPath, "../../cmd/amc-mcp")
-	buildCmd.Dir = "."
-	buildCmd.Env = append(os.Environ(), "GOTOOLCHAIN=go1.26.6")
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		t.Fatalf("failed to build amc-mcp binary: %v\nOutput: %s", err, string(out))
-	}
+	binaryPath := resolveTestMCPBinary(t)
 
 	stateDir := t.TempDir()
 	authDir := filepath.Join(stateDir, "auth")
@@ -84,6 +79,7 @@ func TestBinaryStdioIntegration(t *testing.T) {
 	mcpClient := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1.0.0"}, nil)
 	clientSession, err := mcpClient.Connect(ctx, it, nil)
 	if err != nil {
+		cleanupCommandProcess(t, cmd, 2*time.Second)
 		t.Fatalf("failed to connect client session: %v", err)
 	}
 
@@ -112,5 +108,63 @@ func TestBinaryStdioIntegration(t *testing.T) {
 		if err := json.Unmarshal([]byte(trimmed), &js); err != nil {
 			t.Errorf("detected non-MCP stdout line: %q (error: %v)", trimmed, err)
 		}
+	}
+}
+
+func resolveTestMCPBinary(t *testing.T) string {
+	t.Helper()
+	if configured := os.Getenv("AMC_TEST_MCP_BINARY"); configured != "" {
+		return validateTestMCPBinary(t, configured)
+	}
+	binaryName := "amc-mcp"
+	if runtime.GOOS == "windows" {
+		binaryName += ".exe"
+	}
+	binaryPath := filepath.Join(t.TempDir(), binaryName)
+	buildCmd := exec.Command("go", "build", "-o", binaryPath, "../../cmd/amc-mcp")
+	buildCmd.Dir = "."
+	buildCmd.Env = append(os.Environ(), "GOTOOLCHAIN=go1.26.6")
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to build amc-mcp binary: %v\nOutput: %s", err, string(out))
+	}
+	return validateTestMCPBinary(t, binaryPath)
+}
+
+func validateTestMCPBinary(t *testing.T, path string) string {
+	t.Helper()
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		t.Fatalf("invalid prebuilt amc-mcp path: %v", err)
+	}
+	expectedName := "amc-mcp"
+	if runtime.GOOS == "windows" {
+		expectedName += ".exe"
+	}
+	info, err := os.Lstat(absPath)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || filepath.Base(absPath) != expectedName {
+		t.Fatalf("prebuilt amc-mcp path is not the expected regular binary")
+	}
+	return absPath
+}
+
+func cleanupCommandProcess(t *testing.T, cmd *exec.Cmd, timeout time.Duration) {
+	t.Helper()
+	if cmd == nil || cmd.Process == nil || cmd.ProcessState != nil {
+		return
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case <-done:
+		return
+	case <-time.After(timeout):
+	}
+	if err := cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		t.Errorf("failed to terminate amc-mcp pid %d: %v", cmd.Process.Pid, err)
+	}
+	select {
+	case <-done:
+	case <-time.After(timeout):
+		t.Errorf("amc-mcp pid %d did not exit after termination", cmd.Process.Pid)
 	}
 }

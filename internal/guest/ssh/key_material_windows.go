@@ -3,6 +3,7 @@
 package ssh
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"unsafe"
@@ -11,6 +12,13 @@ import (
 )
 
 func loadPrivateKeyMaterial(keysDir, alias string) ([]byte, error) {
+	return loadPrivateKeyMaterialContext(context.Background(), keysDir, alias)
+}
+
+func loadPrivateKeyMaterialContext(ctx context.Context, keysDir, alias string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	path, err := keyMaterialPath(keysDir, alias, ".dpapi")
 	if err != nil {
 		return nil, err
@@ -21,7 +29,7 @@ func loadPrivateKeyMaterial(keysDir, alias string) ([]byte, error) {
 	if err := validateServiceIdentityACL(path, false); err != nil {
 		return nil, err
 	}
-	protected, err := validateStrictFile(path)
+	protected, err := validateStrictFileContext(ctx, path)
 	if err != nil {
 		return nil, err
 	}
@@ -32,6 +40,9 @@ func loadPrivateKeyMaterial(keysDir, alias string) ([]byte, error) {
 
 	in := windows.DataBlob{Size: uint32(len(protected)), Data: &protected[0]}
 	var out windows.DataBlob
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := windows.CryptUnprotectData(&in, nil, nil, 0, nil, windows.CRYPTPROTECT_UI_FORBIDDEN, &out); err != nil {
 		return nil, errors.New("ssh: DPAPI key decryption failed for the daemon service identity")
 	}

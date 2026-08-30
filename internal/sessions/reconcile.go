@@ -10,7 +10,10 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/domain"
 )
 
-func reconcileSessionFile(sessionsDir string, id domain.SessionID, now time.Time) (*domain.SessionID, error) {
+func reconcileSessionFile(ctx context.Context, sessionsDir string, id domain.SessionID, now time.Time) (*domain.SessionID, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	obs, err := readSessionState(sessionsDir, id)
 	if err != nil {
 		return nil, err
@@ -32,7 +35,7 @@ func reconcileSessionFile(sessionsDir string, id domain.SessionID, now time.Time
 	if err != nil {
 		return nil, err
 	}
-	if err := replaceSessionFile(filePath, updatedData); err != nil {
+	if err := replaceSessionFileContext(ctx, filePath, updatedData); err != nil {
 		return nil, fmt.Errorf("sessions: failed to write session file %s: %w", filePath, err)
 	}
 
@@ -40,7 +43,7 @@ func reconcileSessionFile(sessionsDir string, id domain.SessionID, now time.Time
 }
 
 // ReconcileCrashedSessions inspects the sessions directory on startup and marks dangling sessions as crashed.
-func ReconcileCrashedSessions(_ context.Context, sessionsDir string, now time.Time) ([]domain.SessionID, error) {
+func ReconcileCrashedSessions(ctx context.Context, sessionsDir string, now time.Time) ([]domain.SessionID, error) {
 	if sessionsDir == "" {
 		return nil, nil
 	}
@@ -59,11 +62,14 @@ func ReconcileCrashedSessions(_ context.Context, sessionsDir string, now time.Ti
 	var reconciled []domain.SessionID
 
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return reconciled, err
+		}
 		candidateID, valid := sessionIDFromStateFilename(entry.Name())
 		if !valid {
 			continue
 		}
-		id, err := reconcileSessionFile(sessionsDir, candidateID, now)
+		id, err := reconcileSessionFile(ctx, sessionsDir, candidateID, now)
 		if err != nil {
 			return reconciled, err
 		}

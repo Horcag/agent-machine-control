@@ -323,7 +323,9 @@ func TestManager_SymlinkAndOversized_Rejected(t *testing.T) {
 	realFile := dir + "/real.json"
 	_ = os.WriteFile(realFile, []byte(`{}`), 0600)
 	leaseFile := dir + "/" + machineID + ".lease.json"
-	_ = os.Symlink(realFile, leaseFile)
+	if err := os.Symlink(realFile, leaseFile); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
 
 	mgr := lease.NewManager(dir)
 	_, err := mgr.Acquire(context.Background(), machineID, "machine.start", "fp-1", 30*time.Second)
@@ -334,7 +336,9 @@ func TestManager_SymlinkAndOversized_Rejected(t *testing.T) {
 	// Symlink on gen file
 	_ = os.Remove(leaseFile)
 	genFile := dir + "/" + machineID + ".gen.json"
-	_ = os.Symlink(realFile, genFile)
+	if err := os.Symlink(realFile, genFile); err != nil {
+		t.Skipf("generation symlink creation unavailable: %v", err)
+	}
 
 	_, err = mgr.Acquire(context.Background(), machineID, "machine.start", "fp-1", 30*time.Second)
 	if err == nil || !errors.Is(err, lease.ErrInvalidLeaseData) {

@@ -36,4 +36,10 @@ func TestSessionTimeoutWirePrecisionAndValidation(t *testing.T) {
 	if _, _, err := EncodeSessionTimeout(1500 * time.Microsecond); !errors.Is(err, ErrInvalidSessionTimeout) {
 		t.Fatalf("sub-millisecond timeout error = %v", err)
 	}
+	if got, err := ResolveSessionTimeout(3600, 0, 0); err != nil || got != MaxSessionMutationTimeout {
+		t.Fatalf("maximum timeout = %v, %v", got, err)
+	}
+	if _, err := ResolveSessionTimeout(0, 3_600_001, 0); !errors.Is(err, ErrInvalidSessionTimeout) {
+		t.Fatalf("excessive timeout error = %v", err)
+	}
 }

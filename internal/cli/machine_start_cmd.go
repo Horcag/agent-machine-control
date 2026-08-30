@@ -82,6 +82,9 @@ func runMachineStart(
 		promptMsg := fmt.Sprintf("Destructive operation machine.start on %s requires confirmation (no rollback checkpoint found)", targetID)
 		newIdempotencyKey := domain.DeriveApprovalIdempotencyKey(common.IdempotencyKey)
 		if promptedAppr, dl, ok := promptForApproval(prompter, nowFn, actor, targetID, "machine.start", domain.CapabilityMachineStart, domain.ClassReversibleMutation, common.Reason, newIdempotencyKey, common.Timeout, nil, promptMsg); ok {
+			if issueErr := recoverySvc.IssueApproval(ctx, *promptedAppr); issueErr != nil {
+				return mapMutationError(issueErr, stderr, "machine start")
+			}
 			req.Approval = promptedAppr
 			req.Deadline = dl
 			req.IdempotencyKey = newIdempotencyKey

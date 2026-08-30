@@ -99,6 +99,14 @@ func NewRecoveryService(
 	return s
 }
 
+// IssueApproval records server-owned provenance for a trusted local approval flow.
+func (s *RecoveryService) IssueApproval(ctx context.Context, approval domain.Approval) error {
+	if s == nil || s.approvalStore == nil {
+		return errors.New("app: approval store is unavailable")
+	}
+	return s.approvalStore.IssueContext(ctx, approval)
+}
+
 func (s *RecoveryService) now() time.Time {
 	if s.nowFn != nil {
 		return s.nowFn().UTC()

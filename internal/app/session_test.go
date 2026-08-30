@@ -391,6 +391,9 @@ func TestSessionService_DestructiveRequiresApproval(t *testing.T) {
 	}
 
 	openParamsApproved.Approval = appObj
+	if err := h.approvalStore.Issue(*appObj); err != nil {
+		t.Fatal(err)
+	}
 	obs, rcpt, err := h.svc.OpenSession(ctx, openParamsApproved)
 	if err != nil {
 		t.Fatalf("OpenSession with approval failed: %v", err)
@@ -419,7 +422,7 @@ func TestSessionService_DestructiveRequiresApproval(t *testing.T) {
 	openParams2.IdempotencyKey = "idem-dest-2"
 	openParams2.Approval = appObjReused
 	_, _, err = h.svc.OpenSession(ctx, openParams2)
-	if err == nil || !errors.Is(err, domain.ErrApprovalConsumed) {
-		t.Errorf("expected ErrApprovalConsumed on reused approval, got: %v", err)
+	if err == nil || !errors.Is(err, approval.ErrApprovalNotIssued) {
+		t.Errorf("expected copied approval to fail provenance validation, got: %v", err)
 	}
 }

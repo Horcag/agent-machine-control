@@ -3,10 +3,15 @@
 package ssh
 
 import (
+	"context"
 	"os"
 )
 
 func loadPrivateKeyMaterial(keysDir, alias string) ([]byte, error) {
+	return loadPrivateKeyMaterialContext(context.Background(), keysDir, alias)
+}
+
+func loadPrivateKeyMaterialContext(ctx context.Context, keysDir, alias string) ([]byte, error) {
 	keyPath, err := keyMaterialPath(keysDir, alias, ".key")
 	if err != nil {
 		return nil, err
@@ -17,5 +22,5 @@ func loadPrivateKeyMaterial(keysDir, alias string) ([]byte, error) {
 			return nil, err
 		}
 	}
-	return validateStrictFile(keyPath)
+	return validateStrictFileContext(ctx, keyPath)
 }

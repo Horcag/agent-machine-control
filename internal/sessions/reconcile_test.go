@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -79,6 +80,25 @@ func TestReconcileCrashedSessionsLeavesTerminalRecordUntouched(t *testing.T) {
 		t.Fatal("terminal session record was rewritten")
 	}
 	assertNoSessionTempFiles(t, dir)
+}
+
+func TestReconcileCrashedSessionsCancelledContextDoesNotRewrite(t *testing.T) {
+	dir := t.TempDir()
+	obs := testSessionObservation("sess-c2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5", domain.SessionStateActive)
+	path := writeSessionObservation(t, dir, obs)
+	original, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := sessions.ReconcileCrashedSessions(ctx, dir, time.Now().UTC()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("reconcile error = %v, want context.Canceled", err)
+	}
+	current, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(current, original) {
+		t.Fatalf("cancelled reconciliation rewrote record: err=%v", err)
+	}
 }
 
 func TestReconcileCrashedSessionsSkipsInvalidFilenameID(t *testing.T) {
