@@ -127,7 +127,7 @@ func (m *Manager) Submit(ctx context.Context, op domain.Operation, timeout time.
 		return nil, false, ErrManagerBusy
 	}
 
-	rec, execCtx, err := m.initializeNewRecord(ctx, op, fp)
+	rec, execCtx, stopDeadline, err := m.initializeNewRecord(ctx, op, fp)
 	if err != nil {
 		<-m.capacity
 		return nil, false, err
@@ -135,20 +135,20 @@ func (m *Manager) Submit(ctx context.Context, op domain.Operation, timeout time.
 
 	// Launch async execution
 	returnCopy := rec.Clone()
-	go m.executeOperation(execCtx, returnCopy, op, timeout)
+	go m.executeOperation(execCtx, stopDeadline, returnCopy, op, timeout)
 
 	return &returnCopy, false, nil
 }
 
-func (m *Manager) initializeNewRecord(ctx context.Context, op domain.Operation, fp domain.Fingerprint) (*domain.OperationRecord, context.Context, error) {
+func (m *Manager) initializeNewRecord(ctx context.Context, op domain.Operation, fp domain.Fingerprint) (*domain.OperationRecord, context.Context, context.CancelFunc, error) {
 	opID, err := generateOpID()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	idFp, err := domain.ComputeIdempotencyFingerprint(op)
 	if err != nil {
-		return nil, nil, fmt.Errorf("operations: failed to compute idempotency fingerprint: %w", err)
+		return nil, nil, nil, fmt.Errorf("operations: failed to compute idempotency fingerprint: %w", err)
 	}
 
 	now := m.now()
@@ -170,7 +170,7 @@ func (m *Manager) initializeNewRecord(ctx context.Context, op domain.Operation, 
 	}
 
 	if err := SaveRecord(m.dir, *rec); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	if m.eventHub != nil {
@@ -181,11 +181,12 @@ func (m *Manager) initializeNewRecord(ctx context.Context, op domain.Operation, 
 			State:       domain.OpStatePending,
 		}); err != nil {
 			_ = os.Remove(filepath.Join(m.dir, fmt.Sprintf("%s.json", opID)))
-			return nil, nil, fmt.Errorf("operations: failed to publish initial pending event: %w", err)
+			return nil, nil, nil, fmt.Errorf("operations: failed to publish initial pending event: %w", err)
 		}
 	}
 
-	execCtx, cancelFunc := context.WithCancelCause(context.Background())
+	deadlineCtx, stopDeadline := context.WithDeadlineCause(context.Background(), op.Deadline, context.DeadlineExceeded)
+	execCtx, cancelFunc := context.WithCancelCause(deadlineCtx)
 	m.liveCancels[opID] = cancelFunc
 
 	if op.IdempotencyKey != "" {
@@ -203,7 +204,7 @@ func (m *Manager) initializeNewRecord(ctx context.Context, op domain.Operation, 
 	m.liveOpsCount.Add(1)
 	m.wg.Add(1)
 
-	return rec, execCtx, nil
+	return rec, execCtx, stopDeadline, nil
 }
 
 func isOperator(caller domain.ActorContext) bool {

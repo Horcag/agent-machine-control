@@ -11,7 +11,8 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/events"
 )
 
-func (m *Manager) executeOperation(ctx context.Context, rec domain.OperationRecord, op domain.Operation, timeout time.Duration) {
+func (m *Manager) executeOperation(ctx context.Context, stopDeadline context.CancelFunc, rec domain.OperationRecord, op domain.Operation, timeout time.Duration) {
+	defer stopDeadline()
 	defer m.wg.Done()
 	defer m.liveOpsCount.Add(-1)
 	defer func() { <-m.capacity }()
@@ -201,6 +202,12 @@ func sanitizeExecError(err error) (string, string) {
 	var deniedErr *app.PolicyDeniedError
 	if errors.As(err, &deniedErr) {
 		return string(deniedErr.Reason), deniedErr.Message
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, domain.ErrMissingDeadline) {
+		return "timeout", "operation deadline exceeded"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "cancelled", "operation cancelled"
 	}
 	return "backend_error", "backend operation failed"
 }
