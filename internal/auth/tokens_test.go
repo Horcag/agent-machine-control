@@ -13,6 +13,16 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/domain"
 )
 
+func writeTokenFixture(t *testing.T, path string, data []byte) {
+	t.Helper()
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatalf("write token fixture: %v", err)
+	}
+	if err := protectTokenFixture(path); err != nil {
+		t.Fatalf("protect token fixture: %v", err)
+	}
+}
+
 func TestAuth_LoadOrCreate(t *testing.T) {
 	dir := t.TempDir()
 
@@ -138,12 +148,8 @@ func TestAuth_LoadExistingTokens(t *testing.T) {
 	customOpToken := strings.Repeat("a", 64)
 	customAgToken := strings.Repeat("b", 64)
 
-	if err := os.WriteFile(filepath.Join(dir, auth.OperatorTokenFileName), []byte(customOpToken+"\n"), 0600); err != nil {
-		t.Fatalf("write op token failed: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, auth.AgentMCPTokenFileName), []byte(customAgToken+"\r\n"), 0600); err != nil {
-		t.Fatalf("write ag token failed: %v", err)
-	}
+	writeTokenFixture(t, filepath.Join(dir, auth.OperatorTokenFileName), []byte(customOpToken+"\n"))
+	writeTokenFixture(t, filepath.Join(dir, auth.AgentMCPTokenFileName), []byte(customAgToken+"\r\n"))
 
 	store, err := auth.LoadOrCreate(dir)
 	if err != nil {
@@ -177,15 +183,15 @@ func TestAuth_Errors(t *testing.T) {
 	}
 
 	// Corrupt short token
-	_ = os.WriteFile(filepath.Join(dir, auth.OperatorTokenFileName), []byte("short\n"), 0600)
-	_ = os.WriteFile(filepath.Join(dir, auth.AgentMCPTokenFileName), []byte("short\n"), 0600)
+	writeTokenFixture(t, filepath.Join(dir, auth.OperatorTokenFileName), []byte("short\n"))
+	writeTokenFixture(t, filepath.Join(dir, auth.AgentMCPTokenFileName), []byte("short\n"))
 	_, err = auth.LoadOrCreate(dir)
 	if err == nil {
 		t.Errorf("expected error for short token file")
 	}
 
 	// Non-hex token
-	_ = os.WriteFile(filepath.Join(dir, auth.OperatorTokenFileName), []byte(strings.Repeat("z", 64)+"\n"), 0600)
+	writeTokenFixture(t, filepath.Join(dir, auth.OperatorTokenFileName), []byte(strings.Repeat("z", 64)+"\n"))
 	_, err = auth.LoadOrCreate(dir)
 	if err == nil {
 		t.Errorf("expected error for non-hex token file")
@@ -203,7 +209,7 @@ func TestAuth_Errors(t *testing.T) {
 	}
 
 	// Oversize file
-	_ = os.WriteFile(filepath.Join(dir, auth.OperatorTokenFileName), []byte(strings.Repeat("a", 100)+"\n"), 0600)
+	writeTokenFixture(t, filepath.Join(dir, auth.OperatorTokenFileName), []byte(strings.Repeat("a", 100)+"\n"))
 	_, err = auth.LoadOrCreate(dir)
 	if err == nil {
 		t.Errorf("expected error for oversize token file")
@@ -213,7 +219,7 @@ func TestAuth_Errors(t *testing.T) {
 func TestAuth_SymlinkRejection(t *testing.T) {
 	dir := t.TempDir()
 	realFile := filepath.Join(dir, "real.token")
-	_ = os.WriteFile(realFile, []byte(strings.Repeat("a", 64)+"\n"), 0600)
+	writeTokenFixture(t, realFile, []byte(strings.Repeat("a", 64)+"\n"))
 
 	symlinkFile := filepath.Join(dir, auth.OperatorTokenFileName)
 	if err := os.Symlink(realFile, symlinkFile); err != nil {
@@ -253,7 +259,7 @@ func TestAuth_StoreCoverage(t *testing.T) {
 
 func TestAuth_ReadEmptyTokenFile(t *testing.T) {
 	dir := t.TempDir()
-	_ = os.WriteFile(filepath.Join(dir, auth.OperatorTokenFileName), []byte("  \n"), 0600)
+	writeTokenFixture(t, filepath.Join(dir, auth.OperatorTokenFileName), []byte("  \n"))
 	_, err := auth.ReadTokenFile(dir, auth.TokenTypeOperator)
 	if err == nil {
 		t.Errorf("expected error reading empty token file")

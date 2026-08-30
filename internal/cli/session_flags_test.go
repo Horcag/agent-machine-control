@@ -7,12 +7,9 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/Horcag/agent-machine-control/internal/auth"
 	"github.com/Horcag/agent-machine-control/internal/cli"
 	"github.com/Horcag/agent-machine-control/internal/daemon"
 	"github.com/Horcag/agent-machine-control/internal/statedir"
@@ -128,13 +125,7 @@ func setupCapturedSessionCLI(t *testing.T, captured *capturedSessionRequests) (s
 	if err := daemon.WriteEndpointFile(sd.DaemonDir(), record); err != nil {
 		t.Fatalf("write endpoint: %v", err)
 	}
-	if err := os.WriteFile(
-		filepath.Join(sd.AuthDir(), auth.OperatorTokenFileName),
-		[]byte(strings.Repeat("b", 64)),
-		0600,
-	); err != nil {
-		t.Fatalf("write operator token: %v", err)
-	}
+	createTestOperatorToken(t, sd.AuthDir())
 
 	return statePath, sessionID
 }

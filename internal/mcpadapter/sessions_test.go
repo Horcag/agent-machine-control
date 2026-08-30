@@ -6,12 +6,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/Horcag/agent-machine-control/internal/auth"
 	"github.com/Horcag/agent-machine-control/internal/client"
 	"github.com/Horcag/agent-machine-control/internal/daemon"
 	"github.com/Horcag/agent-machine-control/internal/statedir"
@@ -109,8 +107,7 @@ func setupMCPSessionTest(t *testing.T) (*Adapter, func()) {
 	}
 	_ = daemon.WriteEndpointFile(sd.DaemonDir(), ep)
 
-	tokenStr := strings.Repeat("a", 64)
-	_ = os.WriteFile(filepath.Join(sd.AuthDir(), auth.AgentMCPTokenFileName), []byte(tokenStr), 0600)
+	tokenStr := createTestAgentToken(t, tempDir)
 
 	cl := client.New(server.URL, tokenStr)
 	adapter := NewAdapter(tempDir)

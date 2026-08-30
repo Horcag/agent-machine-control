@@ -5,7 +5,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -23,14 +22,7 @@ func TestRunHTTP_BindFailure(t *testing.T) {
 
 	// Need a valid stateDir to pass the resolution and token checks
 	tempDir := t.TempDir()
-	authDir := filepath.Join(tempDir, "auth")
-	if err := os.MkdirAll(authDir, 0700); err != nil {
-		t.Fatalf("failed to create auth dir: %v", err)
-	}
-	tokenPath := filepath.Join(authDir, "agent-mcp.token")
-	if err := os.WriteFile(tokenPath, []byte(validTestToken+"\n"), 0600); err != nil {
-		t.Fatalf("failed to write token: %v", err)
-	}
+	createTestAgentToken(t, tempDir)
 
 	a := NewAdapter("")
 	server := a.BuildServer()
@@ -45,14 +37,7 @@ func TestRunHTTP_BindFailure(t *testing.T) {
 
 func TestRunHTTP_CleanContextShutdownAndSignal(t *testing.T) {
 	tempDir := t.TempDir()
-	authDir := filepath.Join(tempDir, "auth")
-	if err := os.MkdirAll(authDir, 0700); err != nil {
-		t.Fatalf("failed to create auth dir: %v", err)
-	}
-	tokenPath := filepath.Join(authDir, "agent-mcp.token")
-	if err := os.WriteFile(tokenPath, []byte(validTestToken+"\n"), 0600); err != nil {
-		t.Fatalf("failed to write token: %v", err)
-	}
+	createTestAgentToken(t, tempDir)
 
 	a := NewAdapter("")
 	server := a.BuildServer()

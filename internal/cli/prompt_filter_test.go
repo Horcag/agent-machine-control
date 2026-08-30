@@ -34,6 +34,7 @@ func TestCLI_PromptOnlyOnApprovalRequired_NeverOnOtherErrors(t *testing.T) {
 	categories := []struct {
 		name         string
 		backendSetup func(b *mockBackend, dir string)
+		auditOptions []audit.Option
 		expectedExit int
 	}{
 		{
@@ -56,10 +57,11 @@ func TestCLI_PromptOnlyOnApprovalRequired_NeverOnOtherErrors(t *testing.T) {
 		},
 		{
 			name: "audit failure",
-			backendSetup: func(_ *mockBackend, dir string) {
-				// make audit dir read only so CheckWritable fails
-				_ = os.Chmod(filepath.Join(dir, "audit"), 0500)
+			backendSetup: func(_ *mockBackend, _ string) {
 			},
+			auditOptions: []audit.Option{audit.WithWritableHook(func(context.Context) error {
+				return audit.ErrAuditUnavailable
+			})},
 			expectedExit: cli.ExitBackendUnavailable,
 		},
 		{
@@ -133,7 +135,9 @@ func TestCLI_PromptOnlyOnApprovalRequired_NeverOnOtherErrors(t *testing.T) {
 			tc.backendSetup(backend, dir)
 
 			leaseMgr := lease.NewManager(leasesDir, lease.WithClock(func() time.Time { return now }))
-			auditStore := audit.NewStore(auditDir, audit.WithClock(func() time.Time { return now }), audit.WithLockTimeout(50*time.Millisecond))
+			auditOptions := []audit.Option{audit.WithClock(func() time.Time { return now }), audit.WithLockTimeout(50 * time.Millisecond)}
+			auditOptions = append(auditOptions, tc.auditOptions...)
+			auditStore := audit.NewStore(auditDir, auditOptions...)
 			receiptStore := receipt.NewStore(receiptsDir)
 			approvalStore := approval.NewStore(approvalsDir)
 

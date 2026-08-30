@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -56,17 +55,7 @@ func TestHTTPTransportAndAuth(t *testing.T) {
 	}
 	defer os.RemoveAll(tempDir)
 
-	authDir := filepath.Join(tempDir, "auth")
-	if err := os.MkdirAll(authDir, 0700); err != nil {
-		t.Fatalf("failed to create auth dir: %v", err)
-	}
-
-	// Populate the mock token file
-	agentToken := strings.Repeat("a", 64)
-	tokenPath := filepath.Join(authDir, "agent-mcp.token")
-	if err := os.WriteFile(tokenPath, []byte(agentToken+"\n"), 0600); err != nil {
-		t.Fatalf("failed to write agent token: %v", err)
-	}
+	agentToken := createTestAgentToken(t, tempDir)
 
 	// Loopback validation check
 	if err := validateLoopbackAddress("127.0.0.1:0"); err != nil {

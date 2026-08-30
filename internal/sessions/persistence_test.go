@@ -2,8 +2,10 @@ package sessions
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -61,7 +63,7 @@ func TestPersistSessionConcurrentReadersSeeAtomicMonotonicJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
 		t.Fatalf("session file mode = %04o, want 0600", info.Mode().Perm())
 	}
 	entries, err := os.ReadDir(dir)
@@ -77,9 +79,17 @@ func TestPersistSessionConcurrentReadersSeeAtomicMonotonicJSON(t *testing.T) {
 
 func readValidSessionJSON(path string, count int) error {
 	for range count {
-		data, err := os.ReadFile(path)
+		file, err := openSessionStateFile(filepath.Dir(path), filepath.Base(path))
 		if err != nil {
 			return err
+		}
+		data, readErr := io.ReadAll(file)
+		closeErr := file.Close()
+		if readErr != nil {
+			return readErr
+		}
+		if closeErr != nil {
+			return closeErr
 		}
 		var obs domain.SessionObservation
 		if err := json.Unmarshal(data, &obs); err != nil {

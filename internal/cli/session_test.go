@@ -7,12 +7,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/Horcag/agent-machine-control/internal/auth"
 	"github.com/Horcag/agent-machine-control/internal/cli"
 	"github.com/Horcag/agent-machine-control/internal/daemon"
 	"github.com/Horcag/agent-machine-control/internal/statedir"
@@ -128,9 +126,7 @@ func setupTestCLIState(t *testing.T) (string, *httptest.Server) {
 	}
 	_ = daemon.WriteEndpointFile(sd.DaemonDir(), ep)
 
-	// Write token (64 hex characters)
-	tokenStr := strings.Repeat("a", 64)
-	_ = os.WriteFile(filepath.Join(sd.AuthDir(), auth.OperatorTokenFileName), []byte(tokenStr), 0600)
+	createTestOperatorToken(t, sd.AuthDir())
 
 	return tempDir, server
 }

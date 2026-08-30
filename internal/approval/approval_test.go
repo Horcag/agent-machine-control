@@ -15,6 +15,16 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/domain"
 )
 
+func writeApprovalFixture(t *testing.T, path string, data []byte) {
+	t.Helper()
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatalf("write approval fixture: %v", err)
+	}
+	if err := protectApprovalFixture(path); err != nil {
+		t.Fatalf("protect approval fixture: %v", err)
+	}
+}
+
 func TestLoader_ValidFile(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "valid_approval.json")
@@ -31,9 +41,7 @@ func TestLoader_ValidFile(t *testing.T) {
 		"expires_at": "` + now.Add(time.Hour).Format(time.RFC3339) + `"
 	}`
 
-	if err := os.WriteFile(filePath, []byte(content), 0600); err != nil {
-		t.Fatalf("WriteFile failed: %v", err)
-	}
+	writeApprovalFixture(t, filePath, []byte(content))
 
 	app, err := approval.LoadFromFile(filePath)
 	if err != nil {
@@ -82,9 +90,7 @@ func TestLoader_RejectsUnknownFields(t *testing.T) {
 		"unrecognized_field": "danger"
 	}`
 
-	if err := os.WriteFile(filePath, []byte(content), 0600); err != nil {
-		t.Fatalf("WriteFile failed: %v", err)
-	}
+	writeApprovalFixture(t, filePath, []byte(content))
 
 	_, err := approval.LoadFromFile(filePath)
 	if err == nil || !errors.Is(err, domain.ErrInvalidApprovalRecord) {
@@ -108,7 +114,7 @@ func TestLoader_StrictJSON_TrailingData(t *testing.T) {
 
 	// 1. Whitespace trailing is accepted
 	wsPath := filepath.Join(dir, "valid_ws.json")
-	_ = os.WriteFile(wsPath, []byte(validContent+"\n \t \n"), 0600)
+	writeApprovalFixture(t, wsPath, []byte(validContent+"\n \t \n"))
 	app, err := approval.LoadFromFile(wsPath)
 	if err != nil || app == nil {
 		t.Fatalf("expected whitespace trailing data to succeed, got %v", err)
@@ -116,14 +122,14 @@ func TestLoader_StrictJSON_TrailingData(t *testing.T) {
 
 	// 2. Trailing second object is rejected
 	objPath := filepath.Join(dir, "trailing_obj.json")
-	_ = os.WriteFile(objPath, []byte(validContent+"\n{\"extra\":1}"), 0600)
+	writeApprovalFixture(t, objPath, []byte(validContent+"\n{\"extra\":1}"))
 	if _, err := approval.LoadFromFile(objPath); err == nil || !errors.Is(err, approval.ErrTrailingData) {
 		t.Fatalf("expected ErrTrailingData for trailing object, got %v", err)
 	}
 
 	// 3. Trailing scalar is rejected
 	scalarPath := filepath.Join(dir, "trailing_scalar.json")
-	_ = os.WriteFile(scalarPath, []byte(validContent+"\n42"), 0600)
+	writeApprovalFixture(t, scalarPath, []byte(validContent+"\n42"))
 	if _, err := approval.LoadFromFile(scalarPath); err == nil || !errors.Is(err, approval.ErrTrailingData) {
 		t.Fatalf("expected ErrTrailingData for trailing scalar, got %v", err)
 	}
@@ -146,7 +152,7 @@ func TestLoader_RejectsSymlink(t *testing.T) {
 		"expires_at": "` + now.Add(time.Hour).Format(time.RFC3339) + `"
 	}`
 
-	_ = os.WriteFile(realFile, []byte(content), 0600)
+	writeApprovalFixture(t, realFile, []byte(content))
 	if err := os.Symlink(realFile, symlinkFile); err != nil {
 		t.Skipf("symlink not supported on this platform: %v", err)
 	}
@@ -261,9 +267,7 @@ func TestStore_IssueAndValidateProvenance(t *testing.T) {
 	}
 	corrupt := issued
 	corrupt.ID = "app-corrupt-issued"
-	if err := os.WriteFile(filepath.Join(dir, string(corrupt.ID)+".issued.json"), []byte("not-json"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeApprovalFixture(t, filepath.Join(dir, string(corrupt.ID)+".issued.json"), []byte("not-json"))
 	if err := store.ValidateIssuedContext(context.Background(), corrupt); err == nil {
 		t.Fatal("corrupt issuance record was accepted")
 	}

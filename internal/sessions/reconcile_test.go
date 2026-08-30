@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -38,7 +39,7 @@ func TestReconcileCrashedSessionsAtomicallyPersistsRestartTruth(t *testing.T) {
 		t.Fatalf("reconciled = %v, want [%s]", reconciled, obs.ID)
 	}
 	assertNoSessionTempFiles(t, dir)
-	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0600 {
+	if info, err := os.Stat(path); err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0600) {
 		t.Fatalf("reconciled file mode = %v, %v; want 0600", info, err)
 	}
 

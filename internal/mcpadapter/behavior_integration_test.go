@@ -51,14 +51,7 @@ func TestBinaryStdioIntegration(t *testing.T) {
 	binaryPath := resolveTestMCPBinary(t)
 
 	stateDir := t.TempDir()
-	authDir := filepath.Join(stateDir, "auth")
-	if err := os.MkdirAll(authDir, 0700); err != nil {
-		t.Fatalf("failed to create auth dir: %v", err)
-	}
-	tokenPath := filepath.Join(authDir, "agent-mcp.token")
-	if err := os.WriteFile(tokenPath, []byte(validTestToken+"\n"), 0600); err != nil {
-		t.Fatalf("failed to write token: %v", err)
-	}
+	createTestAgentToken(t, stateDir)
 
 	cmd := exec.Command(binaryPath, "--state-dir", stateDir)
 
