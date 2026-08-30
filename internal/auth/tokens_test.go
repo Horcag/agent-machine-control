@@ -112,6 +112,26 @@ func TestAuth_Authenticate(t *testing.T) {
 	}
 }
 
+func TestAuth_ActiveBearerSecretsReturnsIndependentCopies(t *testing.T) {
+	store, err := auth.LoadOrCreate(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := store.ActiveBearerSecrets()
+	if len(first) != 2 || len(first[0]) != 64 || len(first[1]) != 64 {
+		t.Fatalf("unexpected active bearer secret shape")
+	}
+	first[0][0] ^= 0xff
+	first[1][0] ^= 0xff
+	second := store.ActiveBearerSecrets()
+	if first[0][0] == second[0][0] || first[1][0] == second[1][0] {
+		t.Fatal("caller mutation changed auth-store token memory")
+	}
+	if string(second[0]) == string(second[1]) {
+		t.Fatal("active bearer tokens must remain distinct")
+	}
+}
+
 func TestAuth_LoadExistingTokens(t *testing.T) {
 	dir := t.TempDir()
 	customOpToken := strings.Repeat("a", 64)

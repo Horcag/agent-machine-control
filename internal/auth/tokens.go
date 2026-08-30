@@ -277,6 +277,17 @@ func (s *Store) Authenticate(bearerToken string) (*domain.ActorContext, []string
 	return nil, nil, false
 }
 
+// ActiveBearerSecrets returns independent byte copies of both active server-owned bearer tokens.
+func (s *Store) ActiveBearerSecrets() [][]byte {
+	if s == nil {
+		return nil
+	}
+	return [][]byte{
+		append([]byte(nil), s.operatorToken...),
+		append([]byte(nil), s.agentToken...),
+	}
+}
+
 // ReadTokenFile reads the token corresponding to the requested TokenType from the auth directory.
 func ReadTokenFile(authDir string, tokenType TokenType) (string, error) {
 	var fileName string

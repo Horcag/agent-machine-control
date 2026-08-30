@@ -206,6 +206,53 @@ func TestMCPSessions_AllTools(t *testing.T) {
 	testMCPSessionsReads(ctx, t, adapter, sessID, machGUID)
 }
 
+func TestMCPSessions_SubSecondTimeoutsReachClientAsMilliseconds(t *testing.T) {
+	sessID := "sess-a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
+	machGUID := "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
+	captured := make(map[string]map[string]any)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode %s body: %v", r.URL.Path, err)
+			}
+			captured[r.URL.Path] = body
+		}
+		handleMockMCPSessionRoute(w, r, sessID, machGUID)
+	}))
+	defer server.Close()
+	adapter := &Adapter{client: client.New(server.URL, strings.Repeat("a", 64))}
+	ctx := context.Background()
+
+	if result, _, _ := adapter.SessionOpen(ctx, nil, SessionOpenInput{Target: machGUID, Reason: "open", IdempotencyKey: "open-key", Timeout: "250ms"}); result != nil {
+		t.Fatalf("sub-second open failed: %v", result)
+	}
+	if result, _, _ := adapter.SessionWrite(ctx, nil, SessionWriteInput{SessionID: sessID, Data: "x", Reason: "write", IdempotencyKey: "write-key", Timeout: "250ms"}); result != nil {
+		t.Fatalf("sub-second write failed: %v", result)
+	}
+	if result, _, _ := adapter.SessionControl(ctx, nil, SessionControlInput{SessionID: sessID, Key: "ctrl-c", Reason: "control", IdempotencyKey: "control-key", Timeout: "250ms"}); result != nil {
+		t.Fatalf("sub-second control failed: %v", result)
+	}
+	if result, _, _ := adapter.SessionWait(ctx, nil, SessionWaitInput{SessionID: sessID, Timeout: "250ms"}); result != nil {
+		t.Fatalf("sub-second wait failed: %v", result)
+	}
+	if result, _, _ := adapter.SessionClose(ctx, nil, SessionCloseInput{SessionID: sessID, Reason: "close", IdempotencyKey: "close-key", Timeout: "250ms"}); result != nil {
+		t.Fatalf("sub-second close failed: %v", result)
+	}
+
+	for path, body := range captured {
+		if body["timeout_ms"] != float64(250) {
+			t.Errorf("%s timeout_ms = %v, want 250", path, body["timeout_ms"])
+		}
+		if _, exists := body["timeout_seconds"]; exists {
+			t.Errorf("%s sent conflicting timeout fields: %v", path, body)
+		}
+	}
+	if len(captured) != 5 {
+		t.Fatalf("captured %d timeout-bearing requests, want 5", len(captured))
+	}
+}
+
 func testMCPValidationParamErrors(ctx context.Context, t *testing.T, adapter *Adapter, sessID string) {
 	t.Helper()
 	// Invalid target

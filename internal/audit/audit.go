@@ -27,6 +27,8 @@ const (
 var (
 	// ErrAuditUnavailable indicates the audit log is unwritable or storage failed.
 	ErrAuditUnavailable = errors.New("audit: audit storage is unavailable or unwritable")
+	// ErrTerminalEvidenceInvalid indicates finalized replay cannot prove its terminal audit record.
+	ErrTerminalEvidenceInvalid = errors.New("audit: terminal evidence is missing or invalid")
 )
 
 // EventType identifies the lifecycle phase of an audit event.
@@ -39,20 +41,22 @@ const (
 
 // Event represents an append-only audit event record.
 type Event struct {
-	SchemaVersion  string               `json:"schema_version"`
-	Timestamp      time.Time            `json:"timestamp"`
-	EventType      EventType            `json:"event_type"`
-	Actor          string               `json:"actor,omitempty"`
-	Target         string               `json:"target,omitempty"`
-	OperationKind  string               `json:"operation_kind,omitempty"`
-	Fingerprint    string               `json:"fingerprint,omitempty"`
-	IdempotencyKey string               `json:"idempotency_key,omitempty"`
-	ReceiptID      string               `json:"receipt_id,omitempty"`
-	OutcomeStatus  domain.OutcomeStatus `json:"outcome_status,omitempty"`
-	ExitCode       int                  `json:"exit_code,omitempty"`
-	ErrorCategory  string               `json:"error_category,omitempty"`
-	ErrorMessage   string               `json:"error_message,omitempty"`
-	RollbackRef    string               `json:"rollback_ref,omitempty"`
+	SchemaVersion          string                `json:"schema_version"`
+	Timestamp              time.Time             `json:"timestamp"`
+	EventType              EventType             `json:"event_type"`
+	Actor                  string                `json:"actor,omitempty"`
+	Target                 string                `json:"target,omitempty"`
+	OperationKind          string                `json:"operation_kind,omitempty"`
+	Fingerprint            string                `json:"fingerprint,omitempty"`
+	IdempotencyFingerprint string                `json:"idempotency_fingerprint,omitempty"`
+	IdempotencyKey         string                `json:"idempotency_key,omitempty"`
+	Classification         domain.OperationClass `json:"classification,omitempty"`
+	ReceiptID              string                `json:"receipt_id,omitempty"`
+	OutcomeStatus          domain.OutcomeStatus  `json:"outcome_status,omitempty"`
+	ExitCode               int                   `json:"exit_code,omitempty"`
+	ErrorCategory          string                `json:"error_category,omitempty"`
+	ErrorMessage           string                `json:"error_message,omitempty"`
+	RollbackRef            string                `json:"rollback_ref,omitempty"`
 }
 
 // Option configures Store behavior.
@@ -178,15 +182,22 @@ func (s *Store) RecordAdmissionIntent(op domain.Operation) error {
 // RecordTerminalOutcome writes a terminal outcome audit event.
 func (s *Store) RecordTerminalOutcome(r domain.Receipt) error {
 	event := Event{
-		SchemaVersion: SchemaVersion,
-		Timestamp:     s.now(),
-		EventType:     EventTerminalOutcome,
-		ReceiptID:     string(r.ReceiptID),
-		OutcomeStatus: r.Outcome.Status,
-		ExitCode:      r.Outcome.ExitCode,
-		ErrorCategory: r.Outcome.ErrorCategory,
-		ErrorMessage:  r.Outcome.ErrorMessage,
-		RollbackRef:   r.RollbackRef,
+		SchemaVersion:          SchemaVersion,
+		Timestamp:              s.now(),
+		EventType:              EventTerminalOutcome,
+		Actor:                  string(r.Actor),
+		Target:                 string(r.Target),
+		OperationKind:          string(r.OperationKind),
+		Fingerprint:            string(r.Fingerprint),
+		IdempotencyFingerprint: string(r.IdempotencyFingerprint),
+		IdempotencyKey:         r.IdempotencyKey,
+		Classification:         r.Class,
+		ReceiptID:              string(r.ReceiptID),
+		OutcomeStatus:          r.Outcome.Status,
+		ExitCode:               r.Outcome.ExitCode,
+		ErrorCategory:          r.Outcome.ErrorCategory,
+		ErrorMessage:           r.Outcome.ErrorMessage,
+		RollbackRef:            r.RollbackRef,
 	}
 
 	return s.appendEvent(event)

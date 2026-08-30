@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -245,6 +246,131 @@ func TestSessionMutationJournal_OpenAndCloseRetriesUseImmutableResultsWithoutRea
 	openedRetry, openRetryReceipt, err := svc.OpenSession(context.Background(), openParams)
 	if err != nil || openRetryReceipt.ReceiptID != openReceipt.ReceiptID || openedRetry.State != domain.SessionStateActive {
 		t.Fatalf("open retry returned mutable later state: observation=%v err=%v", openedRetry, err)
+	}
+}
+
+func rewriteTerminalAuditFingerprint(t *testing.T, path, receiptID string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	matched := false
+	for i, line := range lines {
+		var event audit.Event
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.EventType == audit.EventTerminalOutcome && event.ReceiptID == receiptID {
+			event.Fingerprint = "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+			encoded, err := json.Marshal(event)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines[i] = string(encoded)
+			matched = true
+		}
+	}
+	if !matched {
+		t.Fatal("terminal audit event not found for mismatch fixture")
+	}
+	// #nosec G703 -- path is the task-owned temporary audit fixture created by this test.
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type terminalAuditReplayCase struct {
+	name       string
+	mutate     func(*testing.T, string, string)
+	wantReplay bool
+}
+
+func removeTerminalAudit(t *testing.T, path, _ string) {
+	t.Helper()
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func truncateTerminalAudit(t *testing.T, path, _ string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// #nosec G703 -- path is the task-owned temporary audit fixture created by this test.
+	if err := os.WriteFile(path, data[:len(data)-10], 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func corruptTerminalAudit(t *testing.T, path, _ string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("{corrupt audit record}\n"); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertTerminalAuditReplay(t *testing.T, tc terminalAuditReplayCase, receiptValue, replayReceipt *domain.Receipt, replayErr error) {
+	t.Helper()
+	if tc.wantReplay {
+		if replayErr != nil || replayReceipt == nil || replayReceipt.ReceiptID != receiptValue.ReceiptID {
+			t.Fatalf("valid terminal evidence replay failed: receipt=%v err=%v", replayReceipt, replayErr)
+		}
+		return
+	}
+	if !errors.Is(replayErr, audit.ErrTerminalEvidenceInvalid) {
+		t.Fatalf("invalid terminal evidence error = %v, want ErrTerminalEvidenceInvalid", replayErr)
+	}
+}
+
+func runTerminalAuditReplayCase(t *testing.T, tc terminalAuditReplayCase) {
+	t.Helper()
+	h := newFinalizationHarness(t)
+	params := h.writeParams("idem-audit-replay-" + tc.name)
+	_, receiptValue, err := h.service(receipt.NewStore(h.sd.ReceiptsDir()), audit.NewStore(h.sd.AuditDir()), nil).WriteSession(context.Background(), params)
+	if err != nil || receiptValue == nil {
+		t.Fatalf("initial write failed: receipt=%v err=%v", receiptValue, err)
+	}
+	auditPath := filepath.Join(h.sd.AuditDir(), audit.AuditFileName)
+	if tc.mutate != nil {
+		tc.mutate(t, auditPath, string(receiptValue.ReceiptID))
+	}
+
+	panicTransport := &trackingTransport{panicOnDial: true}
+	restartedManager := sessions.NewManager(h.sd.SessionsDir(), panicTransport, time.Now)
+	restarted := app.NewSessionService(restartedManager, h.safety, nil, audit.NewStore(h.sd.AuditDir()), receipt.NewStore(h.sd.ReceiptsDir()), approval.NewStore(h.sd.ApprovalsDir()))
+	before := atomic.LoadInt32(&h.transport.writeCalls)
+	_, replayReceipt, replayErr := restarted.WriteSession(context.Background(), params)
+	if atomic.LoadInt32(&h.transport.writeCalls) != before || atomic.LoadInt32(&panicTransport.writeCalls) != 0 {
+		t.Fatal("finalized replay performed a second transport effect")
+	}
+	assertTerminalAuditReplay(t, tc, receiptValue, replayReceipt, replayErr)
+}
+
+func TestFinalizedSessionReplayVerifiesTerminalAuditEvidence(t *testing.T) {
+	tests := []terminalAuditReplayCase{
+		{name: "valid", wantReplay: true},
+		{name: "missing", mutate: removeTerminalAudit},
+		{name: "truncated", mutate: truncateTerminalAudit},
+		{name: "corrupt", mutate: corruptTerminalAudit},
+		{name: "mismatched", mutate: rewriteTerminalAuditFingerprint},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			runTerminalAuditReplayCase(t, tc)
+		})
 	}
 }
 

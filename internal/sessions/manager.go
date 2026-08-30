@@ -435,20 +435,45 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 
 	var errs []error
 	for _, s := range sessions {
+		select {
+		case s.closeSem <- struct{}{}:
+		case <-ctx.Done():
+			errs = append(errs, ctx.Err())
+			continue
+		}
+
 		s.mu.Lock()
-		if !s.obs.State.IsTerminal() {
-			s.obs.State = domain.SessionStateClosed
-			now := m.now()
-			s.obs.ClosedAt = &now
-			s.closed = true
+		terminal := s.obs.State.IsTerminal()
+		if !terminal {
+			s.obs.State = domain.SessionStateClosing
 		}
 		s.mu.Unlock()
-		if err := s.channel.Close(ctx); err != nil && !errors.Is(err, io.EOF) {
-			errs = append(errs, err)
+
+		closeErr := s.channel.Close(ctx)
+		if errors.Is(closeErr, io.EOF) {
+			closeErr = nil
+		}
+		if !terminal {
+			now := m.now()
+			s.mu.Lock()
+			s.closed = true
+			s.obs.ClosedAt = &now
+			if closeErr == nil {
+				s.obs.State = domain.SessionStateClosed
+				s.obs.ErrorMessage = ""
+			} else {
+				s.obs.State = domain.SessionStateFailed
+				s.obs.ErrorMessage = "transport_close_failed"
+			}
+			s.mu.Unlock()
 		}
 		if err := m.persistSession(s); err != nil {
 			errs = append(errs, err)
 		}
+		if closeErr != nil {
+			errs = append(errs, closeErr)
+		}
+		<-s.closeSem
 	}
 
 	return errors.Join(errs...)

@@ -85,7 +85,8 @@ type SessionOpenRequest struct {
 	Cols           uint16           `json:"cols,omitempty"`
 	Rows           uint16           `json:"rows,omitempty"`
 	Term           string           `json:"term,omitempty"`
-	TimeoutSeconds int              `json:"timeout_seconds,omitempty"`
+	TimeoutSeconds int64            `json:"timeout_seconds,omitempty"`
+	TimeoutMillis  int64            `json:"timeout_ms,omitempty"`
 	Approval       *domain.Approval `json:"approval,omitempty"`
 }
 
@@ -113,7 +114,8 @@ type SessionWriteRequest struct {
 	Data           string           `json:"data"`
 	Reason         string           `json:"reason"`
 	IdempotencyKey string           `json:"idempotency_key"`
-	TimeoutSeconds int              `json:"timeout_seconds,omitempty"`
+	TimeoutSeconds int64            `json:"timeout_seconds,omitempty"`
+	TimeoutMillis  int64            `json:"timeout_ms,omitempty"`
 	Approval       *domain.Approval `json:"approval,omitempty"`
 }
 
@@ -129,7 +131,8 @@ type SessionControlRequest struct {
 	Key            string           `json:"key"`
 	Reason         string           `json:"reason"`
 	IdempotencyKey string           `json:"idempotency_key"`
-	TimeoutSeconds int              `json:"timeout_seconds,omitempty"`
+	TimeoutSeconds int64            `json:"timeout_seconds,omitempty"`
+	TimeoutMillis  int64            `json:"timeout_ms,omitempty"`
 	Approval       *domain.Approval `json:"approval,omitempty"`
 }
 
@@ -145,7 +148,8 @@ type SessionWaitRequest struct {
 	SettleMs       int    `json:"settle_ms,omitempty"`
 	Regex          string `json:"regex,omitempty"`
 	AfterSeq       uint64 `json:"after_seq,omitempty"`
-	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
+	TimeoutSeconds int64  `json:"timeout_seconds,omitempty"`
+	TimeoutMillis  int64  `json:"timeout_ms,omitempty"`
 }
 
 // SessionWaitResponse payload returned by POST /v1/sessions/{id}/wait.
@@ -169,7 +173,8 @@ type SessionListResponse struct {
 type SessionCloseRequest struct {
 	Reason         string           `json:"reason"`
 	IdempotencyKey string           `json:"idempotency_key"`
-	TimeoutSeconds int              `json:"timeout_seconds,omitempty"`
+	TimeoutSeconds int64            `json:"timeout_seconds,omitempty"`
+	TimeoutMillis  int64            `json:"timeout_ms,omitempty"`
 	Force          bool             `json:"force,omitempty"`
 	Approval       *domain.Approval `json:"approval,omitempty"`
 }

@@ -33,7 +33,10 @@ func (a *Adapter) SessionOpen(ctx context.Context, _ *mcp.CallToolRequest, in Se
 		Cols:           in.Cols,
 		Rows:           in.Rows,
 		Term:           in.Term,
-		TimeoutSeconds: int(timeout.Seconds()),
+	}
+	req.TimeoutSeconds, req.TimeoutMillis, err = daemon.EncodeSessionTimeout(timeout)
+	if err != nil {
+		return mcpToolError(NewInputError(err.Error())), SessionOpenResult{}, nil
 	}
 
 	resp, err := cl.OpenSession(ctx, req)
@@ -168,10 +171,13 @@ func (a *Adapter) SessionWait(ctx context.Context, _ *mcp.CallToolRequest, in Se
 	}
 
 	req := daemon.SessionWaitRequest{
-		SettleMs:       in.SettleMs,
-		Regex:          in.Regex,
-		AfterSeq:       in.AfterSeq,
-		TimeoutSeconds: int(timeout.Seconds()),
+		SettleMs: in.SettleMs,
+		Regex:    in.Regex,
+		AfterSeq: in.AfterSeq,
+	}
+	req.TimeoutSeconds, req.TimeoutMillis, err = daemon.EncodeSessionTimeout(timeout)
+	if err != nil {
+		return mcpToolError(NewInputError(err.Error())), SessionWaitResult{}, nil
 	}
 
 	resp, err := cl.WaitSession(ctx, in.SessionID, req)

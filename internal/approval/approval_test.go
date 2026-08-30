@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -334,5 +335,60 @@ func TestStore_CorruptAndMissingFiles(t *testing.T) {
 	_, err = approval.LoadFromFile(filepath.Join(dir, "nonexistent.json"))
 	if err == nil {
 		t.Errorf("expected error loading missing approval file")
+	}
+}
+
+func TestApprovalIDCanonicalGrammar(t *testing.T) {
+	valid := []string{"a", "app-001", "approval_2026-A"}
+	for _, id := range valid {
+		if err := domain.ValidateApprovalID(id); err != nil {
+			t.Errorf("valid approval ID %q rejected: %v", id, err)
+		}
+	}
+
+	invalid := []string{
+		"", ".", "..", "../outside", `..\\outside`, "/absolute", `C:\\absolute`,
+		"app/child", `app\\child`, "app..child", "-leading", "trailing_", "has space",
+		"app\u2215confusable", "\u0430pp-confusable", strings.Repeat("a", domain.MaxApprovalIDLength+1),
+	}
+	for _, id := range invalid {
+		if err := domain.ValidateApprovalID(id); !errors.Is(err, domain.ErrInvalidApprovalRecord) {
+			t.Errorf("invalid approval ID %q error = %v, want ErrInvalidApprovalRecord", id, err)
+		}
+	}
+}
+
+func TestStore_RejectsUnsafeApprovalIDsBeforePathAccess(t *testing.T) {
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "approvals")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(parent, "outside.json")
+	if err := os.WriteFile(outside, []byte("synthetic sentinel"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store := approval.NewStore(dir)
+
+	for _, id := range []string{"../outside", "/absolute", `..\\outside`, "app/child", "app..child", "\u0430pp-confusable"} {
+		if consumed, err := store.IsConsumed(id); err == nil || consumed {
+			t.Errorf("IsConsumed(%q) = (%v, %v), want validation failure", id, consumed, err)
+		}
+		invalid := domain.Approval{ID: domain.ApprovalID(id)}
+		if err := store.MarkConsumed(invalid, time.Now().UTC()); err == nil {
+			t.Errorf("MarkConsumed(%q) unexpectedly succeeded", id)
+		}
+	}
+
+	data, err := os.ReadFile(outside)
+	if err != nil || string(data) != "synthetic sentinel" {
+		t.Fatalf("outside sentinel changed: data=%q err=%v", data, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("unsafe IDs created approval-store entries: %v", entries)
 	}
 }

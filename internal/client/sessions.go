@@ -26,10 +26,14 @@ func firstApproval(approvals []*domain.Approval) *domain.Approval {
 
 // OpenSession establishes a new persistent SSH terminal session on the daemon.
 func (c *Client) OpenSession(ctx context.Context, req daemon.SessionOpenRequest) (*daemon.SessionOpenResponse, error) {
+	timeout, err := daemon.ResolveSessionTimeout(req.TimeoutSeconds, req.TimeoutMillis, 0)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
+	}
 	reqCtx := ctx
-	if req.TimeoutSeconds > 0 {
+	if timeout > 0 {
 		var cancel context.CancelFunc
-		reqCtx, cancel = context.WithTimeout(ctx, time.Duration(req.TimeoutSeconds)*time.Second)
+		reqCtx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
 	var resp daemon.SessionOpenResponse
@@ -71,24 +75,12 @@ func (c *Client) WriteSession(ctx context.Context, id string, data string, reaso
 
 // WriteSessionWithTimeout transmits character data with an explicit end-to-end execution bound.
 func (c *Client) WriteSessionWithTimeout(ctx context.Context, id string, data string, reason, idempotencyKey string, timeout time.Duration, approval ...*domain.Approval) (*daemon.SessionWriteResponse, error) {
-	if err := domain.ValidateSessionID(id); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
-	}
-
-	var resp daemon.SessionWriteResponse
-	body := daemon.SessionWriteRequest{
-		Data:           data,
-		Reason:         reason,
-		IdempotencyKey: idempotencyKey,
-		TimeoutSeconds: durationSecondsCeil(timeout),
-		Approval:       firstApproval(approval),
-	}
-	reqCtx, cancel := boundedRequestContext(ctx, timeout)
-	defer cancel()
-	if err := c.doRequest(reqCtx, http.MethodPost, "/v1/sessions/"+id+"/write", body, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
+	return timedSessionMutation[daemon.SessionWriteResponse](ctx, c, id, "/write", timeout, func(seconds, millis int64) any {
+		return daemon.SessionWriteRequest{
+			Data: data, Reason: reason, IdempotencyKey: idempotencyKey,
+			TimeoutSeconds: seconds, TimeoutMillis: millis, Approval: firstApproval(approval),
+		}
+	})
 }
 
 // SendControlKey sends a terminal control keystroke or escape code.
@@ -98,24 +90,12 @@ func (c *Client) SendControlKey(ctx context.Context, id string, key domain.Contr
 
 // SendControlKeyWithTimeout sends a control key with an explicit end-to-end execution bound.
 func (c *Client) SendControlKeyWithTimeout(ctx context.Context, id string, key domain.ControlKey, reason, idempotencyKey string, timeout time.Duration, approval ...*domain.Approval) (*daemon.SessionControlResponse, error) {
-	if err := domain.ValidateSessionID(id); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
-	}
-
-	var resp daemon.SessionControlResponse
-	body := daemon.SessionControlRequest{
-		Key:            string(key),
-		Reason:         reason,
-		IdempotencyKey: idempotencyKey,
-		TimeoutSeconds: durationSecondsCeil(timeout),
-		Approval:       firstApproval(approval),
-	}
-	reqCtx, cancel := boundedRequestContext(ctx, timeout)
-	defer cancel()
-	if err := c.doRequest(reqCtx, http.MethodPost, "/v1/sessions/"+id+"/control", body, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
+	return timedSessionMutation[daemon.SessionControlResponse](ctx, c, id, "/control", timeout, func(seconds, millis int64) any {
+		return daemon.SessionControlRequest{
+			Key: string(key), Reason: reason, IdempotencyKey: idempotencyKey,
+			TimeoutSeconds: seconds, TimeoutMillis: millis, Approval: firstApproval(approval),
+		}
+	})
 }
 
 // WaitSession blocks until the session settles or matches a regex pattern.
@@ -124,9 +104,19 @@ func (c *Client) WaitSession(ctx context.Context, id string, req daemon.SessionW
 		return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 	}
 
+	timeout, err := daemon.ResolveSessionTimeout(req.TimeoutSeconds, req.TimeoutMillis, 0)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
+	}
+	reqCtx := ctx
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		reqCtx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 	var resp daemon.SessionWaitResponse
 	path := fmt.Sprintf("/v1/sessions/%s/wait", id)
-	if err := c.doRequest(ctx, http.MethodPost, path, req, &resp); err != nil {
+	if err := c.doRequest(reqCtx, http.MethodPost, path, req, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -167,31 +157,30 @@ func (c *Client) CloseSession(ctx context.Context, id string, reason, idempotenc
 
 // CloseSessionWithTimeout terminates a session with an explicit end-to-end execution bound.
 func (c *Client) CloseSessionWithTimeout(ctx context.Context, id string, reason, idempotencyKey string, force bool, timeout time.Duration, approval ...*domain.Approval) (*daemon.SessionCloseResponse, error) {
+	return timedSessionMutation[daemon.SessionCloseResponse](ctx, c, id, "/close", timeout, func(seconds, millis int64) any {
+		return daemon.SessionCloseRequest{
+			Reason: reason, IdempotencyKey: idempotencyKey, Force: force,
+			TimeoutSeconds: seconds, TimeoutMillis: millis, Approval: firstApproval(approval),
+		}
+	})
+}
+
+func timedSessionMutation[T any](ctx context.Context, c *Client, id, suffix string, timeout time.Duration, buildBody func(int64, int64) any) (*T, error) {
 	if err := domain.ValidateSessionID(id); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 	}
 
-	var resp daemon.SessionCloseResponse
-	body := daemon.SessionCloseRequest{
-		Reason:         reason,
-		IdempotencyKey: idempotencyKey,
-		TimeoutSeconds: durationSecondsCeil(timeout),
-		Force:          force,
-		Approval:       firstApproval(approval),
+	timeoutSeconds, timeoutMillis, err := daemon.EncodeSessionTimeout(timeout)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 	}
+	var response T
 	reqCtx, cancel := boundedRequestContext(ctx, timeout)
 	defer cancel()
-	if err := c.doRequest(reqCtx, http.MethodPost, "/v1/sessions/"+id+"/close", body, &resp); err != nil {
+	if err := c.doRequest(reqCtx, http.MethodPost, "/v1/sessions/"+id+suffix, buildBody(timeoutSeconds, timeoutMillis), &response); err != nil {
 		return nil, err
 	}
-	return &resp, nil
-}
-
-func durationSecondsCeil(timeout time.Duration) int {
-	if timeout <= 0 {
-		return 0
-	}
-	return int((timeout + time.Second - 1) / time.Second)
+	return &response, nil
 }
 
 func boundedRequestContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {

@@ -46,7 +46,7 @@ func runSessionWait(ctx context.Context, cl *client.Client, args []string, stdou
 		SettleMs:       settleMs,
 		Regex:          regex,
 		AfterSeq:       afterSeq,
-		TimeoutSeconds: timeoutSec,
+		TimeoutSeconds: int64(timeoutSec),
 	}
 
 	resp, err := cl.WaitSession(ctx, sessID, req)

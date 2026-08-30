@@ -31,7 +31,17 @@ func (s *Store) Tail(limit int) ([]Event, error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	events, err := s.readEventsLocked()
+	if err != nil {
+		return nil, err
+	}
+	if len(events) <= limit {
+		return events, nil
+	}
+	return events[len(events)-limit:], nil
+}
 
+func (s *Store) readEventsLocked() ([]Event, error) {
 	f, err := os.Open(s.logPath())
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -73,9 +83,5 @@ func (s *Store) Tail(limit int) ([]Event, error) {
 		events = append(events, event)
 	}
 
-	if len(events) <= limit {
-		return events, nil
-	}
-
-	return events[len(events)-limit:], nil
+	return events, nil
 }

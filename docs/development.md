@@ -39,6 +39,12 @@ Pin GitHub Actions to immutable commits and let Dependabot propose reviewed upda
 The planned MCP dependency is the official Go SDK. The planned first optional CLI dependency is
 Cobra only if the nested command tree becomes cumbersome with the standard `flag` package.
 
+Persistent guest terminals require `golang.org/x/crypto/ssh` as a direct dependency because the Go
+standard library does not implement SSH transport, host-key verification, or PTY channel requests.
+Windows key protection and ACL validation require the direct, upgraded `golang.org/x/sys/windows`
+surface for DPAPI and security-descriptor APIs. These are distinct capability additions; the session
+implementation did not merely start using a dependency that was already indirect.
+
 The repo-local development MCP is `code-review-graph==2.3.8`, configured in `.mcp.json`. It is an
 analysis aid with an explicit read-oriented tool allowlist and is not linked into product binaries.
 Serena and additional code-analysis MCPs are deliberately deferred until a measured gap justifies

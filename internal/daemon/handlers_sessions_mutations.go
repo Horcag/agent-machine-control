@@ -85,9 +85,10 @@ func (s *Server) handleWriteSession(w http.ResponseWriter, r *http.Request, id d
 		return
 	}
 
-	timeout := 30 * time.Second
-	if req.TimeoutSeconds > 0 {
-		timeout = time.Duration(req.TimeoutSeconds) * time.Second
+	timeout, err := ResolveSessionTimeout(req.TimeoutSeconds, req.TimeoutMillis, 30*time.Second)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_argument", "invalid session timeout")
+		return
 	}
 
 	n, rcpt, err := s.sessionService.WriteSession(r.Context(), app.SessionWriteParams{
@@ -147,9 +148,10 @@ func (s *Server) handleControlSession(w http.ResponseWriter, r *http.Request, id
 		return
 	}
 
-	timeout := 30 * time.Second
-	if req.TimeoutSeconds > 0 {
-		timeout = time.Duration(req.TimeoutSeconds) * time.Second
+	timeout, err := ResolveSessionTimeout(req.TimeoutSeconds, req.TimeoutMillis, 30*time.Second)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_argument", "invalid session timeout")
+		return
 	}
 
 	rcpt, err := s.sessionService.ControlSession(r.Context(), app.SessionControlParams{
@@ -202,19 +204,15 @@ func (s *Server) handleWaitSession(w http.ResponseWriter, r *http.Request, id do
 		writeError(w, http.StatusBadRequest, "invalid_argument", "regex exceeds max length")
 		return
 	}
-	if req.TimeoutSeconds < 0 {
-		writeError(w, http.StatusBadRequest, "invalid_argument", "timeout_seconds must not be negative")
-		return
-	}
-
 	settle := domain.DefaultSettleTime
 	if req.SettleMs > 0 {
 		settle = time.Duration(req.SettleMs) * time.Millisecond
 	}
 
-	timeout := domain.DefaultWaitTimeout
-	if req.TimeoutSeconds > 0 {
-		timeout = time.Duration(req.TimeoutSeconds) * time.Second
+	timeout, err := ResolveSessionTimeout(req.TimeoutSeconds, req.TimeoutMillis, domain.DefaultWaitTimeout)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_argument", "invalid session timeout")
+		return
 	}
 
 	chunks, nextSeq, lossBytes, matched, obs, err := s.sessionService.WaitSession(r.Context(), id, caller, settle, req.Regex, req.AfterSeq, timeout)
@@ -263,9 +261,10 @@ func (s *Server) handleCloseSession(w http.ResponseWriter, r *http.Request, id d
 		return
 	}
 
-	timeout := 30 * time.Second
-	if req.TimeoutSeconds > 0 {
-		timeout = time.Duration(req.TimeoutSeconds) * time.Second
+	timeout, err := ResolveSessionTimeout(req.TimeoutSeconds, req.TimeoutMillis, 30*time.Second)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_argument", "invalid session timeout")
+		return
 	}
 
 	obs, rcpt, err := s.sessionService.CloseSession(r.Context(), app.SessionCloseParams{

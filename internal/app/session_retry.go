@@ -88,8 +88,14 @@ func (s *SessionService) handleReservedRetry(op domain.Operation, reservation *s
 	if err != nil {
 		return 0, nil, nil, err
 	}
-	if rcpt.IdempotencyFingerprint != idFp || rcpt.Actor != op.Actor.EffectiveActor || rcpt.Target != op.Target {
-		return 0, nil, nil, sessions.ErrMutationReservationCollision
+	if err := verifyReservedReceipt(op, reservation, rcpt, idFp); err != nil {
+		return 0, nil, nil, err
+	}
+	if s.auditStore == nil {
+		return 0, nil, nil, errors.New("app: audit store is unavailable for finalized mutation")
+	}
+	if err := s.auditStore.VerifyTerminalOutcome(*rcpt); err != nil {
+		return 0, nil, nil, fmt.Errorf("app: finalized mutation audit evidence is invalid: %w", err)
 	}
 
 	result := reservation.Result
@@ -103,4 +109,20 @@ func (s *SessionService) handleReservedRetry(op domain.Operation, reservation *s
 	default:
 		return result.BytesWritten, result.Observation, rcpt, nil
 	}
+}
+
+func verifyReservedReceipt(op domain.Operation, reservation *sessions.MutationReservation, rcpt *domain.Receipt, idFp domain.Fingerprint) error {
+	if rcpt.OperationKind != reservation.OperationKind || rcpt.Fingerprint != reservation.Fingerprint {
+		return sessions.ErrMutationReservationCollision
+	}
+	if rcpt.IdempotencyFingerprint != reservation.IdempotencyFingerprint || rcpt.IdempotencyFingerprint != idFp || rcpt.IdempotencyKey != reservation.IdempotencyKey {
+		return sessions.ErrMutationReservationCollision
+	}
+	if rcpt.Actor != reservation.Actor || rcpt.Actor != op.Actor.EffectiveActor || rcpt.Target != reservation.Target || rcpt.Target != op.Target {
+		return sessions.ErrMutationReservationCollision
+	}
+	if rcpt.Class != reservation.Classification {
+		return sessions.ErrMutationReservationCollision
+	}
+	return nil
 }

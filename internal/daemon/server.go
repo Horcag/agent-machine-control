@@ -134,7 +134,8 @@ func NewServer(cfg Config) (*Server, error) {
 		transport = guestssh.NewTransport(keyProvider)
 	}
 	safetyResolver := app.NewDefaultSafetyResolver(sshSafetyConfigLoader{provider: keyProvider}, backend)
-	sessionMgr := sessions.NewManager(sd.SessionsDir(), transport, cfg.Clock, sessions.WithSanitizerConfig(cfg.SessionSanitizerConfig))
+	sanitizerConfig := daemonSessionSanitizerConfig(authStore, cfg.SessionSanitizerConfig)
+	sessionMgr := sessions.NewManager(sd.SessionsDir(), transport, cfg.Clock, sessions.WithSanitizerConfig(sanitizerConfig))
 	sessionSvc := app.NewSessionService(sessionMgr, safetyResolver, leaseMgr, auditStore, receiptStore, approvalStore, app.WithSessionClock(cfg.Clock))
 
 	// 3. Fail-closed startup crash recovery & stale lease reclamation

@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -383,6 +384,69 @@ func TestManager_ShutdownAndPersistence(t *testing.T) {
 	loadedList, err := newMgr.List(ctx, actorCtx, "")
 	if err != nil || len(loadedList) != 1 {
 		t.Errorf("failed to load session list from disk: len=%d, err=%v", len(loadedList), err)
+	}
+}
+
+type shutdownFailureTransport struct {
+	channel *shutdownFailureChannel
+}
+
+func (t *shutdownFailureTransport) Dial(context.Context, domain.MachineRef, uint16, uint16, string) (guestssh.Channel, error) {
+	return t.channel, nil
+}
+
+type shutdownFailureChannel struct {
+	waitCh chan struct{}
+	once   sync.Once
+}
+
+func (c *shutdownFailureChannel) Read([]byte) (int, error) { return 0, io.EOF }
+func (c *shutdownFailureChannel) Write(context.Context, []byte) (int, error) {
+	return 0, nil
+}
+func (c *shutdownFailureChannel) SendControl(context.Context, domain.ControlKey) error { return nil }
+func (c *shutdownFailureChannel) Resize(uint16, uint16) error                          { return nil }
+func (c *shutdownFailureChannel) Close(context.Context) error {
+	c.once.Do(func() { close(c.waitCh) })
+	return errors.New("synthetic shutdown close failure")
+}
+func (c *shutdownFailureChannel) Wait() (int, error) {
+	<-c.waitCh
+	return 0, nil
+}
+
+func TestManager_ShutdownCloseFailurePersistsTruthfulState(t *testing.T) {
+	dir := t.TempDir()
+	channel := &shutdownFailureChannel{waitCh: make(chan struct{})}
+	mgr := sessions.NewManager(dir, &shutdownFailureTransport{channel: channel}, time.Now)
+	scopes := domain.NewScopeSet(domain.ScopeSessionOpen, domain.ScopeSessionRead)
+	actor, err := domain.NewActorContext("agent:shutdown", "agent:shutdown", scopes, scopes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op := domain.Operation{
+		Kind: "session.open", Target: "c4a523d4-6b99-4d62-a5e2-4752c0f20001", Actor: actor,
+		Reason: "exercise shutdown failure", Deadline: time.Now().Add(time.Minute),
+		IdempotencyKey: "idem-shutdown-failure", Classification: domain.ClassReversibleMutation,
+	}
+	obs, err := mgr.Open(context.Background(), op, 80, 24, "xterm-256color")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Shutdown(context.Background()); err == nil {
+		t.Fatal("shutdown close failure was not returned")
+	}
+
+	restarted := sessions.NewManager(dir, nil, time.Now)
+	loaded, err := restarted.Get(context.Background(), obs.ID, actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.State == domain.SessionStateClosed || loaded.State != domain.SessionStateFailed {
+		t.Fatalf("persisted shutdown state = %q, want failed and never closed", loaded.State)
+	}
+	if loaded.ErrorMessage != "transport_close_failed" || loaded.ClosedAt == nil {
+		t.Fatalf("persisted failure evidence incomplete: %+v", loaded)
 	}
 }
 

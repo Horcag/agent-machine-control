@@ -43,8 +43,11 @@ func (s *Store) CheckWritable() error {
 	return statedir.SyncDir(s.dir)
 }
 
-func (s *Store) approvalPath(id string) string {
-	return filepath.Join(s.dir, fmt.Sprintf("%s.json", id))
+func (s *Store) approvalPath(id string) (string, error) {
+	if err := domain.ValidateApprovalID(id); err != nil {
+		return "", fmt.Errorf("approval: invalid approval ID: %w", err)
+	}
+	return filepath.Join(s.dir, fmt.Sprintf("%s.json", id)), nil
 }
 
 // IsConsumed checks whether the approval has already been durably consumed.
@@ -52,7 +55,10 @@ func (s *Store) IsConsumed(id string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	path := s.approvalPath(id)
+	path, err := s.approvalPath(id)
+	if err != nil {
+		return false, err
+	}
 	fi, err := os.Lstat(path)
 	if err == nil {
 		if fi.Mode()&os.ModeSymlink != 0 {
@@ -82,7 +88,10 @@ func (s *Store) MarkConsumed(a domain.Approval, consumedAt time.Time) error {
 		return fmt.Errorf("approval: failed to marshal consumed record: %w", err)
 	}
 
-	path := s.approvalPath(string(a.ID))
+	path, err := s.approvalPath(string(a.ID))
+	if err != nil {
+		return err
+	}
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		if os.IsExist(err) {

@@ -109,9 +109,10 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	timeout := 30 * time.Second
-	if req.TimeoutSeconds > 0 {
-		timeout = time.Duration(req.TimeoutSeconds) * time.Second
+	timeout, err := ResolveSessionTimeout(req.TimeoutSeconds, req.TimeoutMillis, 30*time.Second)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_argument", "invalid session timeout")
+		return
 	}
 
 	obs, rcpt, err := s.sessionService.OpenSession(r.Context(), app.SessionOpenParams{

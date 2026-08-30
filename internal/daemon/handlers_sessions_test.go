@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -25,6 +26,11 @@ import (
 )
 
 func setupTestDaemonWithSSH(t *testing.T) (*daemon.Server, string, string, *fakeserver.FakeSSHServer) {
+	srv, endpoint, operatorToken, _, _, fakeSSH := setupTestDaemonWithSSHConfig(t, guestssh.SanitizerConfig{})
+	return srv, endpoint, operatorToken, fakeSSH
+}
+
+func setupTestDaemonWithSSHConfig(t *testing.T, sanitizerConfig guestssh.SanitizerConfig) (*daemon.Server, string, string, string, string, *fakeserver.FakeSSHServer) {
 	tempDir := t.TempDir()
 
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
@@ -55,11 +61,12 @@ func setupTestDaemonWithSSH(t *testing.T) (*daemon.Server, string, string, *fake
 	transport := guestssh.NewTransport(kp)
 
 	cfg := daemon.Config{
-		StateDir:    tempDir,
-		ListenAddr:  "127.0.0.1:0",
-		Transport:   transport,
-		KeyProvider: kp,
-		Backend:     &mockDaemonBackend{},
+		StateDir:               tempDir,
+		ListenAddr:             "127.0.0.1:0",
+		Transport:              transport,
+		KeyProvider:            kp,
+		Backend:                &mockDaemonBackend{},
+		SessionSanitizerConfig: sanitizerConfig,
 	}
 
 	srv, err := daemon.NewServer(cfg)
@@ -75,8 +82,12 @@ func setupTestDaemonWithSSH(t *testing.T) (*daemon.Server, string, string, *fake
 	if err != nil {
 		t.Fatalf("failed to read operator token: %v", err)
 	}
+	agentToken, err := auth.ReadTokenFile(sd.AuthDir(), auth.TokenTypeAgentMCP)
+	if err != nil {
+		t.Fatalf("failed to read agent token: %v", err)
+	}
 
-	return srv, srv.Endpoint(), opToken, fakeSSH
+	return srv, srv.Endpoint(), opToken, agentToken, tempDir, fakeSSH
 }
 
 func doJSONReq(t *testing.T, method, url, token string, body any) (int, []byte) {
@@ -198,6 +209,83 @@ func TestDaemonSessions_EndToEnd(t *testing.T) {
 	}
 }
 
+func TestDaemonSessions_SubSecondTimeoutsReachAppAndTransport(t *testing.T) {
+	dir := t.TempDir()
+	target := "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
+	checkpoint := "e4a523d4-6b99-4d62-a5e2-4752c0f20001"
+	transport := &deadlineCaptureTransport{remaining: make(map[string]time.Duration)}
+	keyProvider := &guestssh.MockKeyProvider{MachineConfig: &guestssh.MachineSSHConfig{
+		Endpoint: "192.0.2.20:22", User: "synthetic", DefaultKeyAlias: "default",
+		PinnedHostKeySHA256: "c3ludGhldGlj", ExternalEffectsContained: true, RollbackCheckpointID: checkpoint,
+	}}
+	srv, err := daemon.NewServer(daemon.Config{
+		StateDir: dir, ListenAddr: "127.0.0.1:0", Backend: &mockDaemonBackend{}, Transport: transport, KeyProvider: keyProvider,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = srv.Shutdown(context.Background()) }()
+	token, err := auth.ReadTokenFile(filepath.Join(dir, "auth"), auth.TokenTypeOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	status, data := doJSONReq(t, http.MethodPost, srv.Endpoint()+"/v1/sessions", token, daemon.SessionOpenRequest{
+		Target: target, Reason: "sub-second open", IdempotencyKey: "subsecond-open", TimeoutMillis: 250,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("sub-second open status=%d body=%s", status, data)
+	}
+	var opened daemon.SessionOpenResponse
+	if err := json.Unmarshal(data, &opened); err != nil {
+		t.Fatal(err)
+	}
+	sessionPath := srv.Endpoint() + "/v1/sessions/" + opened.Session.SessionID
+
+	status, data = doJSONReq(t, http.MethodPost, sessionPath+"/write", token, daemon.SessionWriteRequest{
+		Data: "x", Reason: "sub-second write", IdempotencyKey: "subsecond-write", TimeoutMillis: 250,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("sub-second write status=%d body=%s", status, data)
+	}
+	status, data = doJSONReq(t, http.MethodPost, sessionPath+"/control", token, daemon.SessionControlRequest{
+		Key: "ctrl-c", Reason: "sub-second control", IdempotencyKey: "subsecond-control", TimeoutMillis: 250,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("sub-second control status=%d body=%s", status, data)
+	}
+
+	waitStarted := time.Now()
+	status, _ = doJSONReq(t, http.MethodPost, sessionPath+"/wait", token, daemon.SessionWaitRequest{
+		Regex: "never-matches", TimeoutMillis: 40,
+	})
+	if status != http.StatusGatewayTimeout {
+		t.Fatalf("sub-second wait status=%d, want 504", status)
+	}
+	if elapsed := time.Since(waitStarted); elapsed > 300*time.Millisecond {
+		t.Fatalf("40ms daemon wait lasted %v", elapsed)
+	}
+
+	status, data = doJSONReq(t, http.MethodPost, sessionPath+"/close", token, daemon.SessionCloseRequest{
+		Reason: "sub-second close", IdempotencyKey: "subsecond-close", TimeoutMillis: 250,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("sub-second close status=%d body=%s", status, data)
+	}
+
+	transport.mu.Lock()
+	defer transport.mu.Unlock()
+	for _, operation := range []string{"open", "write", "control", "close"} {
+		remaining, ok := transport.remaining[operation]
+		if !ok || remaining <= 0 || remaining > 250*time.Millisecond {
+			t.Errorf("%s transport deadline remaining=%v present=%v, want (0, 250ms]", operation, remaining, ok)
+		}
+	}
+}
+
 func TestDaemonSessions_ErrorBranches(t *testing.T) {
 	srv, endpoint, token, fakeSSH := setupTestDaemonWithSSH(t)
 	defer func() {
@@ -276,6 +364,7 @@ func TestDaemonSessions_ValidationAndMutationBranches(t *testing.T) {
 	defer fakeSSH.Close()
 
 	sessID := "sess-0123456789abcdef0123456789abcdef"
+	machGUID := "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
 
 	// 1. Control missing reason or key
 	status, _ := doJSONReq(t, http.MethodPost, fmt.Sprintf("%s/v1/sessions/%s/control", endpoint, sessID), token, daemon.SessionControlRequest{Key: "ctrl-c"})
@@ -287,6 +376,18 @@ func TestDaemonSessions_ValidationAndMutationBranches(t *testing.T) {
 	status, _ = doJSONReq(t, http.MethodPost, fmt.Sprintf("%s/v1/sessions/%s/wait", endpoint, sessID), token, daemon.SessionWaitRequest{TimeoutSeconds: -1})
 	if status != http.StatusBadRequest {
 		t.Errorf("expected 400 on negative timeout_seconds, got %d", status)
+	}
+	status, _ = doJSONReq(t, http.MethodPost, endpoint+"/v1/sessions", token, daemon.SessionOpenRequest{
+		Target: machGUID, Reason: "conflicting timeout", IdempotencyKey: "timeout-conflict", TimeoutSeconds: 1, TimeoutMillis: 250,
+	})
+	if status != http.StatusBadRequest {
+		t.Errorf("expected 400 on conflicting timeout fields, got %d", status)
+	}
+	status, _ = doJSONReq(t, http.MethodPost, endpoint+"/v1/sessions", token, daemon.SessionOpenRequest{
+		Target: machGUID, Reason: "overflow timeout", IdempotencyKey: "timeout-overflow", TimeoutMillis: int64((time.Duration(1<<63-1))/time.Millisecond) + 1,
+	})
+	if status != http.StatusBadRequest {
+		t.Errorf("expected 400 on overflowing timeout_ms, got %d", status)
 	}
 
 	// 3. Close missing reason

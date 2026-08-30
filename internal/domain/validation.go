@@ -39,6 +39,8 @@ const (
 	MinIdempotencyKeyLength = 1
 	// MaxIdempotencyKeyLength is the maximum length of an idempotency key.
 	MaxIdempotencyKeyLength = 256
+	// MaxApprovalIDLength bounds canonical approval identifiers used as store filenames.
+	MaxApprovalIDLength = 128
 )
 
 // ValidateScope checks that a scope string is a valid canonical identifier.
@@ -77,9 +79,23 @@ func ValidateReason(s string) error {
 	return ValidateBoundedString(s, MinReasonLength, MaxReasonLength, ErrInvalidReason)
 }
 
-// ValidateApprovalID checks that an approval identifier is non-empty and well-formed.
+// ValidateApprovalID checks that an approval identifier is canonical and safe for filename use.
 func ValidateApprovalID(s string) error {
-	return ValidateBoundedString(s, 1, 256, ErrInvalidApprovalRecord)
+	if len(s) < 1 || len(s) > MaxApprovalIDLength {
+		return fmt.Errorf("%w: approval ID length %d out of bounds [1, %d]", ErrInvalidApprovalRecord, len(s), MaxApprovalIDLength)
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		alphanumeric := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+		if alphanumeric {
+			continue
+		}
+		if (c == '-' || c == '_') && i > 0 && i < len(s)-1 {
+			continue
+		}
+		return fmt.Errorf("%w: approval ID must use ASCII alphanumeric characters with internal '-' or '_' separators", ErrInvalidApprovalRecord)
+	}
+	return nil
 }
 
 // ValidateOperationID checks that an operation identifier matches the canonical op-<32 lowercase hex> format.

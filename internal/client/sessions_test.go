@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -227,5 +228,102 @@ func TestClient_SessionInvalidArguments(t *testing.T) {
 	}
 	if _, err := cl.CloseSession(ctx, badID, "reason", "key", false); err == nil {
 		t.Errorf("expected error on invalid session ID in CloseSession")
+	}
+}
+
+func captureSessionTimeouts(t *testing.T, sessID string, captured map[string]map[string]any, mu *sync.Mutex) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode %s body: %v", r.URL.Path, err)
+			}
+			mu.Lock()
+			captured[r.URL.Path] = body
+			mu.Unlock()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/sessions":
+			_ = json.NewEncoder(w).Encode(daemon.SessionOpenResponse{Session: daemon.SessionDTO{SessionID: sessID}})
+		case "/v1/sessions/" + sessID + "/write":
+			_ = json.NewEncoder(w).Encode(daemon.SessionWriteResponse{BytesWritten: 1})
+		case "/v1/sessions/" + sessID + "/control":
+			_ = json.NewEncoder(w).Encode(daemon.SessionControlResponse{Status: "sent"})
+		case "/v1/sessions/" + sessID + "/wait":
+			_ = json.NewEncoder(w).Encode(daemon.SessionWaitResponse{SessionID: sessID})
+		case "/v1/sessions/" + sessID + "/close":
+			_ = json.NewEncoder(w).Encode(daemon.SessionCloseResponse{Session: daemon.SessionDTO{SessionID: sessID, State: "closed"}})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}
+}
+
+func TestClient_SubSecondTimeoutsUseMillisecondWireField(t *testing.T) {
+	sessID := "sess-a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
+	var mu sync.Mutex
+	captured := make(map[string]map[string]any)
+	server := httptest.NewServer(captureSessionTimeouts(t, sessID, captured, &mu))
+	defer server.Close()
+
+	cl := client.New(server.URL, "test-token")
+	ctx := context.Background()
+	calls := []func() error{
+		func() error {
+			_, err := cl.OpenSession(ctx, daemon.SessionOpenRequest{Target: "c4a523d4-6b99-4d62-a5e2-4752c0f20001", Reason: "open", IdempotencyKey: "open-key", TimeoutMillis: 250})
+			return err
+		},
+		func() error {
+			_, err := cl.WriteSessionWithTimeout(ctx, sessID, "x", "write", "write-key", 250*time.Millisecond)
+			return err
+		},
+		func() error {
+			_, err := cl.SendControlKeyWithTimeout(ctx, sessID, domain.ControlKeyCtrlC, "control", "control-key", 250*time.Millisecond)
+			return err
+		},
+		func() error {
+			_, err := cl.WaitSession(ctx, sessID, daemon.SessionWaitRequest{TimeoutMillis: 250})
+			return err
+		},
+		func() error {
+			_, err := cl.CloseSessionWithTimeout(ctx, sessID, "close", "close-key", false, 250*time.Millisecond)
+			return err
+		},
+	}
+	for i, call := range calls {
+		if err := call(); err != nil {
+			t.Fatalf("sub-second session call %d failed: %v", i, err)
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	for _, path := range []string{"/v1/sessions", "/v1/sessions/" + sessID + "/write", "/v1/sessions/" + sessID + "/control", "/v1/sessions/" + sessID + "/wait", "/v1/sessions/" + sessID + "/close"} {
+		body := captured[path]
+		if body["timeout_ms"] != float64(250) {
+			t.Errorf("%s timeout_ms = %v, want 250", path, body["timeout_ms"])
+		}
+		if _, exists := body["timeout_seconds"]; exists {
+			t.Errorf("%s sent conflicting timeout_seconds: %v", path, body)
+		}
+	}
+}
+
+func TestClient_ReadSessionUsesExactSubSecondRequestContext(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	cl := client.New(server.URL, "test-token")
+	started := time.Now()
+	_, err := cl.ReadSession(context.Background(), "sess-a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4", 0, 1024, 40*time.Millisecond)
+	elapsed := time.Since(started)
+	if err == nil {
+		t.Fatal("sub-second read unexpectedly succeeded")
+	}
+	if elapsed > 300*time.Millisecond {
+		t.Fatalf("40ms read context lasted %v", elapsed)
 	}
 }
