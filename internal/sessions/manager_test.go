@@ -67,6 +67,9 @@ func (c *deadlineGuardChannel) Close(ctx context.Context) error {
 	})
 	return nil
 }
+func (c *deadlineGuardChannel) LastCloseOutcome() guestssh.CloseOutcome {
+	return guestssh.CloseOutcome{Complete: c.closeCalls.Load() > 0}
+}
 func (c *deadlineGuardChannel) Wait() (int, error) { <-c.done; return 0, nil }
 
 func deadlineGuardActor(t *testing.T) domain.ActorContext {
@@ -549,6 +552,9 @@ func (c *shutdownFailureChannel) Resize(uint16, uint16) error { return nil }
 func (c *shutdownFailureChannel) Close(context.Context) error {
 	c.once.Do(func() { close(c.waitCh) })
 	return errors.New("synthetic shutdown close failure")
+}
+func (c *shutdownFailureChannel) LastCloseOutcome() guestssh.CloseOutcome {
+	return guestssh.CloseOutcome{Complete: true, Err: errors.New("synthetic shutdown close failure")}
 }
 func (c *shutdownFailureChannel) Wait() (int, error) {
 	<-c.waitCh

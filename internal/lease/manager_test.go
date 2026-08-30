@@ -32,6 +32,25 @@ func (m *mockLivenessChecker) IsAlive(pid int, _ string) (bool, error) {
 	return m.aliveMap[pid], nil
 }
 
+func TestManager_CanceledAcquireCreatesNoLockOrLeaseState(t *testing.T) {
+	dir := t.TempDir()
+	mgr := lease.NewManager(dir)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	acquired, err := mgr.Acquire(ctx, "c4a523d4-6b99-4d62-a5e2-4752c0f20001", "session.write", "sha256:test", time.Minute)
+	if acquired != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("Acquire() = lease %+v err %v, want canceled with no lease", acquired, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("canceled acquire created state: %v", entries)
+	}
+}
+
 func TestManager_AcquireAndRelease_Success(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)

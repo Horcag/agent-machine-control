@@ -25,6 +25,7 @@ type Channel interface {
 	SendControl(ctx context.Context, key domain.ControlKey) (ControlResult, error)
 	Resize(cols, rows uint16) error
 	Close(ctx context.Context) error
+	LastCloseOutcome() CloseOutcome
 	Wait() (exitCode int, err error)
 }
 
@@ -40,19 +41,16 @@ type CloseOutcome struct {
 	Err      error
 }
 
-// CloseOutcomeProvider is implemented by channels that can distinguish a retryable no-effect close from completed cleanup.
-type CloseOutcomeProvider interface {
-	LastCloseOutcome() CloseOutcome
-}
-
 // NativeTransport dials target machines using SSH protocol and allocates pseudo-terminals.
 type NativeTransport struct {
 	keyProvider KeyProvider
+	dialContext func(context.Context, string, string) (net.Conn, error)
 }
 
 // NewTransport creates a NativeTransport configured with the given KeyProvider.
 func NewTransport(kp KeyProvider) *NativeTransport {
-	return &NativeTransport{keyProvider: kp}
+	dialer := &net.Dialer{}
+	return &NativeTransport{keyProvider: kp, dialContext: dialer.DialContext}
 }
 
 type dialConfig struct {
@@ -127,8 +125,12 @@ func (t *NativeTransport) Dial(ctx context.Context, target domain.MachineRef, co
 		return nil, err
 	}
 
-	dialer := net.Dialer{}
-	conn, err := dialer.DialContext(ctx, "tcp", dc.endpoint)
+	dialContext := t.dialContext
+	if dialContext == nil {
+		dialer := &net.Dialer{}
+		dialContext = dialer.DialContext
+	}
+	conn, err := dialContext(ctx, "tcp", dc.endpoint)
 	if err != nil {
 		return nil, fmt.Errorf("ssh: TCP connection failed: %w", err)
 	}
@@ -159,12 +161,7 @@ func (t *NativeTransport) Dial(ctx context.Context, target domain.MachineRef, co
 		_ = conn.Close()
 		return nil, err
 	}
-	if err := conn.SetDeadline(time.Time{}); err != nil {
-		_ = channel.Close(context.Background())
-		return nil, fmt.Errorf("ssh: failed to clear connection deadline: %w", err)
-	}
-
-	return channel, nil
+	return finalizeDialChannel(conn, channel)
 }
 
 func openSessionPTY(conn net.Conn, client *gossh.Client, cols, rows uint16, term string) (Channel, error) {

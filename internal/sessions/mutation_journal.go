@@ -1,6 +1,7 @@
 package sessions
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -16,18 +17,20 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/statedir"
 )
 
-const mutationReservationSchemaVersion = 1
+const mutationReservationSchemaVersion = 2
 
 var (
 	ErrMutationReservationCollision = errors.New("sessions: mutation reservation collision")
 	ErrMutationFinalizationPending  = errors.New("sessions: mutation finalization is pending")
+	ErrMutationEffectUnknown        = errors.New("sessions: mutation effect is unknown after interrupted finalization")
 )
 
 type MutationReservationState string
 
 const (
-	MutationReservationPending   MutationReservationState = "pending"
-	MutationReservationFinalized MutationReservationState = "finalized"
+	MutationReservationPending    MutationReservationState = "pending"
+	MutationReservationFinalizing MutationReservationState = "finalizing"
+	MutationReservationFinalized  MutationReservationState = "finalized"
 )
 
 // MutationResult is the minimal immutable response data needed for an exact retry.
@@ -71,8 +74,10 @@ type MutationReservation struct {
 	Fingerprint            domain.Fingerprint       `json:"fingerprint"`
 	State                  MutationReservationState `json:"state"`
 	CreatedAt              time.Time                `json:"created_at"`
+	FinalizationStartedAt  *time.Time               `json:"finalization_started_at,omitempty"`
 	FinalizedAt            *time.Time               `json:"finalized_at,omitempty"`
 	ReceiptID              domain.ReceiptID         `json:"receipt_id,omitempty"`
+	Receipt                *domain.Receipt          `json:"receipt,omitempty"`
 	Result                 MutationResult           `json:"result"`
 }
 
@@ -88,8 +93,14 @@ func WithMutationJournalHook(hook MutationJournalHook) MutationJournalOption {
 
 // MutationJournal stores session-scoped mutation reservations beside durable session state.
 type MutationJournal struct {
-	dir  string
-	hook MutationJournalHook
+	dir        string
+	hook       MutationJournalHook
+	lookupHook func(context.Context) error
+}
+
+// WithMutationJournalLookupHook injects a context-aware lookup boundary for deadline tests.
+func WithMutationJournalLookupHook(hook func(context.Context) error) MutationJournalOption {
+	return func(j *MutationJournal) { j.lookupHook = hook }
 }
 
 // NewMutationJournal creates a durable session mutation journal.
@@ -182,35 +193,75 @@ func (j *MutationJournal) callHook(action string) error {
 
 // Lookup finds an exact reservation or returns a collision without disclosing its contents.
 func (j *MutationJournal) Lookup(op domain.Operation) (*MutationReservation, error) {
+	return j.LookupContext(context.Background(), op)
+}
+
+// LookupContext finds an exact reservation while honoring the caller's deadline.
+func (j *MutationJournal) LookupContext(ctx context.Context, op domain.Operation) (*MutationReservation, error) {
 	if j == nil || j.dir == "" || op.IdempotencyKey == "" {
 		return nil, nil
 	}
-	record, err := j.read(j.pathFor(op.IdempotencyKey))
+	if err := j.runLookupHooks(ctx); err != nil {
+		return nil, err
+	}
+	record, err := j.readContext(ctx, j.pathFor(op.IdempotencyKey))
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	expected, err := reservationFor(op, record.CreatedAt)
-	if err != nil {
+	if err := validateReservationLookup(op, *record); err != nil {
 		return nil, err
-	}
-	if record.Actor != expected.Actor || record.Target != expected.Target || record.OperationKind != expected.OperationKind || record.Classification != expected.Classification || record.IdempotencyFingerprint != expected.IdempotencyFingerprint {
-		return nil, ErrMutationReservationCollision
 	}
 	return record, nil
 }
 
+func (j *MutationJournal) runLookupHooks(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := j.callHook("lookup"); err != nil {
+		return err
+	}
+	if j.lookupHook != nil {
+		if err := j.lookupHook(ctx); err != nil {
+			return err
+		}
+	}
+	return ctx.Err()
+}
+
+func validateReservationLookup(op domain.Operation, record MutationReservation) error {
+	expected, err := reservationFor(op, record.CreatedAt)
+	if err != nil {
+		return err
+	}
+	if record.IdempotencyKey != expected.IdempotencyKey || record.Actor != expected.Actor || record.Target != expected.Target ||
+		record.OperationKind != expected.OperationKind || record.Classification != expected.Classification ||
+		record.IdempotencyFingerprint != expected.IdempotencyFingerprint {
+		return ErrMutationReservationCollision
+	}
+	return nil
+}
+
 // Reserve atomically creates a pending marker before any guest effect.
 func (j *MutationJournal) Reserve(op domain.Operation, now time.Time) (*MutationReservation, error) {
+	return j.ReserveContext(context.Background(), op, now)
+}
+
+// ReserveContext atomically creates a pending marker within the caller's deadline.
+func (j *MutationJournal) ReserveContext(ctx context.Context, op domain.Operation, now time.Time) (*MutationReservation, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := j.callHook("reserve"); err != nil {
 		return nil, err
 	}
 	if err := j.ensureDir(); err != nil {
 		return nil, err
 	}
-	if existing, err := j.Lookup(op); err != nil {
+	if existing, err := j.LookupContext(ctx, op); err != nil {
 		return nil, err
 	} else if existing != nil {
 		return nil, ErrMutationFinalizationPending
@@ -223,19 +274,9 @@ func (j *MutationJournal) Reserve(op domain.Operation, now time.Time) (*Mutation
 	if err != nil {
 		return nil, err
 	}
-	path := j.pathFor(op.IdempotencyKey)
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		if os.IsExist(err) {
-			return nil, ErrMutationFinalizationPending
-		}
-		return nil, err
-	}
-	if _, err = f.Write(data); err == nil {
-		err = f.Sync()
-	}
-	if closeErr := f.Close(); err == nil {
-		err = closeErr
+	err = writeReservationExclusive(ctx, j.pathFor(op.IdempotencyKey), data)
+	if os.IsExist(err) {
+		return nil, ErrMutationFinalizationPending
 	}
 	if err != nil {
 		return nil, err
@@ -246,32 +287,40 @@ func (j *MutationJournal) Reserve(op domain.Operation, now time.Time) (*Mutation
 	return &record, nil
 }
 
-// Finalize marks a reservation complete only after receipt and audit persistence succeed.
-func (j *MutationJournal) Finalize(op domain.Operation, receiptID domain.ReceiptID, result MutationResult, now time.Time) error {
-	if err := j.callHook("finalize"); err != nil {
+func writeReservationExclusive(ctx context.Context, path string, data []byte) error {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	record, err := j.Lookup(op)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return err
 	}
-	if record == nil {
-		return errors.New("sessions: mutation reservation is missing")
+	if _, err = f.Write(data); err == nil {
+		err = f.Sync()
 	}
-	finalizedAt := now.UTC()
-	record.State = MutationReservationFinalized
-	record.FinalizedAt = &finalizedAt
-	record.ReceiptID = receiptID
-	record.Result = result
-	return j.replace(j.pathFor(op.IdempotencyKey), *record)
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	return ctx.Err()
 }
 
 // Cancel removes a known pre-effect reservation. Failure leaves the marker fail-closed.
 func (j *MutationJournal) Cancel(op domain.Operation) error {
+	return j.CancelContext(context.Background(), op)
+}
+
+// CancelContext removes a known pre-effect reservation within the caller's deadline.
+func (j *MutationJournal) CancelContext(ctx context.Context, op domain.Operation) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := j.callHook("cancel"); err != nil {
 		return err
 	}
-	record, err := j.Lookup(op)
+	record, err := j.LookupContext(ctx, op)
 	if err != nil {
 		return err
 	}
@@ -281,13 +330,19 @@ func (j *MutationJournal) Cancel(op domain.Operation) error {
 	if record.State != MutationReservationPending {
 		return errors.New("sessions: finalized mutation reservation cannot be cancelled")
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := os.Remove(j.pathFor(op.IdempotencyKey)); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return statedir.SyncDir(j.dir)
 }
 
-func (j *MutationJournal) replace(path string, record MutationReservation) error {
+func (j *MutationJournal) replaceContext(ctx context.Context, path string, record MutationReservation) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
 		return err
@@ -307,6 +362,10 @@ func (j *MutationJournal) replace(path string, record MutationReservation) error
 		_ = os.Remove(tmp)
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
 	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
 		return err
@@ -314,7 +373,10 @@ func (j *MutationJournal) replace(path string, record MutationReservation) error
 	return statedir.SyncDir(j.dir)
 }
 
-func (j *MutationJournal) read(path string) (*MutationReservation, error) {
+func (j *MutationJournal) readContext(ctx context.Context, path string) (*MutationReservation, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	fi, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
@@ -322,23 +384,75 @@ func (j *MutationJournal) read(path string) (*MutationReservation, error) {
 	if fi.Mode()&os.ModeSymlink != 0 || !fi.Mode().IsRegular() || fi.Size() > 64*1024 {
 		return nil, errors.New("sessions: invalid mutation reservation file")
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
+	record, err := decodeMutationReservation(f)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := validateMutationReservation(record); err != nil {
+		return nil, err
+	}
+	return &record, ctx.Err()
+}
+
+func decodeMutationReservation(r io.Reader) (MutationReservation, error) {
 	var record MutationReservation
-	dec := json.NewDecoder(io.LimitReader(f, 64*1024+1))
+	dec := json.NewDecoder(io.LimitReader(r, 64*1024+1))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&record); err != nil {
-		return nil, err
+		return MutationReservation{}, err
 	}
 	var trailing any
 	if err := dec.Decode(&trailing); err != io.EOF {
-		return nil, errors.New("sessions: trailing mutation reservation data")
+		return MutationReservation{}, errors.New("sessions: trailing mutation reservation data")
 	}
-	if record.SchemaVersion != mutationReservationSchemaVersion || record.IdempotencyKey == "" || !record.Classification.IsValid() || (record.State != MutationReservationPending && record.State != MutationReservationFinalized) {
-		return nil, errors.New("sessions: invalid mutation reservation record")
+	return record, nil
+}
+
+func validateMutationReservation(record MutationReservation) error {
+	if err := validateMutationReservationEnvelope(record); err != nil {
+		return err
 	}
-	return &record, nil
+	if err := validateMutationReservationReceipt(record); err != nil {
+		return err
+	}
+	return validateMutationReservationState(record)
+}
+
+func validateMutationReservationEnvelope(record MutationReservation) error {
+	validSchema := record.SchemaVersion == 1 || record.SchemaVersion == mutationReservationSchemaVersion
+	validState := record.State == MutationReservationPending || record.State == MutationReservationFinalizing || record.State == MutationReservationFinalized
+	if !validSchema || record.IdempotencyKey == "" || !record.Classification.IsValid() || !validState {
+		return errors.New("sessions: invalid mutation reservation record")
+	}
+	return nil
+}
+
+func validateMutationReservationReceipt(record MutationReservation) error {
+	if record.Receipt != nil {
+		if err := record.Receipt.Validate(); err != nil || !receiptMatchesReservation(*record.Receipt, record) || record.ReceiptID != record.Receipt.ReceiptID {
+			return errors.New("sessions: invalid mutation finalization receipt")
+		}
+	}
+	return nil
+}
+
+func validateMutationReservationState(record MutationReservation) error {
+	if record.State == MutationReservationFinalizing && (record.Receipt == nil || record.FinalizationStartedAt == nil || record.FinalizedAt != nil) {
+		return errors.New("sessions: invalid finalizing mutation record")
+	}
+	if record.State == MutationReservationFinalized && record.SchemaVersion >= mutationReservationSchemaVersion && (record.Receipt == nil || record.FinalizationStartedAt == nil || record.FinalizedAt == nil) {
+		return errors.New("sessions: invalid finalized mutation record")
+	}
+	return nil
 }

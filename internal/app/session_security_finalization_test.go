@@ -170,6 +170,10 @@ func (c *diagnosticCloseErrorChannel) Close(context.Context) error {
 	return errors.New("synthetic transport close failure")
 }
 
+func (c *diagnosticCloseErrorChannel) LastCloseOutcome() guestssh.CloseOutcome {
+	return guestssh.CloseOutcome{Complete: true, Err: errors.New("synthetic transport close failure")}
+}
+
 func (c *diagnosticCloseErrorChannel) Wait() (int, error) {
 	<-c.closed
 	return 0, nil

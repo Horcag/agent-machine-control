@@ -143,17 +143,9 @@ func NewServer(cfg Config) (*Server, error) {
 	sessionSvc := app.NewSessionService(sessionMgr, safetyResolver, leaseMgr, auditStore, receiptStore, approvalStore, app.WithSessionClock(cfg.Clock))
 
 	// 3. Fail-closed startup crash recovery & stale lease reclamation
-	if _, err := operations.ReconcileCrashedOperations(context.Background(), sd.OperationsDir(), receiptStore, auditStore, eventHub, now); err != nil {
+	if err := reconcileStartupState(sd, sessionSvc, receiptStore, auditStore, eventHub, leaseMgr, now); err != nil {
 		_ = lock.Release()
-		return nil, fmt.Errorf("daemon: failed to reconcile crashed operations: %w", err)
-	}
-	if _, err := sessions.ReconcileCrashedSessions(context.Background(), sd.SessionsDir(), now); err != nil {
-		_ = lock.Release()
-		return nil, fmt.Errorf("daemon: failed to reconcile crashed sessions: %w", err)
-	}
-	if _, err := leaseMgr.ReclaimStaleLeases(context.Background()); err != nil {
-		_ = lock.Release()
-		return nil, fmt.Errorf("daemon: failed to reclaim stale leases: %w", err)
+		return nil, err
 	}
 
 	runtimeID, pid, startTime := ident.CurrentIdentity()
@@ -183,6 +175,31 @@ func NewServer(cfg Config) (*Server, error) {
 
 	srv.setupHTTPServer()
 	return srv, nil
+}
+
+func reconcileStartupState(
+	sd *statedir.StateDir,
+	sessionSvc *app.SessionService,
+	receiptStore *receipt.Store,
+	auditStore *audit.Store,
+	eventHub *events.Hub,
+	leaseMgr *lease.Manager,
+	now time.Time,
+) error {
+	ctx := context.Background()
+	if _, err := sessionSvc.ReconcileMutationFinalizations(ctx, now); err != nil {
+		return fmt.Errorf("daemon: failed to reconcile session mutations: %w", err)
+	}
+	if _, err := operations.ReconcileCrashedOperations(ctx, sd.OperationsDir(), receiptStore, auditStore, eventHub, now); err != nil {
+		return fmt.Errorf("daemon: failed to reconcile crashed operations: %w", err)
+	}
+	if _, err := sessions.ReconcileCrashedSessions(ctx, sd.SessionsDir(), now); err != nil {
+		return fmt.Errorf("daemon: failed to reconcile crashed sessions: %w", err)
+	}
+	if _, err := leaseMgr.ReclaimStaleLeases(ctx); err != nil {
+		return fmt.Errorf("daemon: failed to reclaim stale leases: %w", err)
+	}
+	return nil
 }
 
 func (s *Server) setupHTTPServer() {

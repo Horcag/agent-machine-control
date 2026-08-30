@@ -12,43 +12,70 @@ import (
 )
 
 func (m *Manager) withLock(ctx context.Context, machineID string, fn func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	lockDir := m.lockPath(machineID)
 	ownerPath := filepath.Join(lockDir, "owner.json")
 	runtimeID, pid, startTime := m.identityProvider.CurrentIdentity()
 	now := m.now()
+	if err := m.acquireTransitionLock(ctx, lockDir, ownerPath, runtimeID, pid, startTime, now); err != nil {
+		return err
+	}
+	defer m.releaseLock(ownerPath, lockDir, runtimeID, pid, startTime, now)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return fn()
+}
 
+func (m *Manager) acquireTransitionLock(ctx context.Context, lockDir, ownerPath, runtimeID string, pid int, startTime string, now time.Time) error {
 	deadline := time.Now().Add(5 * time.Second)
 	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
 		deadline = ctxDeadline
 	}
-
 	for {
-		if err := os.Mkdir(lockDir, 0700); err == nil {
-			if recErr := m.recordLockOwner(ownerPath, runtimeID, pid, startTime, now); recErr != nil {
-				_ = os.Remove(ownerPath)
-				_ = os.Remove(lockDir)
-				return recErr
-			}
-			defer m.releaseLock(ownerPath, lockDir, runtimeID, pid, startTime, now)
-			return fn()
-		} else if !os.IsExist(err) {
-			return fmt.Errorf("failed to create lock directory %q: %w", lockDir, err)
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-
+		created, err := m.tryCreateTransitionLock(ctx, lockDir, ownerPath, runtimeID, pid, startTime, now)
+		if err != nil {
+			return err
+		}
+		if created {
+			return nil
+		}
 		if m.tryReclaimDeadLock(ownerPath, lockDir, runtimeID) {
 			continue
 		}
-
 		if time.Now().After(deadline) || ctx.Err() != nil {
 			return fmt.Errorf("timed out waiting for lease transition lock: %w", ErrLeaseConflict)
 		}
-
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
+}
+
+func (m *Manager) tryCreateTransitionLock(ctx context.Context, lockDir, ownerPath, runtimeID string, pid int, startTime string, now time.Time) (bool, error) {
+	if err := os.Mkdir(lockDir, 0700); err != nil {
+		if os.IsExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to create lock directory %q: %w", lockDir, err)
+	}
+	if err := ctx.Err(); err != nil {
+		_ = os.Remove(lockDir)
+		return false, err
+	}
+	if err := m.recordLockOwner(ownerPath, runtimeID, pid, startTime, now); err != nil {
+		_ = os.Remove(ownerPath)
+		_ = os.Remove(lockDir)
+		return false, err
+	}
+	return true, nil
 }
 
 func (m *Manager) recordLockOwner(ownerPath, runtimeID string, pid int, startTime string, now time.Time) error {

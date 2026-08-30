@@ -97,93 +97,6 @@ func (s *SessionService) acquireMutationLease(
 	}, nil
 }
 
-func classifyRunError(runErr error, effectOccurred bool) (domain.OutcomeStatus, int, string, string) {
-	var deniedErr *PolicyDeniedError
-	switch {
-	case errors.As(runErr, &deniedErr):
-		return domain.OutcomeDenied, 7, string(deniedErr.Reason), deniedErr.Message
-	case effectOccurred:
-		return domain.OutcomeFailed, 1, "", ""
-	case errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runErr, domain.ErrMissingDeadline):
-		return domain.OutcomeAborted, 1, "", ""
-	case errors.Is(runErr, context.Canceled):
-		return domain.OutcomeAborted, 1, "", ""
-	default:
-		return domain.OutcomeFailed, 1, "", ""
-	}
-}
-
-func (s *SessionService) persistOutcome(
-	op domain.Operation,
-	fp, idFp domain.Fingerprint,
-	_ policy.Decision,
-	startedAt, completedAt time.Time,
-	runErr error,
-	rollbackRef string,
-	evidenceRefs []string,
-	exitCode int,
-	effectOccurred bool,
-) (domain.Receipt, error) {
-	outcomeStatus := domain.OutcomeSuccess
-	effectiveRollback := rollbackRef
-	var errCategory, errMsg string
-
-	if runErr != nil {
-		if !effectOccurred {
-			effectiveRollback = ""
-		}
-		outcomeStatus, exitCode, errCategory, errMsg = classifyRunError(runErr, effectOccurred)
-	}
-
-	rcptID, err := domain.GenerateReceiptID()
-	if err != nil {
-		return domain.Receipt{}, fmt.Errorf("app: failed to generate receipt ID: %w", err)
-	}
-
-	rcpt := domain.Receipt{
-		ReceiptID:              rcptID,
-		OperationKind:          op.Kind,
-		Fingerprint:            fp,
-		IdempotencyFingerprint: idFp,
-		IdempotencyKey:         op.IdempotencyKey,
-		Actor:                  op.Actor.EffectiveActor,
-		Target:                 op.Target,
-		Class:                  op.Classification,
-		EffectiveBackend:       "amcd",
-		StartedAt:              startedAt,
-		CompletedAt:            completedAt,
-		Outcome: domain.ExecutionOutcome{
-			Status:        outcomeStatus,
-			ExitCode:      exitCode,
-			ErrorCategory: errCategory,
-			ErrorMessage:  errMsg,
-		},
-		ObservationType: domain.ObservationObserved,
-		RollbackRef:     effectiveRollback,
-		RedactionStatus: domain.RedactionApplied,
-		EvidenceRefs:    evidenceRefs,
-	}
-
-	var persistErrs []error
-	if s.receiptStore == nil {
-		persistErrs = append(persistErrs, errors.New("receipt store: unavailable"))
-	} else if err := s.receiptStore.Save(rcpt); err != nil {
-		persistErrs = append(persistErrs, fmt.Errorf("receipt store: %w", err))
-	}
-	if s.auditStore == nil {
-		persistErrs = append(persistErrs, errors.New("audit store: unavailable"))
-	} else if err := s.auditStore.CheckWritable(); err != nil {
-		persistErrs = append(persistErrs, fmt.Errorf("audit store: %w", err))
-	} else if err := s.auditStore.RecordTerminalOutcome(rcpt); err != nil {
-		persistErrs = append(persistErrs, fmt.Errorf("audit store: %w", err))
-	}
-
-	if len(persistErrs) > 0 {
-		return rcpt, errors.Join(persistErrs...)
-	}
-	return rcpt, nil
-}
-
 func (s *SessionService) resolveSafety(ctx context.Context, target domain.MachineRef) SafetyResolution {
 	if s.safetyResolver == nil {
 		return SafetyResolution{Classification: domain.ClassDestructivePrivileged}
@@ -250,6 +163,9 @@ func extractEvidenceRefs(op domain.Operation, obs *domain.SessionObservation) []
 func waitForInFlight(ctx context.Context, entry *inFlightSessionCall) (sessionMutationResult, *domain.Receipt, error) {
 	select {
 	case <-entry.done:
+		if !entry.hasReceipt {
+			return entry.result, nil, entry.err
+		}
 		return entry.result, &entry.rcpt, entry.err
 	case <-ctx.Done():
 		return sessionMutationResult{}, nil, ctx.Err()
@@ -282,7 +198,6 @@ func (s *SessionService) executeMutation(
 	execCtx context.Context,
 	op domain.Operation,
 	fp, idFp domain.Fingerprint,
-	decision policy.Decision,
 	safetyRes SafetyResolution,
 	execute func(context.Context) (sessionMutationResult, error),
 ) (sessionMutationResult, domain.Receipt, error) {
@@ -309,18 +224,26 @@ func (s *SessionService) executeMutation(
 			evidenceRefs = extractEvidenceRefs(op, result.Observation)
 		}
 	}
-	rcpt, persistErr := s.persistOutcome(op, fp, idFp, decision, startedAt, completedAt, runErr, rollbackRef, evidenceRefs, result.ExitCode, result.EffectApplied)
+	rcpt, persistErr := s.buildOutcomeReceipt(op, fp, idFp, startedAt, completedAt, runErr, rollbackRef, evidenceRefs, result.ExitCode, result.EffectApplied)
+	effectApplied := result.EffectApplied
+	durableResult := sessions.MutationResult{
+		BytesWritten:  result.BytesWritten,
+		Observation:   result.Observation,
+		EffectApplied: &effectApplied,
+	}
+	if persistErr == nil && s.mutationJournal == nil {
+		persistErr = errors.New("app: session mutation journal is unavailable")
+	}
+	finalizationCtx, cancelFinalization := context.WithTimeout(context.WithoutCancel(execCtx), 5*time.Second)
+	defer cancelFinalization()
 	if persistErr == nil {
-		if s.mutationJournal == nil {
-			persistErr = errors.New("app: session mutation journal is unavailable")
-		} else {
-			effectApplied := result.EffectApplied
-			persistErr = s.mutationJournal.Finalize(op, rcpt.ReceiptID, sessions.MutationResult{
-				BytesWritten:  result.BytesWritten,
-				Observation:   result.Observation,
-				EffectApplied: &effectApplied,
-			}, completedAt)
-		}
+		persistErr = s.mutationJournal.RecordFinalizationIntentContext(finalizationCtx, op, rcpt, durableResult, completedAt)
+	}
+	if persistErr == nil {
+		persistErr = s.persistTerminalOutcome(rcpt)
+	}
+	if persistErr == nil {
+		persistErr = s.mutationJournal.MarkFinalizedContext(finalizationCtx, op, completedAt)
 	}
 	if runErr != nil {
 		return result, rcpt, errors.Join(runErr, persistErr)
@@ -377,7 +300,7 @@ func (s *SessionService) admitSessionMutation(
 	}, nil, nil
 }
 
-func (s *SessionService) reserveAndPrepareMutation(admitted *admittedSessionMutation, approval *domain.Approval) error {
+func (s *SessionService) reserveAndPrepareMutation(ctx context.Context, admitted *admittedSessionMutation, approval *domain.Approval) error {
 	if s.mutationJournal == nil {
 		_ = admitted.releaseLease()
 		return errors.New("app: session mutation journal is unavailable")
@@ -388,7 +311,9 @@ func (s *SessionService) reserveAndPrepareMutation(admitted *admittedSessionMuta
 		return err
 	}
 	if err := s.prepareAuditAndApproval(admitted.decision, admitted.op, approval, now); err != nil {
-		cancelErr := s.mutationJournal.Cancel(admitted.op)
+		cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		cancelErr := s.mutationJournal.CancelContext(cancelCtx, admitted.op)
+		cancel()
 		_ = admitted.releaseLease()
 		return errors.Join(err, cancelErr)
 	}
@@ -408,20 +333,6 @@ func (s *SessionService) coordinateSessionMutation(
 		return sessionMutationResult{}, nil, err
 	}
 
-	if n, obs, rcpt, handled, retryErr := s.lookupSessionRetry(op); handled {
-		return sessionMutationResult{BytesWritten: n, Observation: obs}, rcpt, retryErr
-	}
-	if approval != nil && !op.Actor.HasScope(domain.ScopeSessionAdmin) {
-		now := s.now()
-		denial := &PolicyDeniedError{
-			Reason:  policy.DenialApprovalRequired,
-			Message: "raw approval objects require an authenticated session administrator",
-		}
-		decision := policy.Decision{Type: policy.DecisionDeny, EffectiveClass: op.Classification}
-		rcpt, persistErr := s.persistOutcome(op, initialFP, idFp, decision, now, now, denial, "", nil, 7, false)
-		return sessionMutationResult{}, &rcpt, errors.Join(denial, persistErr)
-	}
-
 	entry, isWaiting, err := s.acquireFlight(flightKey, idFp)
 	if err != nil {
 		return sessionMutationResult{}, nil, err
@@ -431,24 +342,54 @@ func (s *SessionService) coordinateSessionMutation(
 	}
 	defer s.releaseFlight(flightKey, entry)
 
+	if n, obs, rcpt, handled, retryErr := s.lookupSessionRetry(ctx, op); handled {
+		entry.result = sessionMutationResult{BytesWritten: n, Observation: obs}
+		if rcpt != nil {
+			entry.rcpt = *rcpt
+			entry.hasReceipt = true
+		}
+		entry.err = retryErr
+		return sessionMutationResult{BytesWritten: n, Observation: obs}, rcpt, retryErr
+	}
+	if err := ctx.Err(); err != nil {
+		entry.err = err
+		return sessionMutationResult{}, nil, err
+	}
+	if approval != nil && !op.Actor.HasScope(domain.ScopeSessionAdmin) {
+		now := s.now()
+		denial := &PolicyDeniedError{
+			Reason:  policy.DenialApprovalRequired,
+			Message: "raw approval objects require an authenticated session administrator",
+		}
+		decision := policy.Decision{Type: policy.DecisionDeny, EffectiveClass: op.Classification}
+		rcpt, persistErr := s.persistOutcome(op, initialFP, idFp, decision, now, now, denial, "", nil, 7, false)
+		finalErr := errors.Join(denial, persistErr)
+		entry.rcpt = rcpt
+		entry.hasReceipt = true
+		entry.err = finalErr
+		return sessionMutationResult{}, &rcpt, finalErr
+	}
+
 	admitted, denialRcpt, err := s.admitSessionMutation(ctx, op, approval, timeout, initialFP)
 	if err != nil {
 		entry.err = err
 		if denialRcpt != nil {
 			entry.rcpt = *denialRcpt
+			entry.hasReceipt = true
 		}
 		return sessionMutationResult{}, denialRcpt, err
 	}
-	if err := s.reserveAndPrepareMutation(admitted, approval); err != nil {
+	if err := s.reserveAndPrepareMutation(ctx, admitted, approval); err != nil {
 		entry.err = err
 		return sessionMutationResult{}, nil, err
 	}
 
-	result, rcpt, mutErr := s.executeMutation(ctx, admitted.op, admitted.fp, admitted.idFp, admitted.decision, admitted.safety, execute)
+	result, rcpt, mutErr := s.executeMutation(ctx, admitted.op, admitted.fp, admitted.idFp, admitted.safety, execute)
 	releaseErr := admitted.releaseLease()
 
 	entry.result = result
 	entry.rcpt = rcpt
+	entry.hasReceipt = true
 
 	if mutErr != nil || releaseErr != nil {
 		finalErr := errors.Join(mutErr, releaseErr)

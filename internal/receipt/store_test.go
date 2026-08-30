@@ -1,6 +1,7 @@
 package receipt_test
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -10,6 +11,104 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/domain"
 	"github.com/Horcag/agent-machine-control/internal/receipt"
 )
+
+func ensureTestReceipt() domain.Receipt {
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	return domain.Receipt{
+		ReceiptID:              "rcpt-abcdefabcdefabcdefabcdefabcdefab",
+		OperationKind:          "session.write",
+		Fingerprint:            "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+		IdempotencyFingerprint: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+		IdempotencyKey:         "receipt-ensure-key",
+		Actor:                  "agent:receipt-ensure",
+		Target:                 "c4a523d4-6b99-4d62-a5e2-4752c0f20001",
+		Class:                  domain.ClassReversibleMutation,
+		EffectiveBackend:       "amcd",
+		StartedAt:              now,
+		CompletedAt:            now.Add(time.Second),
+		Outcome:                domain.ExecutionOutcome{Status: domain.OutcomeSuccess},
+		ObservationType:        domain.ObservationObserved,
+		RollbackRef:            "e4a523d4-6b99-4d62-a5e2-4752c0f20001",
+		RedactionStatus:        domain.RedactionApplied,
+	}
+}
+
+func TestStoreEnsureWritesOnceAndRejectsConflicts(t *testing.T) {
+	var saves int
+	store := receipt.NewStore(t.TempDir(), receipt.WithSaveHook(func(domain.Receipt) error {
+		saves++
+		return nil
+	}))
+	want := ensureTestReceipt()
+	if err := store.Ensure(want); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Ensure(want); err != nil {
+		t.Fatalf("idempotent ensure: %v", err)
+	}
+	if saves != 1 {
+		t.Fatalf("save hook calls = %d, want one durable write", saves)
+	}
+	got, err := store.Get(string(want.ReceiptID))
+	if err != nil || got.ReceiptID != want.ReceiptID {
+		t.Fatalf("stored receipt = %+v err %v", got, err)
+	}
+	conflict := want
+	conflict.Outcome.ExitCode = 1
+	if err := store.Ensure(conflict); !errors.Is(err, receipt.ErrReceiptCollision) {
+		t.Fatalf("conflicting ensure error = %v", err)
+	}
+	invalid := want
+	invalid.ReceiptID = ""
+	if err := store.Ensure(invalid); err == nil {
+		t.Fatal("invalid receipt was ensured")
+	}
+}
+
+func TestStoreEnsureAndLookupFailureBoundaries(t *testing.T) {
+	hookErr := errors.New("synthetic receipt hook failure")
+	want := ensureTestReceipt()
+	store := receipt.NewStore(t.TempDir(), receipt.WithSaveHook(func(domain.Receipt) error { return hookErr }))
+	if err := store.Ensure(want); !errors.Is(err, hookErr) {
+		t.Fatalf("ensure hook error = %v", err)
+	}
+	if err := store.Save(want); !errors.Is(err, hookErr) {
+		t.Fatalf("save hook error = %v", err)
+	}
+
+	syncErr := errors.New("synthetic receipt sync failure")
+	syncStore := receipt.NewStore(t.TempDir(), receipt.WithSyncDir(func(string) error { return syncErr }))
+	if err := syncStore.Ensure(want); !errors.Is(err, syncErr) {
+		t.Fatalf("ensure sync error = %v", err)
+	}
+
+	corruptDir := t.TempDir()
+	corruptPath := filepath.Join(corruptDir, string(want.ReceiptID)+".json")
+	if err := os.WriteFile(corruptPath, []byte("{corrupt"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := receipt.NewStore(corruptDir).Ensure(want); err == nil {
+		t.Fatal("corrupt existing receipt was overwritten")
+	}
+
+	lookupCalls := 0
+	lookupStore := receipt.NewStore(t.TempDir(), receipt.WithLookupHook(func(context.Context) error {
+		lookupCalls++
+		return hookErr
+	}))
+	op := domain.Operation{IdempotencyKey: want.IdempotencyKey}
+	if _, err := lookupStore.LookupIdempotencyContext(context.Background(), op); !errors.Is(err, hookErr) {
+		t.Fatalf("lookup hook error = %v", err)
+	}
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := lookupStore.LookupIdempotencyContext(canceled, op); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled lookup error = %v", err)
+	}
+	if lookupCalls != 1 {
+		t.Fatalf("lookup hook calls = %d, want no call after pre-cancellation", lookupCalls)
+	}
+}
 
 func TestStore_SaveAndLookupIdempotency_ExactMatch(t *testing.T) {
 	dir := t.TempDir()
@@ -52,6 +151,14 @@ func TestStore_SaveAndLookupIdempotency_ExactMatch(t *testing.T) {
 
 	if err := store.Save(r); err != nil {
 		t.Fatalf("Save failed: %v", err)
+	}
+	if err := store.Ensure(r); err != nil {
+		t.Fatalf("Ensure exact receipt failed: %v", err)
+	}
+	conflicting := r
+	conflicting.Outcome.ExitCode = 1
+	if err := store.Ensure(conflicting); !errors.Is(err, receipt.ErrReceiptCollision) {
+		t.Fatalf("Ensure conflicting receipt error = %v", err)
 	}
 
 	// Lookup exact match

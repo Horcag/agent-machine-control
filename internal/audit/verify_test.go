@@ -21,10 +21,32 @@ func terminalReceipt() domain.Receipt {
 		Actor:                  "agent:audit-verify",
 		Target:                 "c4a523d4-6b99-4d62-a5e2-4752c0f20001",
 		Class:                  domain.ClassReversibleMutation,
+		EffectiveBackend:       "amcd",
 		StartedAt:              time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC),
 		CompletedAt:            time.Date(2026, 8, 30, 12, 0, 1, 0, time.UTC),
 		Outcome:                domain.ExecutionOutcome{Status: domain.OutcomeSuccess},
+		ObservationType:        domain.ObservationObserved,
 		RollbackRef:            "e4a523d4-6b99-4d62-a5e2-4752c0f20001",
+		RedactionStatus:        domain.RedactionApplied,
+	}
+}
+
+func TestEnsureTerminalOutcomeIsExactAndIdempotent(t *testing.T) {
+	store := audit.NewStore(t.TempDir())
+	receipt := terminalReceipt()
+	if err := store.EnsureTerminalOutcome(receipt); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.EnsureTerminalOutcome(receipt); err != nil {
+		t.Fatalf("repeated ensure failed: %v", err)
+	}
+	if err := store.VerifyTerminalOutcome(receipt); err != nil {
+		t.Fatalf("idempotent ensure left invalid evidence: %v", err)
+	}
+	conflicting := receipt
+	conflicting.Outcome.ExitCode = 1
+	if err := store.EnsureTerminalOutcome(conflicting); !errors.Is(err, audit.ErrTerminalEvidenceInvalid) {
+		t.Fatalf("conflicting ensure error = %v", err)
 	}
 }
 

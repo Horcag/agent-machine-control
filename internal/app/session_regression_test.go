@@ -110,6 +110,12 @@ func (c *trackingChannel) Close(_ context.Context) error {
 	return nil
 }
 
+func (c *trackingChannel) LastCloseOutcome() guestssh.CloseOutcome {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return guestssh.CloseOutcome{Complete: c.closed}
+}
+
 func (c *trackingChannel) Wait() (int, error) {
 	<-c.waitCh
 	return 0, nil

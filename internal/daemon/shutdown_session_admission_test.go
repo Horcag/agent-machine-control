@@ -53,6 +53,14 @@ func (c *shutdownAdmissionChannel) Close(ctx context.Context) error {
 		return ctx.Err()
 	}
 }
+func (c *shutdownAdmissionChannel) LastCloseOutcome() guestssh.CloseOutcome {
+	select {
+	case <-c.done:
+		return guestssh.CloseOutcome{Complete: true}
+	default:
+		return guestssh.CloseOutcome{}
+	}
+}
 func (c *shutdownAdmissionChannel) Wait() (int, error) { <-c.done; return 0, nil }
 
 func TestServerShutdownRejectsSessionOpenWhileSessionDrainIsHeld(t *testing.T) {

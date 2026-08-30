@@ -100,72 +100,155 @@ func (h *finalizationHarness) service(receipts *receipt.Store, audits *audit.Sto
 	return app.NewSessionService(h.manager, h.safety, nil, audits, receipts, approval.NewStore(h.sd.ApprovalsDir()), opts...)
 }
 
-func assertPendingRetryHasNoEffect(t *testing.T, h *finalizationHarness, params app.SessionWriteParams) {
-	t.Helper()
-	before := atomic.LoadInt32(&h.transport.writeCalls)
+func restartedFinalizationService(h *finalizationHarness) *app.SessionService {
 	panicTransport := &trackingTransport{panicOnDial: true}
 	restartedManager := sessions.NewManager(h.sd.SessionsDir(), panicTransport, time.Now)
-	restarted := app.NewSessionService(restartedManager, h.safety, nil, audit.NewStore(h.sd.AuditDir()), receipt.NewStore(h.sd.ReceiptsDir()), approval.NewStore(h.sd.ApprovalsDir()))
-	_, _, err := restarted.WriteSession(context.Background(), params)
-	if !errors.Is(err, sessions.ErrMutationFinalizationPending) {
-		t.Fatalf("retry error = %v, want pending finalization", err)
+	return app.NewSessionService(restartedManager, h.safety, nil, audit.NewStore(h.sd.AuditDir()), receipt.NewStore(h.sd.ReceiptsDir()), approval.NewStore(h.sd.ApprovalsDir()))
+}
+
+func assertRetryFinalizesWithoutEffect(t *testing.T, h *finalizationHarness, params app.SessionWriteParams, wantReceiptID domain.ReceiptID) {
+	t.Helper()
+	before := atomic.LoadInt32(&h.transport.writeCalls)
+	restarted := restartedFinalizationService(h)
+	if reconciled, err := restarted.ReconcileMutationFinalizations(context.Background(), time.Now()); err != nil || reconciled != 1 {
+		t.Fatalf("first reconciliation = %d err %v, want one", reconciled, err)
 	}
-	if atomic.LoadInt32(&h.transport.writeCalls) != before || atomic.LoadInt32(&panicTransport.writeCalls) != 0 {
-		t.Fatal("pending retry performed a second transport effect")
+	if reconciled, err := restarted.ReconcileMutationFinalizations(context.Background(), time.Now().Add(time.Second)); err != nil || reconciled != 0 {
+		t.Fatalf("second reconciliation = %d err %v, want idempotent zero", reconciled, err)
 	}
+	n, rcpt, err := restarted.WriteSession(context.Background(), params)
+	if err != nil || n != len(params.Data) || rcpt == nil || rcpt.ReceiptID != wantReceiptID {
+		t.Fatalf("retry = n %d receipt %+v err %v", n, rcpt, err)
+	}
+	if atomic.LoadInt32(&h.transport.writeCalls) != before {
+		t.Fatal("reconciled retry performed a second transport effect")
+	}
+}
+
+func assertInterruptedPendingBecomesUnknownWithoutEffect(t *testing.T, h *finalizationHarness, params app.SessionWriteParams) {
+	t.Helper()
+	before := atomic.LoadInt32(&h.transport.writeCalls)
+	restarted := restartedFinalizationService(h)
+	if reconciled, err := restarted.ReconcileMutationFinalizations(context.Background(), time.Now()); err != nil || reconciled != 1 {
+		t.Fatalf("pending reconciliation = %d err %v", reconciled, err)
+	}
+	if reconciled, err := restarted.ReconcileMutationFinalizations(context.Background(), time.Now().Add(time.Second)); err != nil || reconciled != 0 {
+		t.Fatalf("repeated pending reconciliation = %d err %v", reconciled, err)
+	}
+	_, rcpt, err := restarted.WriteSession(context.Background(), params)
+	if !errors.Is(err, sessions.ErrMutationEffectUnknown) || rcpt == nil || rcpt.Outcome.Status != domain.OutcomeFailed {
+		t.Fatalf("unknown retry = receipt %+v err %v", rcpt, err)
+	}
+	if atomic.LoadInt32(&h.transport.writeCalls) != before {
+		t.Fatal("unknown retry performed a transport effect")
+	}
+}
+
+type finalizationCutBuilder func(*finalizationHarness) (*receipt.Store, *audit.Store, *sessions.MutationJournal)
+
+func buildIntentCut(h *finalizationHarness) (*receipt.Store, *audit.Store, *sessions.MutationJournal) {
+	journal := sessions.NewMutationJournal(filepath.Join(h.sd.SessionsDir(), "mutations"), sessions.WithMutationJournalHook(func(action string) error {
+		if action == "intent" {
+			return errors.New("synthetic finalization intent failure")
+		}
+		return nil
+	}))
+	return receipt.NewStore(h.sd.ReceiptsDir()), audit.NewStore(h.sd.AuditDir()), journal
+}
+
+func buildReceiptCut(h *finalizationHarness) (*receipt.Store, *audit.Store, *sessions.MutationJournal) {
+	receipts := receipt.NewStore(h.sd.ReceiptsDir(), receipt.WithSaveHook(func(r domain.Receipt) error {
+		if r.OperationKind == "session.write" {
+			return errors.New("synthetic receipt failure")
+		}
+		return nil
+	}))
+	return receipts, audit.NewStore(h.sd.AuditDir()), nil
+}
+
+func buildAuditCut(h *finalizationHarness) (*receipt.Store, *audit.Store, *sessions.MutationJournal) {
+	audits := audit.NewStore(h.sd.AuditDir(), audit.WithAppendHook(func(event audit.Event) error {
+		if event.EventType == audit.EventTerminalOutcome {
+			return errors.New("synthetic terminal audit failure")
+		}
+		return nil
+	}))
+	return receipt.NewStore(h.sd.ReceiptsDir()), audits, nil
+}
+
+func buildJournalFinalizeCut(h *finalizationHarness) (*receipt.Store, *audit.Store, *sessions.MutationJournal) {
+	journal := sessions.NewMutationJournal(filepath.Join(h.sd.SessionsDir(), "mutations"), sessions.WithMutationJournalHook(func(action string) error {
+		if action == "finalize" {
+			return errors.New("synthetic reservation finalize failure")
+		}
+		return nil
+	}))
+	return receipt.NewStore(h.sd.ReceiptsDir()), audit.NewStore(h.sd.AuditDir()), journal
 }
 
 func TestSessionMutationJournal_PreventsReplayAfterReceiptAuditAndFinalizeFailures(t *testing.T) {
 	tests := []struct {
 		name  string
-		build func(*finalizationHarness) (*receipt.Store, *audit.Store, *sessions.MutationJournal)
+		build finalizationCutBuilder
 	}{
-		{
-			name: "receipt write",
-			build: func(h *finalizationHarness) (*receipt.Store, *audit.Store, *sessions.MutationJournal) {
-				return receipt.NewStore(h.sd.ReceiptsDir(), receipt.WithSaveHook(func(r domain.Receipt) error {
-					if r.OperationKind == "session.write" {
-						return errors.New("synthetic receipt failure")
-					}
-					return nil
-				})), audit.NewStore(h.sd.AuditDir()), nil
-			},
-		},
-		{
-			name: "terminal audit write",
-			build: func(h *finalizationHarness) (*receipt.Store, *audit.Store, *sessions.MutationJournal) {
-				return receipt.NewStore(h.sd.ReceiptsDir()), audit.NewStore(h.sd.AuditDir(), audit.WithAppendHook(func(event audit.Event) error {
-					if event.EventType == audit.EventTerminalOutcome {
-						return errors.New("synthetic terminal audit failure")
-					}
-					return nil
-				})), nil
-			},
-		},
-		{
-			name: "reservation finalize",
-			build: func(h *finalizationHarness) (*receipt.Store, *audit.Store, *sessions.MutationJournal) {
-				journal := sessions.NewMutationJournal(filepath.Join(h.sd.SessionsDir(), "mutations"), sessions.WithMutationJournalHook(func(action string) error {
-					if action == "finalize" {
-						return errors.New("synthetic reservation finalize failure")
-					}
-					return nil
-				}))
-				return receipt.NewStore(h.sd.ReceiptsDir()), audit.NewStore(h.sd.AuditDir()), journal
-			},
-		},
+		{name: "finalization intent", build: buildIntentCut},
+		{name: "receipt write", build: buildReceiptCut},
+		{name: "terminal audit write", build: buildAuditCut},
+		{name: "reservation finalize", build: buildJournalFinalizeCut},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			h := newFinalizationHarness(t)
-			receipts, audits, journal := tc.build(h)
-			params := h.writeParams("idem-finalization-" + strings.ReplaceAll(tc.name, " ", "-"))
-			_, rcpt, err := h.service(receipts, audits, journal).WriteSession(context.Background(), params)
-			if err == nil || rcpt == nil || atomic.LoadInt32(&h.transport.writeCalls) != 1 {
-				t.Fatalf("effect/finalization result: writes=%d receipt=%v err=%v", h.transport.writeCalls, rcpt, err)
-			}
-			assertPendingRetryHasNoEffect(t, h, params)
+			runFinalizationCut(t, tc.name, tc.build)
 		})
+	}
+}
+
+func runFinalizationCut(t *testing.T, name string, build finalizationCutBuilder) {
+	t.Helper()
+	h := newFinalizationHarness(t)
+	receipts, audits, journal := build(h)
+	params := h.writeParams("idem-finalization-" + strings.ReplaceAll(name, " ", "-"))
+	_, rcpt, err := h.service(receipts, audits, journal).WriteSession(context.Background(), params)
+	if err == nil || rcpt == nil || atomic.LoadInt32(&h.transport.writeCalls) != 1 {
+		t.Fatalf("effect/finalization result: writes=%d receipt=%v err=%v", h.transport.writeCalls, rcpt, err)
+	}
+	if name == "finalization intent" {
+		assertInterruptedPendingBecomesUnknownWithoutEffect(t, h, params)
+		return
+	}
+	assertRetryFinalizesWithoutEffect(t, h, params, rcpt.ReceiptID)
+}
+
+func TestConcurrentExactRetryWaitsForActiveMutationInsteadOfReconcilingPending(t *testing.T) {
+	h := newFinalizationHarness(t)
+	h.transport.writeDelay = 40 * time.Millisecond
+	svc := h.service(receipt.NewStore(h.sd.ReceiptsDir()), audit.NewStore(h.sd.AuditDir()), nil)
+	params := h.writeParams("idem-concurrent-pending")
+	type outcome struct {
+		n    int
+		rcpt *domain.Receipt
+		err  error
+	}
+	start := make(chan struct{})
+	results := make(chan outcome, 2)
+	for range 2 {
+		go func() {
+			<-start
+			n, rcpt, err := svc.WriteSession(context.Background(), params)
+			results <- outcome{n: n, rcpt: rcpt, err: err}
+		}()
+	}
+	close(start)
+	first := <-results
+	second := <-results
+	if first.err != nil || second.err != nil || first.n != len(params.Data) || second.n != len(params.Data) {
+		t.Fatalf("concurrent outcomes = %+v %+v", first, second)
+	}
+	if first.rcpt == nil || second.rcpt == nil || first.rcpt.ReceiptID != second.rcpt.ReceiptID {
+		t.Fatalf("concurrent receipts = %+v %+v", first.rcpt, second.rcpt)
+	}
+	if got := atomic.LoadInt32(&h.transport.writeCalls); got != 1 {
+		t.Fatalf("transport writes = %d, want one", got)
 	}
 }
 
@@ -200,7 +283,7 @@ func TestSessionMutationJournal_ReserveAndCancelFailuresFailClosedBeforeEffect(t
 	if err == nil || atomic.LoadInt32(&h.transport.writeCalls) != 0 {
 		t.Fatalf("cancel failure allowed effect: writes=%d err=%v", h.transport.writeCalls, err)
 	}
-	assertPendingRetryHasNoEffect(t, h, params)
+	assertInterruptedPendingBecomesUnknownWithoutEffect(t, h, params)
 }
 
 func TestSessionMutationJournal_OpenAndCloseRetriesUseImmutableResultsWithoutReadScope(t *testing.T) {

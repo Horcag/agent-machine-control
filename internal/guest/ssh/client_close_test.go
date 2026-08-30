@@ -13,6 +13,47 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/domain"
 )
 
+func TestNativeTransportPreservesChannelWhenDeadlineClearFails(t *testing.T) {
+	clearErr := errors.New("synthetic deadline clear failure")
+	conn := &clearDeadlineFailureConn{Conn: &closeTrackingConn{}, clearErr: clearErr}
+	created := newCloseTestChannel(newBlockingWriteCloser(), conn)
+	channel, err := finalizeDialChannel(conn, created)
+	var failure *DialFailure
+	if channel != nil || !errors.As(err, &failure) || !errors.Is(err, clearErr) || failure.Channel == nil {
+		t.Fatalf("Dial() = channel %v err %v failure %+v", channel, err, failure)
+	}
+	if closeErr := failure.Channel.Close(context.Background()); closeErr != nil {
+		t.Fatalf("cleanup preserved channel: %v", closeErr)
+	}
+	if outcome := failure.Channel.LastCloseOutcome(); !outcome.Complete || outcome.Err != nil {
+		t.Fatalf("cleanup outcome = %+v, want complete", outcome)
+	}
+}
+
+func TestDialFailurePreservesCauseContract(t *testing.T) {
+	cause := errors.New("synthetic dial cause")
+	failure := &DialFailure{Cause: cause}
+	if failure.Error() != cause.Error() || !errors.Is(failure, cause) {
+		t.Fatalf("dial failure = %q unwrap %v", failure.Error(), failure.Unwrap())
+	}
+	var nilFailure *DialFailure
+	if nilFailure.Error() != "ssh: dial finalization failed" || nilFailure.Unwrap() != nil {
+		t.Fatalf("nil dial failure = %q unwrap %v", nilFailure.Error(), nilFailure.Unwrap())
+	}
+}
+
+type clearDeadlineFailureConn struct {
+	net.Conn
+	clearErr error
+}
+
+func (c *clearDeadlineFailureConn) SetDeadline(deadline time.Time) error {
+	if deadline.IsZero() {
+		return c.clearErr
+	}
+	return c.Conn.SetDeadline(deadline)
+}
+
 func TestSSHChannelCloseDeadlineDoesNotWaitForWriteLaneOrCloseLate(t *testing.T) {
 	stdin := newBlockingWriteCloser()
 	conn := &closeTrackingConn{}

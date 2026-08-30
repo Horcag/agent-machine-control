@@ -181,9 +181,13 @@ func (s *Store) RecordAdmissionIntent(op domain.Operation) error {
 
 // RecordTerminalOutcome writes a terminal outcome audit event.
 func (s *Store) RecordTerminalOutcome(r domain.Receipt) error {
-	event := Event{
+	return s.appendEvent(terminalOutcomeEvent(r))
+}
+
+func terminalOutcomeEvent(r domain.Receipt) Event {
+	return Event{
 		SchemaVersion:          SchemaVersion,
-		Timestamp:              s.now(),
+		Timestamp:              r.CompletedAt.UTC(),
 		EventType:              EventTerminalOutcome,
 		Actor:                  string(r.Actor),
 		Target:                 string(r.Target),
@@ -199,8 +203,58 @@ func (s *Store) RecordTerminalOutcome(r domain.Receipt) error {
 		ErrorMessage:           r.Outcome.ErrorMessage,
 		RollbackRef:            r.RollbackRef,
 	}
+}
 
-	return s.appendEvent(event)
+// EnsureTerminalOutcome idempotently appends the exact terminal event or rejects a collision.
+func (s *Store) EnsureTerminalOutcome(r domain.Receipt) error {
+	if s == nil {
+		return ErrAuditUnavailable
+	}
+	if err := r.Validate(); err != nil {
+		return fmt.Errorf("audit: invalid terminal receipt: %w", err)
+	}
+	event := terminalOutcomeEvent(r)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.withLock(func() error {
+		events, err := s.readEventsLocked()
+		if err != nil {
+			return err
+		}
+		found, err := findExactTerminalOutcome(events, r)
+		if err != nil {
+			return err
+		}
+		if found {
+			return nil
+		}
+		if s.appendHook != nil {
+			if err := s.appendHook(event); err != nil {
+				return err
+			}
+		}
+		return s.writeEvent(event)
+	})
+}
+
+func findExactTerminalOutcome(events []Event, receipt domain.Receipt) (bool, error) {
+	matched := 0
+	for _, event := range events {
+		if !validAuditEnvelope(event) {
+			return false, fmt.Errorf("%w: invalid audit event envelope", ErrTerminalEvidenceInvalid)
+		}
+		if event.EventType != EventTerminalOutcome || event.ReceiptID != string(receipt.ReceiptID) {
+			continue
+		}
+		if !terminalIdentityMatches(event, receipt) || !terminalOutcomeMatches(event, receipt) {
+			return false, fmt.Errorf("%w: terminal receipt collision", ErrTerminalEvidenceInvalid)
+		}
+		matched++
+	}
+	if matched > 1 {
+		return false, fmt.Errorf("%w: duplicate terminal receipt evidence", ErrTerminalEvidenceInvalid)
+	}
+	return matched == 1, nil
 }
 
 func (s *Store) appendEvent(event Event) error {
@@ -212,37 +266,37 @@ func (s *Store) appendEvent(event Event) error {
 		}
 	}
 
+	return s.withLock(func() error { return s.writeEvent(event) })
+}
+
+func (s *Store) writeEvent(event Event) error {
 	data, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("audit: failed to marshal event: %w", err)
 	}
 	data = append(data, '\n')
-
-	return s.withLock(func() error {
-		f, err := os.OpenFile(s.logPath(), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-		if err != nil {
-			return fmt.Errorf("%w: %v", ErrAuditUnavailable, err)
-		}
-		defer f.Close()
-
-		if _, err := f.Write(data); err != nil {
-			return fmt.Errorf("%w: %v", ErrAuditUnavailable, err)
-		}
-		if err := f.Sync(); err != nil {
-			return fmt.Errorf("%w: %v", ErrAuditUnavailable, err)
-		}
-		if err := f.Close(); err != nil {
-			return fmt.Errorf("%w: %v", ErrAuditUnavailable, err)
-		}
-		syncFn := s.syncDirFn
-		if syncFn == nil {
-			syncFn = statedir.SyncDir
-		}
-		if err := syncFn(s.dir); err != nil {
-			return fmt.Errorf("%w: failed to sync audit directory %q: %v", ErrAuditUnavailable, s.dir, err)
-		}
-		return nil
-	})
+	f, err := os.OpenFile(s.logPath(), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrAuditUnavailable, err)
+	}
+	defer f.Close()
+	if _, err := f.Write(data); err != nil {
+		return fmt.Errorf("%w: %v", ErrAuditUnavailable, err)
+	}
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("%w: %v", ErrAuditUnavailable, err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("%w: %v", ErrAuditUnavailable, err)
+	}
+	syncFn := s.syncDirFn
+	if syncFn == nil {
+		syncFn = statedir.SyncDir
+	}
+	if err := syncFn(s.dir); err != nil {
+		return fmt.Errorf("%w: failed to sync audit directory %q: %v", ErrAuditUnavailable, s.dir, err)
+	}
+	return nil
 }
 
 func (s *Store) withLock(fn func() error) error {

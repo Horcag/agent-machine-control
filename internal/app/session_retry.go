@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 
 	"github.com/Horcag/agent-machine-control/internal/domain"
 	"github.com/Horcag/agent-machine-control/internal/policy"
@@ -11,24 +12,24 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/sessions"
 )
 
-func (s *SessionService) checkCachedReceipt(op domain.Operation) (*domain.Receipt, error) {
+func (s *SessionService) checkCachedReceipt(ctx context.Context, op domain.Operation) (*domain.Receipt, error) {
 	if s.receiptStore == nil {
 		return nil, nil
 	}
-	cached, err := s.receiptStore.LookupIdempotency(op)
+	cached, err := s.receiptStore.LookupIdempotencyContext(ctx, op)
 	if err == nil || !errors.Is(err, receipt.ErrIdempotencyCollision) || op.Classification != domain.ClassReversibleMutation {
 		return cached, err
 	}
 	destructiveOp := op.Clone()
 	destructiveOp.Classification = domain.ClassDestructivePrivileged
-	return s.receiptStore.LookupIdempotency(destructiveOp)
+	return s.receiptStore.LookupIdempotencyContext(ctx, destructiveOp)
 }
 
-func (s *SessionService) lookupMutationReservation(op domain.Operation) (*sessions.MutationReservation, domain.Operation, error) {
+func (s *SessionService) lookupMutationReservation(ctx context.Context, op domain.Operation) (*sessions.MutationReservation, domain.Operation, error) {
 	if s.mutationJournal == nil {
 		return nil, op, nil
 	}
-	record, err := s.mutationJournal.Lookup(op)
+	record, err := s.mutationJournal.LookupContext(ctx, op)
 	if err == nil || !errors.Is(err, sessions.ErrMutationReservationCollision) || op.Classification != domain.ClassReversibleMutation {
 		if errors.Is(err, sessions.ErrMutationReservationCollision) {
 			err = fmt.Errorf("%w: durable mutation reservation", receipt.ErrIdempotencyCollision)
@@ -37,25 +38,25 @@ func (s *SessionService) lookupMutationReservation(op domain.Operation) (*sessio
 	}
 	destructiveOp := op.Clone()
 	destructiveOp.Classification = domain.ClassDestructivePrivileged
-	record, err = s.mutationJournal.Lookup(destructiveOp)
+	record, err = s.mutationJournal.LookupContext(ctx, destructiveOp)
 	if errors.Is(err, sessions.ErrMutationReservationCollision) {
 		err = fmt.Errorf("%w: durable mutation reservation", receipt.ErrIdempotencyCollision)
 	}
 	return record, destructiveOp, err
 }
 
-func (s *SessionService) lookupSessionRetry(op domain.Operation) (int, *domain.SessionObservation, *domain.Receipt, bool, error) {
+func (s *SessionService) lookupSessionRetry(ctx context.Context, op domain.Operation) (int, *domain.SessionObservation, *domain.Receipt, bool, error) {
 	if s.mutationJournal != nil {
-		reservation, reservedOp, err := s.lookupMutationReservation(op)
+		reservation, reservedOp, err := s.lookupMutationReservation(ctx, op)
 		if err != nil {
 			return 0, nil, nil, true, err
 		}
 		if reservation != nil {
-			n, obs, rcpt, retryErr := s.handleReservedRetry(reservedOp, reservation)
+			n, obs, rcpt, retryErr := s.handleReservedRetry(ctx, reservedOp, reservation)
 			return n, obs, rcpt, true, retryErr
 		}
 	}
-	cached, err := s.checkCachedReceipt(op)
+	cached, err := s.checkCachedReceipt(ctx, op)
 	if err != nil {
 		return 0, nil, cached, true, err
 	}
@@ -73,35 +74,67 @@ func (s *SessionService) handleExactRetry(cached *domain.Receipt) (*domain.Recei
 	return cached, errors.New("app: terminal session receipt is missing its durable mutation reservation")
 }
 
-func (s *SessionService) handleReservedRetry(op domain.Operation, reservation *sessions.MutationReservation) (int, *domain.SessionObservation, *domain.Receipt, error) {
-	if reservation.State != sessions.MutationReservationFinalized {
-		return 0, nil, nil, sessions.ErrMutationFinalizationPending
-	}
-	if s.receiptStore == nil {
-		return 0, nil, nil, errors.New("app: receipt store is unavailable for finalized mutation")
-	}
-	rcpt, err := s.receiptStore.Get(string(reservation.ReceiptID))
+func (s *SessionService) handleReservedRetry(ctx context.Context, op domain.Operation, reservation *sessions.MutationReservation) (int, *domain.SessionObservation, *domain.Receipt, error) {
+	reservation, err := s.ensureFinalizedReservation(ctx, op, reservation)
 	if err != nil {
-		return 0, nil, nil, fmt.Errorf("app: finalized mutation receipt is unavailable: %w", err)
+		return 0, nil, nil, err
+	}
+	rcpt, err := s.loadVerifiedReservationReceipt(ctx, op, reservation)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	return replayMutationResult(reservation, rcpt)
+}
+
+func (s *SessionService) ensureFinalizedReservation(ctx context.Context, op domain.Operation, reservation *sessions.MutationReservation) (*sessions.MutationReservation, error) {
+	if reservation.State == sessions.MutationReservationFinalized {
+		return reservation, nil
+	}
+	if _, err := s.reconcileMutationReservation(ctx, reservation, s.now()); err != nil {
+		return nil, err
+	}
+	reloaded, _, err := s.lookupMutationReservation(ctx, op)
+	if err != nil {
+		return nil, err
+	}
+	if reloaded == nil || reloaded.State != sessions.MutationReservationFinalized {
+		return nil, sessions.ErrMutationFinalizationPending
+	}
+	return reloaded, nil
+}
+
+func (s *SessionService) loadVerifiedReservationReceipt(ctx context.Context, op domain.Operation, reservation *sessions.MutationReservation) (*domain.Receipt, error) {
+	if s.receiptStore == nil {
+		return nil, errors.New("app: receipt store is unavailable for finalized mutation")
+	}
+	rcpt, err := s.receiptStore.GetContext(ctx, string(reservation.ReceiptID))
+	if err != nil {
+		return nil, fmt.Errorf("app: finalized mutation receipt is unavailable: %w", err)
 	}
 	idFp, err := domain.ComputeIdempotencyFingerprint(op)
 	if err != nil {
-		return 0, nil, nil, err
+		return nil, err
 	}
 	if err := verifyReservedReceipt(op, reservation, rcpt, idFp); err != nil {
-		return 0, nil, nil, err
+		return nil, err
+	}
+	if reservation.Receipt != nil && !reflect.DeepEqual(*reservation.Receipt, *rcpt) {
+		return nil, sessions.ErrMutationReservationCollision
 	}
 	if s.auditStore == nil {
-		return 0, nil, nil, errors.New("app: audit store is unavailable for finalized mutation")
+		return nil, errors.New("app: audit store is unavailable for finalized mutation")
 	}
-	if err := s.auditStore.VerifyTerminalOutcome(*rcpt); err != nil {
-		return 0, nil, nil, fmt.Errorf("app: finalized mutation audit evidence is invalid: %w", err)
+	if err := s.auditStore.VerifyTerminalOutcomeContext(ctx, *rcpt); err != nil {
+		return nil, fmt.Errorf("app: finalized mutation audit evidence is invalid: %w", err)
 	}
+	return rcpt, nil
+}
 
+func replayMutationResult(reservation *sessions.MutationReservation, rcpt *domain.Receipt) (int, *domain.SessionObservation, *domain.Receipt, error) {
 	result := reservation.Result
 	_, effectKnown := result.EffectTruth(reservation.OperationKind)
-	if rcpt.Outcome.Status == domain.OutcomeSuccess && !effectKnown {
-		return result.BytesWritten, result.Observation, rcpt, errors.New("app: legacy session mutation result has ambiguous effect truth")
+	if !effectKnown {
+		return result.BytesWritten, result.Observation, rcpt, sessions.ErrMutationEffectUnknown
 	}
 	switch rcpt.Outcome.Status {
 	case domain.OutcomeDenied:

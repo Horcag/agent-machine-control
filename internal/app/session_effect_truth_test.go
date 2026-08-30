@@ -50,6 +50,9 @@ func (c *acceptedControlCancelChannel) Close(context.Context) error {
 	c.once.Do(func() { close(c.done) })
 	return nil
 }
+func (c *acceptedControlCancelChannel) LastCloseOutcome() guestssh.CloseOutcome {
+	return guestssh.CloseOutcome{Complete: true}
+}
 func (c *acceptedControlCancelChannel) Wait() (int, error) { <-c.done; return 0, nil }
 
 type zeroByteAppliedControlChannel struct {
@@ -70,6 +73,9 @@ func (c *zeroByteAppliedControlChannel) Resize(uint16, uint16) error { return ni
 func (c *zeroByteAppliedControlChannel) Close(context.Context) error {
 	c.once.Do(func() { close(c.done) })
 	return nil
+}
+func (c *zeroByteAppliedControlChannel) LastCloseOutcome() guestssh.CloseOutcome {
+	return guestssh.CloseOutcome{Complete: true}
 }
 func (c *zeroByteAppliedControlChannel) Wait() (int, error) { <-c.done; return 0, nil }
 

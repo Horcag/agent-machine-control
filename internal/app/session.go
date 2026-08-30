@@ -30,11 +30,12 @@ type SessionService struct {
 }
 
 type inFlightSessionCall struct {
-	done   chan struct{}
-	err    error
-	rcpt   domain.Receipt
-	result sessionMutationResult
-	idFp   domain.Fingerprint
+	done       chan struct{}
+	err        error
+	rcpt       domain.Receipt
+	hasReceipt bool
+	result     sessionMutationResult
+	idFp       domain.Fingerprint
 }
 
 type sessionMutationResult struct {

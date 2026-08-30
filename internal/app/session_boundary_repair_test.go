@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/audit"
 	"github.com/Horcag/agent-machine-control/internal/domain"
 	"github.com/Horcag/agent-machine-control/internal/lease"
+	"github.com/Horcag/agent-machine-control/internal/policy"
 	"github.com/Horcag/agent-machine-control/internal/receipt"
 	"github.com/Horcag/agent-machine-control/internal/sessions"
 	"github.com/Horcag/agent-machine-control/internal/statedir"
@@ -132,62 +134,106 @@ func TestSessionWriteAcceptedBytesRemainFailedTruthAndExactRetryDoesNotReplay(t 
 	}
 }
 
-func TestSessionMutationDeadlineIncludesJournalLookupAndCallerBudget(t *testing.T) {
+type durableLookupInstaller func(*statedir.StateDir, chan struct{}) (*sessions.MutationJournal, *receipt.Store)
+
+func TestSessionMutationDeadlineStopsInsideDurableRetryLookups(t *testing.T) {
 	tests := []struct {
 		name    string
-		key     string
-		context func() (context.Context, context.CancelFunc)
-		hook    func(context.Context) sessions.MutationJournalHook
-		timeout time.Duration
+		install durableLookupInstaller
 	}{
 		{
-			name:    "requested timeout expires during lookup",
-			key:     "idem-deadline-requested-lookup",
-			context: func() (context.Context, context.CancelFunc) { return context.WithCancel(context.Background()) },
-			hook: func(context.Context) sessions.MutationJournalHook {
-				return func(action string) error {
-					if action == "lookup" {
-						time.Sleep(15 * time.Millisecond)
-					}
-					return nil
-				}
+			name: "journal lookup",
+			install: func(sd *statedir.StateDir, entered chan struct{}) (*sessions.MutationJournal, *receipt.Store) {
+				journal := sessions.NewMutationJournal(filepath.Join(sd.SessionsDir(), "mutations"), sessions.WithMutationJournalLookupHook(func(ctx context.Context) error {
+					close(entered)
+					<-ctx.Done()
+					return ctx.Err()
+				}))
+				return journal, receipt.NewStore(sd.ReceiptsDir())
 			},
-			timeout: 5 * time.Millisecond,
 		},
 		{
-			name: "shorter caller deadline expires during lookup",
-			key:  "idem-deadline-caller-lookup",
-			context: func() (context.Context, context.CancelFunc) {
-				return context.WithTimeout(context.Background(), 10*time.Millisecond)
+			name: "receipt lookup",
+			install: func(sd *statedir.StateDir, entered chan struct{}) (*sessions.MutationJournal, *receipt.Store) {
+				receipts := receipt.NewStore(sd.ReceiptsDir(), receipt.WithLookupHook(func(ctx context.Context) error {
+					close(entered)
+					<-ctx.Done()
+					return ctx.Err()
+				}))
+				return sessions.NewMutationJournal(filepath.Join(sd.SessionsDir(), "mutations")), receipts
 			},
-			hook: func(ctx context.Context) sessions.MutationJournalHook {
-				return func(action string) error {
-					if action == "lookup" {
-						<-ctx.Done()
-					}
-					return nil
-				}
-			},
-			timeout: time.Second,
 		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := newFinalizationHarness(t)
-			ctx, cancel := tt.context()
-			defer cancel()
-			journal := sessions.NewMutationJournal(filepath.Join(h.sd.SessionsDir(), "mutations"), sessions.WithMutationJournalHook(tt.hook(ctx)))
-			svc := h.service(receipt.NewStore(h.sd.ReceiptsDir()), audit.NewStore(h.sd.AuditDir()), journal)
-			params := h.writeParams(tt.key)
-			params.Timeout = tt.timeout
-			before := atomic.LoadInt32(&h.transport.writeCalls)
-			_, rcpt, err := svc.WriteSession(ctx, params)
-			if !errors.Is(err, context.DeadlineExceeded) || rcpt == nil || rcpt.Outcome.Status != domain.OutcomeAborted {
-				t.Fatalf("deadline result = receipt %+v err %v", rcpt, err)
-			}
-			if atomic.LoadInt32(&h.transport.writeCalls) != before {
-				t.Fatal("expired deadline reached transport effect")
-			}
+			runSessionMutationLookupDeadline(t, tt.name, tt.install)
 		})
+	}
+}
+
+func runSessionMutationLookupDeadline(t *testing.T, name string, install durableLookupInstaller) {
+	t.Helper()
+	sd, err := statedir.Resolve(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sd.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	transport := &trackingTransport{}
+	manager := sessions.NewManager(sd.SessionsDir(), transport, time.Now)
+	scopes := domain.NewScopeSet(domain.ScopeSessionOpen, domain.ScopeSessionWrite)
+	actor, err := domain.NewActorContext("agent:lookup-deadline", "agent:lookup-deadline", scopes, scopes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened, err := manager.Open(context.Background(), domain.Operation{
+		Kind: "session.open", Target: "c4a523d4-6b99-4d62-a5e2-4752c0f20001", Actor: actor, IdempotencyKey: "setup-lookup-deadline",
+	}, 80, 24, domain.DefaultTermType)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{})
+	journal, receipts := install(sd, entered)
+	var auditAppends atomic.Int32
+	audits := audit.NewStore(sd.AuditDir(), audit.WithAppendHook(func(audit.Event) error { auditAppends.Add(1); return nil }))
+	safety := &mockSafetyResolver{resolution: app.SafetyResolution{
+		Classification: domain.ClassReversibleMutation, Contained: true,
+		RollbackRef:   "e4a523d4-6b99-4d62-a5e2-4752c0f20001",
+		RollbackState: policy.RollbackState{Available: true, Verified: true, CheckpointID: "e4a523d4-6b99-4d62-a5e2-4752c0f20001"},
+	}}
+	svc := app.NewSessionService(manager, safety, lease.NewManager(sd.LeasesDir()), audits, receipts, approval.NewStore(sd.ApprovalsDir()), app.WithSessionMutationJournal(journal))
+	before := atomic.LoadInt32(&transport.writeCalls)
+	_, rcpt, err := svc.WriteSession(context.Background(), app.SessionWriteParams{
+		SessionID: opened.ID, Caller: actor, Data: "blocked lookup", Reason: "deadline includes durable retry lookup",
+		IdempotencyKey: "idem-" + strings.ReplaceAll(name, " ", "-"), Timeout: 10 * time.Millisecond,
+	})
+	if !errors.Is(err, context.DeadlineExceeded) || rcpt != nil {
+		t.Fatalf("deadline result = receipt %+v err %v, want no receipt and deadline", rcpt, err)
+	}
+	select {
+	case <-entered:
+	default:
+		t.Fatal("durable lookup hook was not entered")
+	}
+	if atomic.LoadInt32(&transport.writeCalls) != before || auditAppends.Load() != 0 {
+		t.Fatalf("post-lookup side effects: writes=%d audit=%d", transport.writeCalls, auditAppends.Load())
+	}
+	assertLookupDeadlineLeftNoDurableState(t, sd)
+}
+
+func assertLookupDeadlineLeftNoDurableState(t *testing.T, sd *statedir.StateDir) {
+	t.Helper()
+	receiptEntries, err := os.ReadDir(sd.ReceiptsDir())
+	if err != nil || len(receiptEntries) != 0 {
+		t.Fatalf("receipt state after lookup deadline = %v err %v", receiptEntries, err)
+	}
+	leaseEntries, err := os.ReadDir(sd.LeasesDir())
+	if err != nil || len(leaseEntries) != 0 {
+		t.Fatalf("lease state after lookup deadline = %v err %v", leaseEntries, err)
+	}
+	if _, err := os.Stat(filepath.Join(sd.SessionsDir(), "mutations")); !os.IsNotExist(err) {
+		t.Fatalf("mutation journal created during lookup: %v", err)
 	}
 }

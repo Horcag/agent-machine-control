@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/Horcag/agent-machine-control/internal/domain"
@@ -8,18 +9,26 @@ import (
 
 // VerifyTerminalOutcome proves that exactly one durable terminal audit event matches the receipt.
 func (s *Store) VerifyTerminalOutcome(receipt domain.Receipt) error {
+	return s.VerifyTerminalOutcomeContext(context.Background(), receipt)
+}
+
+// VerifyTerminalOutcomeContext verifies terminal evidence within the caller's deadline.
+func (s *Store) VerifyTerminalOutcomeContext(ctx context.Context, receipt domain.Receipt) error {
 	if s == nil {
 		return fmt.Errorf("%w: audit store is unavailable", ErrTerminalEvidenceInvalid)
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	events, err := s.readEventsLocked()
+	events, err := s.readEventsLockedContext(ctx)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrTerminalEvidenceInvalid, err)
 	}
 	var matched bool
 	for _, event := range events {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if !validAuditEnvelope(event) {
 			return fmt.Errorf("%w: invalid audit event envelope", ErrTerminalEvidenceInvalid)
 		}

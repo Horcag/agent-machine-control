@@ -13,6 +13,15 @@ import (
 
 var errSyntheticOpen = errors.New("synthetic post-effect open failure")
 
+type dialFailureTransport struct {
+	channel guestssh.Channel
+	cause   error
+}
+
+func (t dialFailureTransport) Dial(context.Context, domain.MachineRef, uint16, uint16, string) (guestssh.Channel, error) {
+	return nil, &guestssh.DialFailure{Cause: t.cause, Channel: t.channel}
+}
+
 func openFailureOperation(t *testing.T) (domain.Operation, domain.ActorContext) {
 	t.Helper()
 	actor := lifecycleActor(t)
@@ -69,6 +78,33 @@ func TestManagerPostEffectOpenFailuresCloseCompletelyWithoutPublication(t *testi
 	}
 }
 
+func TestManagerOwnsCleanupForPostEffectDialFailure(t *testing.T) {
+	channel := newLifecycleChannel(
+		guestssh.CloseOutcome{Complete: false, Err: context.DeadlineExceeded},
+		guestssh.CloseOutcome{Complete: true},
+	)
+	mgr := sessions.NewManager(t.TempDir(), dialFailureTransport{channel: channel, cause: errSyntheticOpen}, time.Now)
+	op, actor := openFailureOperation(t)
+
+	obs, err := mgr.Open(context.Background(), op, 80, 24, domain.DefaultTermType)
+	var failure *sessions.OpenFailure
+	var dialFailure *guestssh.DialFailure
+	if obs != nil || !errors.As(err, &failure) || !errors.As(err, &dialFailure) || !errors.Is(err, errSyntheticOpen) {
+		t.Fatalf("dial failure = obs %+v err %v", obs, err)
+	}
+	if !failure.ChannelCreated || failure.CleanupComplete || !errors.Is(failure.CleanupErr, context.DeadlineExceeded) {
+		t.Fatalf("dial cleanup truth = %+v, want created and initially incomplete", failure)
+	}
+	waitForTwoLifecycleCloseCalls(t, channel)
+	if err := mgr.Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown after supervised dial cleanup = %v", err)
+	}
+	listed, listErr := mgr.List(context.Background(), actor, "")
+	if listErr != nil || len(listed) != 0 {
+		t.Fatalf("published sessions = %+v err %v, want none", listed, listErr)
+	}
+}
+
 func TestManagerPostEffectOpenCleanupUsesRemainingDeadline(t *testing.T) {
 	channel := newLifecycleChannel()
 	channel.allowClose = make(chan struct{})
@@ -118,7 +154,7 @@ func TestManagerSupervisedOpenCleanupRemovesOwnershipAfterSuccess(t *testing.T) 
 	if obs != nil || !errors.As(err, &failure) || failure.CleanupComplete {
 		t.Fatalf("open = obs %+v err %v, want incomplete typed cleanup failure", obs, err)
 	}
-	waitForLifecycleCloseCalls(t, channel, 2)
+	waitForTwoLifecycleCloseCalls(t, channel)
 	if err := mgr.Shutdown(context.Background()); err != nil {
 		t.Fatalf("shutdown after supervised cleanup = %v", err)
 	}
@@ -145,7 +181,7 @@ func TestManagerShutdownRetriesRetainedOpenCleanup(t *testing.T) {
 	if _, err := mgr.Open(context.Background(), op, 80, 24, domain.DefaultTermType); err == nil {
 		t.Fatal("open unexpectedly succeeded")
 	}
-	waitForLifecycleCloseCalls(t, channel, 2)
+	waitForTwoLifecycleCloseCalls(t, channel)
 	if err := mgr.Shutdown(context.Background()); err != nil {
 		t.Fatalf("shutdown retained cleanup = %v", err)
 	}
@@ -171,7 +207,7 @@ func TestManagerShutdownReturnsStableErrorForRetainedOpenCleanup(t *testing.T) {
 	if _, err := mgr.Open(context.Background(), op, 80, 24, domain.DefaultTermType); err == nil {
 		t.Fatal("open unexpectedly succeeded")
 	}
-	waitForLifecycleCloseCalls(t, channel, 2)
+	waitForTwoLifecycleCloseCalls(t, channel)
 	firstErr := mgr.Shutdown(context.Background())
 	secondErr := mgr.Shutdown(context.Background())
 	if firstErr == nil || secondErr == nil || firstErr.Error() != secondErr.Error() {
@@ -179,8 +215,9 @@ func TestManagerShutdownReturnsStableErrorForRetainedOpenCleanup(t *testing.T) {
 	}
 }
 
-func waitForLifecycleCloseCalls(t *testing.T, channel *lifecycleChannel, want int32) {
+func waitForTwoLifecycleCloseCalls(t *testing.T, channel *lifecycleChannel) {
 	t.Helper()
+	const want int32 = 2
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		if channel.closeCalls.Load() >= want {

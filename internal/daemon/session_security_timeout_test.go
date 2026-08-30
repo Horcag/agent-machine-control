@@ -99,6 +99,14 @@ func (c *deadlineCaptureChannel) Close(ctx context.Context) error {
 	})
 	return nil
 }
+func (c *deadlineCaptureChannel) LastCloseOutcome() guestssh.CloseOutcome {
+	select {
+	case <-c.waitCh:
+		return guestssh.CloseOutcome{Complete: true}
+	default:
+		return guestssh.CloseOutcome{}
+	}
+}
 func (c *deadlineCaptureChannel) Wait() (int, error) {
 	<-c.waitCh
 	return 0, nil

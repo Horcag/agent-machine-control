@@ -123,6 +123,10 @@ func (m *Manager) dialSessionChannel(ctx context.Context, op domain.Operation, c
 	}
 	channel, err := m.transport.Dial(ctx, op.Target, cols, rows, term)
 	if err != nil {
+		var dialFailure *guestssh.DialFailure
+		if errors.As(err, &dialFailure) && dialFailure.Channel != nil {
+			return nil, m.cleanupFailedOpen(ctx, dialFailure.Channel, err)
+		}
 		return nil, err
 	}
 	if ctxErr := ctx.Err(); ctxErr != nil {

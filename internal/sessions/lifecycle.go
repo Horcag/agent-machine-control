@@ -46,14 +46,11 @@ func releaseSessionCloseLane(s *Session) {
 
 func closeChannel(ctx context.Context, channel guestssh.Channel) (bool, error) {
 	callErr := channel.Close(ctx)
-	if provider, ok := channel.(guestssh.CloseOutcomeProvider); ok {
-		outcome := provider.LastCloseOutcome()
-		if outcome.Complete {
-			return true, outcome.Err
-		}
-		return false, callErr
+	outcome := channel.LastCloseOutcome()
+	if outcome.Complete {
+		return true, outcome.Err
 	}
-	return true, callErr
+	return false, callErr
 }
 
 func sessionTerminalError(s *Session, obs domain.SessionObservation) error {
