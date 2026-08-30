@@ -30,7 +30,7 @@ func runSessionApprove(ctx context.Context, cl *client.Client, prompter Prompter
 
 	var reason, idempotencyKey, validityText, data, term string
 	var cols, rows uint
-	var force, jsonOutput bool
+	var jsonOutput bool
 	fs.StringVar(&reason, "reason", "", "Exact mutation reason (required)")
 	fs.StringVar(&idempotencyKey, "idempotency-key", "", "Exact mutation idempotency key (required)")
 	fs.StringVar(&validityText, "valid-for", "", "Approval validity and operation deadline window (1s-5m, required)")
@@ -38,7 +38,6 @@ func runSessionApprove(ctx context.Context, cl *client.Client, prompter Prompter
 	fs.StringVar(&term, "term", domain.DefaultTermType, "Terminal emulation type for open")
 	fs.UintVar(&cols, "cols", uint(domain.DefaultCols), "Terminal columns for open")
 	fs.UintVar(&rows, "rows", uint(domain.DefaultRows), "Terminal rows for open")
-	fs.BoolVar(&force, "force", false, "Approve forced close")
 	fs.BoolVar(&jsonOutput, "json", false, "Output JSON format")
 	if err := fs.Parse(flagArgs); err != nil {
 		return ExitUsage
@@ -49,7 +48,7 @@ func runSessionApprove(ctx context.Context, cl *client.Client, prompter Prompter
 		fmt.Fprintf(stderr, "amc session approve: %v\n", err)
 		return ExitUsage
 	}
-	req, targetLabel, err := buildSessionApprovalRequest(action, positionals, data, reason, idempotencyKey, validFor, uint16(cols), uint16(rows), term, force)
+	req, targetLabel, err := buildSessionApprovalRequest(action, positionals, data, reason, idempotencyKey, validFor, uint16(cols), uint16(rows), term)
 	if err != nil {
 		fmt.Fprintf(stderr, "amc session approve: %v\n", err)
 		return ExitUsage
@@ -86,7 +85,7 @@ func validateSessionApprovalCLIInputs(reason, idempotencyKey, validityText strin
 	return validFor, nil
 }
 
-func buildSessionApprovalRequest(action string, positionals []string, data, reason, key string, validFor time.Duration, cols, rows uint16, term string, force bool) (daemon.SessionApprovalIssueRequest, string, error) {
+func buildSessionApprovalRequest(action string, positionals []string, data, reason, key string, validFor time.Duration, cols, rows uint16, term string) (daemon.SessionApprovalIssueRequest, string, error) {
 	req := daemon.SessionApprovalIssueRequest{
 		Kind: "session." + action, Reason: reason, IdempotencyKey: key,
 		ValidForMillis: int64(validFor / time.Millisecond),
@@ -122,7 +121,6 @@ func buildSessionApprovalRequest(action string, positionals []string, data, reas
 			return req, "", fmt.Errorf("close requires exactly one session ID")
 		}
 		req.SessionID = positionals[0]
-		req.Force = force
 		return req, req.SessionID, nil
 	default:
 		return req, "", fmt.Errorf("unsupported operation %q; use open, write, control, or close", action)

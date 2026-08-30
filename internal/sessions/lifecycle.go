@@ -20,6 +20,13 @@ const (
 	finalizationShutdown
 )
 
+// CloseResult reports both the latest session observation and whether this
+// invocation crossed the explicit close effect boundary.
+type CloseResult struct {
+	Observation   *domain.SessionObservation
+	EffectApplied bool
+}
+
 func acquireSessionCloseLane(ctx context.Context, s *Session) error {
 	return acquireSessionLane(ctx, s.closeSem)
 }
@@ -69,14 +76,13 @@ func (m *Manager) finalizeSession(
 	source finalizationSource,
 	exitCode *int,
 	waitErr error,
-	force bool,
-) (*domain.SessionObservation, error) {
+) (CloseResult, error) {
 	s.mu.Lock()
 	if s.obs.State.IsTerminal() {
 		obs := s.obs
 		err := sessionTerminalError(s, obs)
 		s.mu.Unlock()
-		return &obs, err
+		return CloseResult{Observation: &obs}, err
 	}
 	s.obs.State = domain.SessionStateClosing
 	s.mu.Unlock()
@@ -94,7 +100,7 @@ func (m *Manager) finalizeSession(
 	case finalizationShutdown:
 		finalizeShutdown(s, now, closeComplete, closeErr)
 	case finalizationExplicitClose:
-		finalizeExplicitClose(s, now, closeComplete, closeErr, force)
+		finalizeExplicitClose(s, now, closeComplete, closeErr)
 	}
 	obs := s.obs
 	terminal := obs.State.IsTerminal()
@@ -105,7 +111,7 @@ func (m *Manager) finalizeSession(
 		s.closeOnce.Do(func() { close(s.closedCh) })
 	}
 	persistErr := m.persistSession(s).Err
-	return &obs, errors.Join(terminalErr, persistErr)
+	return CloseResult{Observation: &obs, EffectApplied: true}, errors.Join(terminalErr, persistErr)
 }
 
 func finalizeNaturalExit(s *Session, now time.Time, exitCode *int, waitErr error, closeComplete bool, closeErr error) {
@@ -163,7 +169,7 @@ func finalizeShutdown(s *Session, now time.Time, closeComplete bool, closeErr er
 	}
 }
 
-func finalizeExplicitClose(s *Session, now time.Time, closeComplete bool, closeErr error, _ bool) {
+func finalizeExplicitClose(s *Session, now time.Time, closeComplete bool, closeErr error) {
 	s.terminalErr = errors.Join(s.naturalWaitErr, closeErr)
 	if !closeComplete {
 		s.obs.State = domain.SessionStateClosing

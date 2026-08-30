@@ -78,11 +78,6 @@ func (c *Client) WriteSessionWithTimeout(ctx context.Context, id string, data st
 	return c.writeSessionWithApproval(ctx, id, data, reason, idempotencyKey, timeout, firstApproval(approval), "", time.Time{})
 }
 
-// WriteSessionWithApprovalID transmits data using a server-issued approval reference.
-func (c *Client) WriteSessionWithApprovalID(ctx context.Context, id string, data string, reason, idempotencyKey string, timeout time.Duration, approvalID string) (*daemon.SessionWriteResponse, error) {
-	return c.writeSessionWithApproval(ctx, id, data, reason, idempotencyKey, timeout, nil, approvalID, time.Time{})
-}
-
 // WriteSessionWithApprovalReference transmits data with the exact approval-bound deadline.
 func (c *Client) WriteSessionWithApprovalReference(ctx context.Context, id string, data string, reason, idempotencyKey string, timeout time.Duration, approvalID string, deadline time.Time) (*daemon.SessionWriteResponse, error) {
 	return c.writeSessionWithApproval(ctx, id, data, reason, idempotencyKey, timeout, nil, approvalID, deadline)
@@ -105,11 +100,6 @@ func (c *Client) SendControlKey(ctx context.Context, id string, key domain.Contr
 // SendControlKeyWithTimeout sends a control key with an explicit end-to-end execution bound.
 func (c *Client) SendControlKeyWithTimeout(ctx context.Context, id string, key domain.ControlKey, reason, idempotencyKey string, timeout time.Duration, approval ...*domain.Approval) (*daemon.SessionControlResponse, error) {
 	return c.sendControlKeyWithApproval(ctx, id, key, reason, idempotencyKey, timeout, firstApproval(approval), "", time.Time{})
-}
-
-// SendControlKeyWithApprovalID sends a control key using a server-issued approval reference.
-func (c *Client) SendControlKeyWithApprovalID(ctx context.Context, id string, key domain.ControlKey, reason, idempotencyKey string, timeout time.Duration, approvalID string) (*daemon.SessionControlResponse, error) {
-	return c.sendControlKeyWithApproval(ctx, id, key, reason, idempotencyKey, timeout, nil, approvalID, time.Time{})
 }
 
 // SendControlKeyWithApprovalReference sends a control key with the exact approval-bound deadline.
@@ -179,29 +169,24 @@ func (c *Client) GetSession(ctx context.Context, id string) (*daemon.SessionDTO,
 }
 
 // CloseSession gracefully terminates a persistent session.
-func (c *Client) CloseSession(ctx context.Context, id string, reason, idempotencyKey string, force bool, approval ...*domain.Approval) (*daemon.SessionCloseResponse, error) {
-	return c.CloseSessionWithTimeout(ctx, id, reason, idempotencyKey, force, 30*time.Second, approval...)
+func (c *Client) CloseSession(ctx context.Context, id string, reason, idempotencyKey string, approval ...*domain.Approval) (*daemon.SessionCloseResponse, error) {
+	return c.CloseSessionWithTimeout(ctx, id, reason, idempotencyKey, 30*time.Second, approval...)
 }
 
 // CloseSessionWithTimeout terminates a session with an explicit end-to-end execution bound.
-func (c *Client) CloseSessionWithTimeout(ctx context.Context, id string, reason, idempotencyKey string, force bool, timeout time.Duration, approval ...*domain.Approval) (*daemon.SessionCloseResponse, error) {
-	return c.closeSessionWithApproval(ctx, id, reason, idempotencyKey, force, timeout, firstApproval(approval), "", time.Time{})
-}
-
-// CloseSessionWithApprovalID closes a session using a server-issued approval reference.
-func (c *Client) CloseSessionWithApprovalID(ctx context.Context, id string, reason, idempotencyKey string, force bool, timeout time.Duration, approvalID string) (*daemon.SessionCloseResponse, error) {
-	return c.closeSessionWithApproval(ctx, id, reason, idempotencyKey, force, timeout, nil, approvalID, time.Time{})
+func (c *Client) CloseSessionWithTimeout(ctx context.Context, id string, reason, idempotencyKey string, timeout time.Duration, approval ...*domain.Approval) (*daemon.SessionCloseResponse, error) {
+	return c.closeSessionWithApproval(ctx, id, reason, idempotencyKey, timeout, firstApproval(approval), "", time.Time{})
 }
 
 // CloseSessionWithApprovalReference closes a session with the exact approval-bound deadline.
-func (c *Client) CloseSessionWithApprovalReference(ctx context.Context, id string, reason, idempotencyKey string, force bool, timeout time.Duration, approvalID string, deadline time.Time) (*daemon.SessionCloseResponse, error) {
-	return c.closeSessionWithApproval(ctx, id, reason, idempotencyKey, force, timeout, nil, approvalID, deadline)
+func (c *Client) CloseSessionWithApprovalReference(ctx context.Context, id string, reason, idempotencyKey string, timeout time.Duration, approvalID string, deadline time.Time) (*daemon.SessionCloseResponse, error) {
+	return c.closeSessionWithApproval(ctx, id, reason, idempotencyKey, timeout, nil, approvalID, deadline)
 }
 
-func (c *Client) closeSessionWithApproval(ctx context.Context, id string, reason, idempotencyKey string, force bool, timeout time.Duration, approval *domain.Approval, approvalID string, deadline time.Time) (*daemon.SessionCloseResponse, error) {
+func (c *Client) closeSessionWithApproval(ctx context.Context, id string, reason, idempotencyKey string, timeout time.Duration, approval *domain.Approval, approvalID string, deadline time.Time) (*daemon.SessionCloseResponse, error) {
 	return timedSessionMutation[daemon.SessionCloseResponse](ctx, c, id, "/close", timeout, func(seconds, millis int64) any {
 		return daemon.SessionCloseRequest{
-			Reason: reason, IdempotencyKey: idempotencyKey, Force: force,
+			Reason: reason, IdempotencyKey: idempotencyKey,
 			TimeoutSeconds: seconds, TimeoutMillis: millis, Deadline: formatSessionDeadline(deadline), ApprovalID: approvalID, Approval: approval,
 		}
 	})

@@ -149,12 +149,11 @@ func runSessionClose(ctx context.Context, cl *client.Client, args []string, stdo
 	fs.SetOutput(stderr)
 
 	var reason, idemKey, approvalFile string
-	var force, jsonOutput bool
+	var jsonOutput bool
 
 	fs.StringVar(&reason, "reason", "CLI user session close", "Reason for closing session")
 	fs.StringVar(&idemKey, "idempotency-key", "", "Idempotency key")
 	fs.StringVar(&approvalFile, "approval-file", "", "Path to operator approval JSON file")
-	fs.BoolVar(&force, "force", false, "Request immediate best-effort close; incomplete cleanup remains closing")
 	fs.BoolVar(&jsonOutput, "json", false, "Output JSON format")
 
 	if err := fs.Parse(flagArgs); err != nil {
@@ -181,7 +180,7 @@ func runSessionClose(ctx context.Context, cl *client.Client, args []string, stdo
 		idemKey = fmt.Sprintf("cli-close-%d", time.Now().UnixNano())
 	}
 
-	resp, err := cl.CloseSession(ctx, sessID, reason, idemKey, force, appObj)
+	resp, err := cl.CloseSession(ctx, sessID, reason, idemKey, appObj)
 	if err != nil {
 		return mapClientError(err, stderr, "session close")
 	}

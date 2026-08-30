@@ -34,7 +34,6 @@ type SessionApprovalIssueParams struct {
 	Cols           uint16
 	Rows           uint16
 	Term           string
-	Force          bool
 }
 
 // SessionApprovalSummary is the redacted exact operation identity returned to the operator.
@@ -208,7 +207,7 @@ func (s *SessionService) buildIssuedSessionOperation(params SessionApprovalIssue
 		}
 		return buildCloseOperation(SessionCloseParams{
 			SessionID: params.SessionID, Caller: agent, Reason: params.Reason,
-			IdempotencyKey: params.IdempotencyKey, Deadline: deadline, Force: params.Force,
+			IdempotencyKey: params.IdempotencyKey, Deadline: deadline,
 		}, target, deadline), nil
 	default:
 		return domain.Operation{}, fmt.Errorf("%w: unsupported session approval kind %q", domain.ErrInvalidOperationKind, params.Kind)

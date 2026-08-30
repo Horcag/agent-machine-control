@@ -120,7 +120,7 @@ func TestCLISessionApproveConfirmsAndTranslatesAllOperationKinds(t *testing.T) {
 		{"session", "approve", "open", machineID, "--reason", "approve open", "--idempotency-key", "cli-approve-open", "--valid-for", "45s", "--json"},
 		{"session", "approve", "write", sessionID, "--data", writeData, "--reason", "approve write", "--idempotency-key", "cli-approve-write", "--valid-for", "45s", "--json"},
 		{"session", "approve", "control", sessionID, "ctrl-c", "--reason", "approve control", "--idempotency-key", "cli-approve-control", "--valid-for", "45s", "--json"},
-		{"session", "approve", "close", sessionID, "--force", "--reason", "approve close", "--idempotency-key", "cli-approve-close", "--valid-for", "45s", "--json"},
+		{"session", "approve", "close", sessionID, "--reason", "approve close", "--idempotency-key", "cli-approve-close", "--valid-for", "45s", "--json"},
 	}
 	for _, command := range commands {
 		var stdout, stderr bytes.Buffer
@@ -140,7 +140,7 @@ func TestCLISessionApproveConfirmsAndTranslatesAllOperationKinds(t *testing.T) {
 	if captured.approvals[1].Kind != "session.write" || captured.approvals[1].SessionID != sessionID || captured.approvals[1].Data != writeData {
 		t.Fatalf("write approval request=%+v", captured.approvals[1])
 	}
-	if captured.approvals[2].Key != "ctrl-c" || !captured.approvals[3].Force {
+	if captured.approvals[2].Key != "ctrl-c" || captured.approvals[3].Kind != "session.close" || captured.approvals[3].SessionID != sessionID {
 		t.Fatalf("control/close requests=%+v %+v", captured.approvals[2], captured.approvals[3])
 	}
 }
@@ -177,6 +177,7 @@ func TestCLISessionApproveHelpAndInvalidRequestsStayLocal(t *testing.T) {
 		{"session", "approve", "open", machineID, "--reason", "bad duration", "--idempotency-key", "bad-duration", "--valid-for", "500ms"},
 		{"session", "approve", "write", sessionID, "--reason", "missing data", "--idempotency-key", "missing-data", "--valid-for", "30s"},
 		{"session", "approve", "control", sessionID, "--reason", "missing control", "--idempotency-key", "missing-control", "--valid-for", "30s"},
+		{"session", "approve", "close", sessionID, "--force", "--reason", "removed force", "--idempotency-key", "removed-force", "--valid-for", "30s"},
 		{"session", "approve", "unknown", machineID, "--reason", "unknown action", "--idempotency-key", "unknown-action", "--valid-for", "30s"},
 	}
 	for _, args := range invalid {
@@ -300,7 +301,6 @@ func TestCLISessionPositionalFirstFlagsReachDaemon(t *testing.T) {
 	runSessionJSONCommand(t, app, "session", "show", sessionID, "--json")
 	runSessionJSONCommand(t, app,
 		"session", "close", sessionID,
-		"--force",
 		"--reason", "positional close",
 		"--idempotency-key", "close-positional-1",
 		"--json",
@@ -328,6 +328,23 @@ func TestCLISessionOpenRejectsNonCanonicalTerminalInputsBeforeRequest(t *testing
 	}
 	if captured.open.Target != "" {
 		t.Fatalf("invalid terminal request reached daemon: %+v", captured.open)
+	}
+}
+
+func TestCLISessionCloseRejectsRemovedForceFlagBeforeRequest(t *testing.T) {
+	var captured capturedSessionRequests
+	statePath, sessionID := setupCapturedSessionCLI(t, &captured)
+	application := cli.NewApp(nil, cli.WithStateDir(statePath))
+	var stdout, stderr bytes.Buffer
+	code := application.Run([]string{
+		"session", "close", sessionID, "--force",
+		"--reason", "removed force", "--idempotency-key", "removed-close-force",
+	}, &stdout, &stderr)
+	if code != cli.ExitUsage {
+		t.Fatalf("removed close force exit=%d stderr=%s", code, stderr.String())
+	}
+	if captured.close.IdempotencyKey != "" {
+		t.Fatalf("removed close force reached daemon: %+v", captured.close)
 	}
 }
 
@@ -365,7 +382,7 @@ func assertCapturedWaitListShowAndClose(t *testing.T, captured capturedSessionRe
 	if !captured.showCalled {
 		t.Fatal("show route was not called")
 	}
-	if !captured.close.Force || captured.close.Reason != "positional close" || captured.close.IdempotencyKey != "close-positional-1" {
+	if captured.close.Reason != "positional close" || captured.close.IdempotencyKey != "close-positional-1" {
 		t.Fatalf("close request lost flags: %+v", captured.close)
 	}
 }

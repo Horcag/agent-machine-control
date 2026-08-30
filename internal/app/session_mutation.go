@@ -64,7 +64,6 @@ func buildCloseOperation(params SessionCloseParams, target domain.MachineRef, de
 		EvidenceSensitivity: domain.EvidenceSensitivityStandard,
 		Parameters: map[string]any{
 			"session_id": string(params.SessionID),
-			"force":      params.Force,
 		},
 	}
 }
@@ -138,7 +137,8 @@ func (s *SessionService) CloseSession(ctx context.Context, params SessionClosePa
 
 	flightKey := fmt.Sprintf("%s:%s:%s", params.Caller.EffectiveActor, target, params.IdempotencyKey)
 	result, rcpt, err := s.coordinateSessionMutation(ctx, op, flightKey, params.Approval, params.ApprovalID, timeout, func(execCtx context.Context) (sessionMutationResult, error) {
-		closedObs, err := s.sessionMgr.Close(execCtx, params.SessionID, params.Caller, params.Reason, params.Force)
+		closeResult, err := s.sessionMgr.CloseWithEffect(execCtx, params.SessionID, params.Caller, params.Reason)
+		closedObs := closeResult.Observation
 		exitCode := 0
 		if closedObs != nil && closedObs.ExitCode != nil {
 			exitCode = *closedObs.ExitCode
@@ -146,7 +146,7 @@ func (s *SessionService) CloseSession(ctx context.Context, params SessionClosePa
 		return sessionMutationResult{
 			Observation:   closedObs,
 			ExitCode:      exitCode,
-			EffectApplied: closedObs != nil && closedObs.State.IsTerminal(),
+			EffectApplied: closeResult.EffectApplied,
 		}, err
 	})
 	return result.Observation, rcpt, err

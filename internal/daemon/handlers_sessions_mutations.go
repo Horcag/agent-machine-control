@@ -293,7 +293,6 @@ func (s *Server) handleCloseSession(w http.ResponseWriter, r *http.Request, id d
 		IdempotencyKey: req.IdempotencyKey,
 		Timeout:        timeout,
 		Deadline:       deadline,
-		Force:          req.Force,
 		ApprovalID:     req.ApprovalID,
 		Approval:       req.Approval,
 	})

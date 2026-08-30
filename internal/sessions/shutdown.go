@@ -36,7 +36,7 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 			errs = append(errs, ctx.Err())
 			continue
 		}
-		_, closeErr := m.finalizeSession(ctx, session, finalizationShutdown, nil, nil, true)
+		_, closeErr := m.finalizeSession(ctx, session, finalizationShutdown, nil, nil)
 		if closeErr != nil {
 			errs = append(errs, closeErr)
 		}

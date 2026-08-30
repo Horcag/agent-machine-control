@@ -217,12 +217,6 @@ func TestSessionApprovalIssuanceRejectsChangedFieldsForSameMutationIdentity(t *t
 				Reason: "approve control", IdempotencyKey: "idem-issue-control-key", ValidFor: time.Minute,
 			}, mutate: func(p *app.SessionApprovalIssueParams) { p.Key = domain.ControlKeyEnter },
 		},
-		{
-			name: "close force", base: app.SessionApprovalIssueParams{
-				Kind: "session.close", Caller: operator, SessionID: firstSession,
-				Reason: "approve close", IdempotencyKey: "idem-issue-close-force", ValidFor: time.Minute,
-			}, mutate: func(p *app.SessionApprovalIssueParams) { p.Force = true },
-		},
 	}
 
 	for _, test := range tests {

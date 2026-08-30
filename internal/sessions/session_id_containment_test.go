@@ -102,7 +102,7 @@ func TestManagerRejectsInvalidIDsBeforeStateAccess(t *testing.T) {
 				_, err := mgr.Control(ctx, id, caller, domain.ControlKeyCtrlC, "reason", "key")
 				return err
 			})
-			assertInvalidSessionID(t, func() error { _, err := mgr.Close(ctx, id, caller, "reason", false); return err })
+			assertInvalidSessionID(t, func() error { _, err := mgr.Close(ctx, id, caller, "reason"); return err })
 			assertInvalidSessionID(t, func() error { _, err := mgr.MutationTarget(id, caller); return err })
 			assertInvalidSessionID(t, func() error { _, _, err := mgr.loadDiskSession(id, caller); return err })
 		})

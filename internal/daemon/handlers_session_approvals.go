@@ -39,7 +39,7 @@ func (s *Server) handleIssueSessionApproval(w http.ResponseWriter, r *http.Reque
 		SessionID: domain.SessionID(req.SessionID), Data: req.Data, Key: domain.ControlKey(req.Key),
 		Reason: req.Reason, IdempotencyKey: req.IdempotencyKey,
 		ValidFor: time.Duration(req.ValidForMillis) * time.Millisecond,
-		Cols:     req.Cols, Rows: req.Rows, Term: req.Term, Force: req.Force,
+		Cols:     req.Cols, Rows: req.Rows, Term: req.Term,
 	})
 	if err != nil {
 		s.mapSessionError(w, err)
@@ -90,21 +90,21 @@ func validateSessionApprovalIssueRequest(req SessionApprovalIssueRequest) error 
 }
 
 func validateSessionOpenApprovalRequest(req SessionApprovalIssueRequest) error {
-	if req.SessionID != "" || req.Data != "" || req.Key != "" || req.Force {
+	if req.SessionID != "" || req.Data != "" || req.Key != "" {
 		return domain.ErrNonCanonicalParameter
 	}
 	return domain.ValidateMachineGUID(req.Target)
 }
 
 func validateSessionWriteApprovalRequest(req SessionApprovalIssueRequest) error {
-	if req.Data == "" || hasNonSessionApprovalFields(req) || req.Key != "" || req.Force {
+	if req.Data == "" || hasNonSessionApprovalFields(req) || req.Key != "" {
 		return domain.ErrNonCanonicalParameter
 	}
 	return domain.ValidateSessionID(req.SessionID)
 }
 
 func validateSessionControlApprovalRequest(req SessionApprovalIssueRequest) error {
-	if hasNonSessionApprovalFields(req) || req.Data != "" || req.Force {
+	if hasNonSessionApprovalFields(req) || req.Data != "" {
 		return domain.ErrNonCanonicalParameter
 	}
 	if err := domain.ValidateSessionID(req.SessionID); err != nil {

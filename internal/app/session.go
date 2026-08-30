@@ -113,7 +113,6 @@ type SessionCloseParams struct {
 	IdempotencyKey string
 	Timeout        time.Duration
 	Deadline       time.Time
-	Force          bool
 	ApprovalID     string
 	Approval       *domain.Approval
 }

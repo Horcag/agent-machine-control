@@ -161,7 +161,7 @@ func testClientControlWaitAndClose(ctx context.Context, t *testing.T, cl *client
 		t.Fatalf("GetSession failed: %v", err)
 	}
 
-	closeResp, err := cl.CloseSession(ctx, sessID, "done", "key-close", false)
+	closeResp, err := cl.CloseSession(ctx, sessID, "done", "key-close")
 	if err != nil || closeResp.Session.State != "closed" {
 		t.Fatalf("CloseSession failed: %v", err)
 	}
@@ -245,7 +245,7 @@ func TestClient_SessionErrors(t *testing.T) {
 	if _, err := cl.SendControlKey(ctx, "nonexistent", domain.ControlKeyCtrlC, "reason", "key"); err == nil {
 		t.Errorf("expected error on 404 SendControlKey")
 	}
-	if _, err := cl.CloseSession(ctx, "nonexistent", "reason", "key", false); err == nil {
+	if _, err := cl.CloseSession(ctx, "nonexistent", "reason", "key"); err == nil {
 		t.Errorf("expected error on 404 CloseSession")
 	}
 }
@@ -270,7 +270,7 @@ func TestClient_SessionInvalidArguments(t *testing.T) {
 	if _, err := cl.WaitSession(ctx, badID, daemon.SessionWaitRequest{}); err == nil {
 		t.Errorf("expected error on invalid session ID in WaitSession")
 	}
-	if _, err := cl.CloseSession(ctx, badID, "reason", "key", false); err == nil {
+	if _, err := cl.CloseSession(ctx, badID, "reason", "key"); err == nil {
 		t.Errorf("expected error on invalid session ID in CloseSession")
 	}
 }
@@ -332,7 +332,7 @@ func TestClient_SubSecondTimeoutsUseMillisecondWireField(t *testing.T) {
 			return err
 		},
 		func() error {
-			_, err := cl.CloseSessionWithTimeout(ctx, sessID, "close", "close-key", false, 250*time.Millisecond)
+			_, err := cl.CloseSessionWithTimeout(ctx, sessID, "close", "close-key", 250*time.Millisecond)
 			return err
 		},
 	}
@@ -355,9 +355,10 @@ func TestClient_SubSecondTimeoutsUseMillisecondWireField(t *testing.T) {
 	}
 }
 
-func TestClient_ApprovalIDsReachAllSessionMutationRequests(t *testing.T) {
+func TestClient_ApprovalReferencesCarryExactDeadlinesForAllSessionMutationRequests(t *testing.T) {
 	sessID := "sess-a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
 	approvalID := "app-client-session-reference"
+	deadline := time.Now().UTC().Add(time.Minute).Truncate(time.Nanosecond)
 	var mu sync.Mutex
 	captured := make(map[string]map[string]any)
 	server := httptest.NewServer(captureSessionTimeouts(t, sessID, captured, &mu))
@@ -367,17 +368,17 @@ func TestClient_ApprovalIDsReachAllSessionMutationRequests(t *testing.T) {
 	ctx := context.Background()
 	if _, err := cl.OpenSession(ctx, daemon.SessionOpenRequest{
 		Target: "c4a523d4-6b99-4d62-a5e2-4752c0f20001", Reason: "open", IdempotencyKey: "open-approval-id",
-		TimeoutSeconds: 30, ApprovalID: approvalID,
+		TimeoutSeconds: 30, ApprovalID: approvalID, Deadline: deadline.Format(time.RFC3339Nano),
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cl.WriteSessionWithApprovalID(ctx, sessID, "x", "write", "write-approval-id", 30*time.Second, approvalID); err != nil {
+	if _, err := cl.WriteSessionWithApprovalReference(ctx, sessID, "x", "write", "write-approval-id", 30*time.Second, approvalID, deadline); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cl.SendControlKeyWithApprovalID(ctx, sessID, domain.ControlKeyCtrlC, "control", "control-approval-id", 30*time.Second, approvalID); err != nil {
+	if _, err := cl.SendControlKeyWithApprovalReference(ctx, sessID, domain.ControlKeyCtrlC, "control", "control-approval-id", 30*time.Second, approvalID, deadline); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cl.CloseSessionWithApprovalID(ctx, sessID, "close", "close-approval-id", true, 30*time.Second, approvalID); err != nil {
+	if _, err := cl.CloseSessionWithApprovalReference(ctx, sessID, "close", "close-approval-id", 30*time.Second, approvalID, deadline); err != nil {
 		t.Fatal(err)
 	}
 
@@ -393,8 +394,14 @@ func TestClient_ApprovalIDsReachAllSessionMutationRequests(t *testing.T) {
 		if body["approval_id"] != approvalID {
 			t.Errorf("%s approval_id = %v", path, body["approval_id"])
 		}
+		if body["deadline"] != deadline.Format(time.RFC3339Nano) {
+			t.Errorf("%s deadline = %v", path, body["deadline"])
+		}
 		if _, ok := body["approval"]; ok {
 			t.Errorf("%s leaked raw approval object: %v", path, body)
+		}
+		if _, ok := body["force"]; ok {
+			t.Errorf("%s exposed removed force field: %v", path, body)
 		}
 	}
 }

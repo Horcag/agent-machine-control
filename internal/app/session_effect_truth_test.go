@@ -320,7 +320,7 @@ func TestOpenPostCommitDirectorySyncFailurePreservesEffectAndExactRetryTruth(t *
 	if got := syncCalls.Load(); got != 1 {
 		t.Fatalf("session persistence calls after exact retry = %d, want 1", got)
 	}
-	if _, err := manager.Close(context.Background(), observed.ID, actor, "test cleanup", false); err != nil {
+	if _, err := manager.Close(context.Background(), observed.ID, actor, "test cleanup"); err != nil {
 		t.Fatal(err)
 	}
 }

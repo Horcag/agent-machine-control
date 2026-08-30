@@ -134,10 +134,9 @@ to perform a late guest write.
 
 Normal close reports success only after transport close succeeds. On incomplete transport cleanup,
 local state remains `closing` (indeterminate) and AMC retains cleanup ownership for a later retry or
-shutdown pass. `force=true` requests an immediate best-effort close, but it cannot abandon the
-channel, finalize incomplete cleanup as terminal `failed`, turn failure into success, or claim
-confirmed remote termination. Concurrent close calls serialize behind the same local close lane and
-do not issue a second transport close.
+shutdown pass. Once close durably transitions the session to `closing` or attempts transport cleanup,
+the close effect is applied even if cleanup is incomplete or returns an error. Concurrent close calls
+serialize behind the same local close lane and do not issue a second transport close.
 
 ---
 
@@ -193,7 +192,7 @@ amc session approve write <session-id> --data "powershell.exe -NoProfile\r\n" \
   --reason "Start PowerShell" --idempotency-key "mcp-write-1" --valid-for 60s --json
 amc session approve control <session-id> ctrl-c --reason "Interrupt command" \
   --idempotency-key "mcp-control-1" --valid-for 60s --json
-amc session approve close <session-id> --force --reason "Automation finished" \
+amc session approve close <session-id> --reason "Automation finished" \
   --idempotency-key "mcp-close-1" --valid-for 60s --json
 ```
 
@@ -227,7 +226,7 @@ AMC exposes exactly 20 Model Context Protocol (MCP) tools for agent integration:
 5. `session_wait`: Wait for terminal output to settle or match a regular expression pattern.
 6. `session_list`: List active and durable persistent sessions.
 7. `session_show`: Show detailed observation metrics and metadata for a specific session.
-8. `session_close`: Close an active terminal session with a required execution timeout; `force` requests immediate best-effort cleanup while incomplete cleanup remains `closing` and owned by AMC.
+8. `session_close`: Close an active terminal session with a required execution timeout; incomplete cleanup remains `closing` and owned by AMC.
 
 The four mutating MCP tools (`session_open`, `session_write`, `session_control`, and
 `session_close`) accept an optional canonical `approval_id`. When it is present, the request must

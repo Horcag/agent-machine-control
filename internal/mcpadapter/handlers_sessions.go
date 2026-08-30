@@ -309,7 +309,7 @@ func (a *Adapter) SessionClose(ctx context.Context, _ *mcp.CallToolRequest, in S
 		return mcpToolError(err), SessionCloseResult{}, nil
 	}
 
-	resp, err := cl.CloseSessionWithApprovalReference(ctx, in.SessionID, in.Reason, in.IdempotencyKey, in.Force, timeout, in.ApprovalID, deadline)
+	resp, err := cl.CloseSessionWithApprovalReference(ctx, in.SessionID, in.Reason, in.IdempotencyKey, timeout, in.ApprovalID, deadline)
 	if err != nil {
 		return mcpToolError(err), SessionCloseResult{}, nil
 	}

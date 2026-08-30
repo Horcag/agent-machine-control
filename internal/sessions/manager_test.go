@@ -167,7 +167,7 @@ func TestManagerOpenRetainsCommittedSessionAfterDirectorySyncFailure(t *testing.
 	if got := syncCalls.Load(); got != 1 {
 		t.Fatalf("persistence attempts after exact retry = %d, want 1", got)
 	}
-	if _, err := mgr.Close(context.Background(), obs.ID, actor, "test cleanup", false); err != nil {
+	if _, err := mgr.Close(context.Background(), obs.ID, actor, "test cleanup"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -189,7 +189,7 @@ func TestManagerExpiredContextsNeverReachSessionEffects(t *testing.T) {
 	if _, err := mgr.Control(ctx, obs.ID, actor, domain.ControlKeyCtrlC, "expired control", "expired-control"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Control error = %v, want context canceled", err)
 	}
-	if _, err := mgr.Close(ctx, obs.ID, actor, "expired close", false); !errors.Is(err, context.Canceled) {
+	if _, err := mgr.Close(ctx, obs.ID, actor, "expired close"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Close error = %v, want context canceled", err)
 	}
 	if got := channel.writeCalls.Load(); got != 0 {
@@ -201,7 +201,7 @@ func TestManagerExpiredContextsNeverReachSessionEffects(t *testing.T) {
 	if got := channel.closeCalls.Load(); got != 0 {
 		t.Fatalf("close calls = %d, want 0", got)
 	}
-	if _, err := mgr.Close(context.Background(), obs.ID, actor, "test cleanup", false); err != nil {
+	if _, err := mgr.Close(context.Background(), obs.ID, actor, "test cleanup"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -342,7 +342,7 @@ func testManagerDenialAndClose(t *testing.T, mgr *sessions.Manager, actorCtx, ot
 		t.Fatalf("List failed: got %d items, err %v", len(listObs), err)
 	}
 
-	closedObs, err := mgr.Close(ctx, obs.ID, actorCtx, "finished", false)
+	closedObs, err := mgr.Close(ctx, obs.ID, actorCtx, "finished")
 	if err != nil {
 		t.Fatalf("Close failed: %v", err)
 	}
@@ -444,7 +444,7 @@ func TestManager_ConcurrentReadWriteCloseRaces(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		time.Sleep(20 * time.Millisecond)
-		_, _ = mgr.Close(ctx, obs.ID, actorCtx, "close race", false)
+		_, _ = mgr.Close(ctx, obs.ID, actorCtx, "close race")
 	}()
 
 	wg.Wait()
@@ -473,7 +473,7 @@ func TestManager_NotFoundAndClosedErrors(t *testing.T) {
 	if _, _, _, _, _, err := mgr.Wait(ctx, badID, actorCtx, 10*time.Millisecond, "", 0, 100*time.Millisecond); !errors.Is(err, domain.ErrSessionNotFound) {
 		t.Errorf("expected ErrSessionNotFound on Wait, got: %v", err)
 	}
-	if _, err := mgr.Close(ctx, badID, actorCtx, "reason", false); !errors.Is(err, domain.ErrSessionNotFound) {
+	if _, err := mgr.Close(ctx, badID, actorCtx, "reason"); !errors.Is(err, domain.ErrSessionNotFound) {
 		t.Errorf("expected ErrSessionNotFound on Close, got: %v", err)
 	}
 }
@@ -524,7 +524,7 @@ func TestManager_AccessControl(t *testing.T) {
 	// Scope denial on Close
 	noCloseScopes := domain.NewScopeSet(domain.ScopeSessionRead)
 	noCloseActor, _ := domain.NewActorContext("agent:test", "agent:test", noCloseScopes, noCloseScopes)
-	if _, err := mgr.Close(ctx, obs.ID, noCloseActor, "reason", false); !errors.Is(err, domain.ErrSessionAccessDenied) {
+	if _, err := mgr.Close(ctx, obs.ID, noCloseActor, "reason"); !errors.Is(err, domain.ErrSessionAccessDenied) {
 		t.Errorf("expected ErrSessionAccessDenied on Close without close scope")
 	}
 }

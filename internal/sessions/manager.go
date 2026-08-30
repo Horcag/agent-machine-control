@@ -304,7 +304,7 @@ func (m *Manager) waitChannelExit(parent context.Context, s *Session) {
 		return
 	}
 	defer releaseSessionCloseLane(s)
-	_, _ = m.finalizeSession(ctx, s, finalizationNaturalExit, &exitCode, waitErr, false)
+	_, _ = m.finalizeSession(ctx, s, finalizationNaturalExit, &exitCode, waitErr)
 }
 
 // Read returns buffered chunks from a session starting after sequence cursor afterSeq.
@@ -429,24 +429,30 @@ func (m *Manager) Control(ctx context.Context, id domain.SessionID, caller domai
 	return result, errors.Join(controlErr, m.persistSession(s).Err)
 }
 
-// Close terminates the session and returns its final observation.
-func (m *Manager) Close(ctx context.Context, id domain.SessionID, caller domain.ActorContext, _ string, force bool) (*domain.SessionObservation, error) {
+// Close terminates the session and returns its latest observation.
+func (m *Manager) Close(ctx context.Context, id domain.SessionID, caller domain.ActorContext, reason string) (*domain.SessionObservation, error) {
+	result, err := m.CloseWithEffect(ctx, id, caller, reason)
+	return result.Observation, err
+}
+
+// CloseWithEffect terminates the session and reports whether this invocation crossed the close effect boundary.
+func (m *Manager) CloseWithEffect(ctx context.Context, id domain.SessionID, caller domain.ActorContext, _ string) (CloseResult, error) {
 	if !caller.HasScope(domain.ScopeSessionClose) && !caller.HasScope(domain.ScopeSessionWrite) {
-		return nil, domain.ErrSessionAccessDenied
+		return CloseResult{}, domain.ErrSessionAccessDenied
 	}
 	if err := domain.ValidateSessionID(string(id)); err != nil {
-		return nil, err
+		return CloseResult{}, err
 	}
 
 	m.mu.RLock()
 	s, ok := m.sessions[id]
 	m.mu.RUnlock()
 	if !ok || !m.authorize(caller, s) {
-		return nil, domain.ErrSessionNotFound
+		return CloseResult{}, domain.ErrSessionNotFound
 	}
 	if err := acquireSessionCloseLane(ctx, s); err != nil {
-		return nil, err
+		return CloseResult{}, err
 	}
 	defer releaseSessionCloseLane(s)
-	return m.finalizeSession(ctx, s, finalizationExplicitClose, nil, nil, force)
+	return m.finalizeSession(ctx, s, finalizationExplicitClose, nil, nil)
 }

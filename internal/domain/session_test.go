@@ -238,7 +238,7 @@ func TestSessionOperationValidation(t *testing.T) {
 	}
 
 	// session.close
-	if err := domain.ValidateOperationParameters("session.close", map[string]any{"session_id": sessID, "force": true}); err != nil {
+	if err := domain.ValidateOperationParameters("session.close", map[string]any{"session_id": sessID}); err != nil {
 		t.Errorf("valid session.close params failed: %v", err)
 	}
 

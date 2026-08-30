@@ -174,8 +174,8 @@ func TestCLISession_HelpAndUsage(t *testing.T) {
 
 	stderr.Reset()
 	code = app.Run([]string{"session", "close", "--help"}, &stdout, &stderr)
-	if code != cli.ExitUsage || !strings.Contains(stderr.String(), "incomplete cleanup remains closing") {
-		t.Errorf("close help does not describe bounded force semantics: code=%d stderr=%q", code, stderr.String())
+	if code != cli.ExitUsage || strings.Contains(stderr.String(), "force") {
+		t.Errorf("close help still exposes removed force contract: code=%d stderr=%q", code, stderr.String())
 	}
 
 	// session unknown
@@ -299,7 +299,7 @@ func TestCLISession_HumanOutputAndFlags(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
-	code = app.RunWithContext(ctx, []string{"session", "close", sessID, "--force", "--reason", "finished"}, &stdout, &stderr)
+	code = app.RunWithContext(ctx, []string{"session", "close", sessID, "--reason", "finished"}, &stdout, &stderr)
 	if code != cli.ExitSuccess {
 		t.Fatalf("session close human failed: %d, stderr: %s", code, stderr.String())
 	}

@@ -1914,10 +1914,6 @@
           "description": "Exact canonical RFC3339Nano deadline returned with approval_id",
           "type": "string"
         },
-        "force": {
-          "description": "Request immediate best-effort close; incomplete cleanup remains closing",
-          "type": "boolean"
-        },
         "idempotency_key": {
           "description": "Idempotency key",
           "type": "string"

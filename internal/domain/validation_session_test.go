@@ -150,7 +150,6 @@ func TestValidationSession_Operations(t *testing.T) {
 	closeOp.RequiredScopes = []string{domain.ScopeSessionClose}
 	closeOp.Parameters = map[string]any{
 		"session_id": sessID,
-		"force":      true,
 	}
 	if err := domain.ValidateOperationParameters(closeOp.Kind, closeOp.Parameters); err != nil {
 		t.Fatalf("expected valid session.close op parameters, got: %v", err)
@@ -244,8 +243,8 @@ func TestValidationSession_MutationErrorBranches(t *testing.T) {
 	if err := domain.ValidateOperationParameters("session.control", map[string]any{"session_id": sessID, "key": "ctrl-c", "extra": 1}); err == nil {
 		t.Errorf("expected error on extra param in session.control")
 	}
-	if err := domain.ValidateOperationParameters("session.close", map[string]any{"session_id": sessID, "force": "not-bool"}); err == nil {
-		t.Errorf("expected error on non-bool force in session.close")
+	if err := domain.ValidateOperationParameters("session.close", map[string]any{"session_id": sessID, "force": true}); err == nil {
+		t.Errorf("expected removed force parameter to be rejected in session.close")
 	}
 	if err := domain.ValidateOperationParameters("session.close", map[string]any{"session_id": sessID, "unexpected": "x"}); err == nil {
 		t.Errorf("expected error on unexpected param in session.close")
@@ -371,7 +370,6 @@ func TestDomain_ParameterValidations(t *testing.T) {
 
 	err = domain.ValidateOperationParameters("session.close", map[string]any{
 		"session_id": sID,
-		"force":      true,
 	})
 	if err != nil {
 		t.Errorf("expected valid session.close params, got: %v", err)

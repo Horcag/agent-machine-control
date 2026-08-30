@@ -210,7 +210,6 @@ func testLifecycleCloseAndVerify(ctx context.Context, t *testing.T, h *testSessi
 		Reason:         "work completed",
 		IdempotencyKey: "idem-close-full-1",
 		Timeout:        30 * time.Second,
-		Force:          false,
 	}
 
 	closedObs, closeRcpt, err := h.svc.CloseSession(ctx, closeParams)

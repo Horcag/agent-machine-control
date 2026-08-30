@@ -119,7 +119,6 @@ type SessionCloseInput struct {
 	Timeout        string `json:"timeout" jsonschema:"Operation timeout (e.g. 30s, 5m)"`
 	ApprovalID     string `json:"approval_id,omitempty" jsonschema:"Server-issued approval reference for destructive or privileged execution"`
 	Deadline       string `json:"deadline,omitempty" jsonschema:"Exact canonical RFC3339Nano deadline returned with approval_id"`
-	Force          bool   `json:"force,omitempty" jsonschema:"Request immediate best-effort close; incomplete cleanup remains closing"`
 }
 
 type SessionCloseResult struct {

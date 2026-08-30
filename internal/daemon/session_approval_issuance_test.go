@@ -66,6 +66,14 @@ func requireOperatorOnlySessionApprovalIssuance(t *testing.T, endpoint, operator
 	if status != http.StatusBadRequest {
 		t.Fatalf("forged issuance fields status=%d, want 400", status)
 	}
+	status, _ = doJSONReq(t, http.MethodPost, endpoint+"/v1/session-approvals", operatorToken, map[string]any{
+		"kind": "session.close", "session_id": "sess-a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+		"reason": "removed force", "idempotency_key": "approval-http-removed-force", "valid_for_ms": 60_000,
+		"force": true,
+	})
+	if status != http.StatusBadRequest {
+		t.Fatalf("removed approval force field status=%d, want 400", status)
+	}
 }
 
 func openApprovedAgentSessionHTTP(t *testing.T, endpoint, operatorToken, agentToken, target string) daemon.SessionOpenResponse {
@@ -144,12 +152,19 @@ func exerciseApprovedSessionControlAndCloseHTTP(t *testing.T, endpoint, operator
 	}
 
 	closeIssue := daemon.SessionApprovalIssueRequest{
-		Kind: "session.close", SessionID: sessionID, Force: true,
+		Kind: "session.close", SessionID: sessionID,
 		Reason: "approve exact MCP close", IdempotencyKey: "approval-http-close", ValidForMillis: 60_000,
 	}
 	closeGrant := issueSessionApprovalHTTP(t, endpoint, operatorToken, closeIssue)
+	status, _ = doJSONReq(t, http.MethodPost, endpoint+"/v1/sessions/"+sessionID+"/close", agentToken, map[string]any{
+		"reason": closeIssue.Reason, "idempotency_key": closeIssue.IdempotencyKey,
+		"approval_id": closeGrant.ApprovalID, "deadline": closeGrant.Deadline, "force": true,
+	})
+	if status != http.StatusBadRequest {
+		t.Fatalf("removed close force field status=%d, want 400", status)
+	}
 	status, data = doJSONReq(t, http.MethodPost, endpoint+"/v1/sessions/"+sessionID+"/close", agentToken, daemon.SessionCloseRequest{
-		Reason: closeIssue.Reason, IdempotencyKey: closeIssue.IdempotencyKey, Force: true,
+		Reason: closeIssue.Reason, IdempotencyKey: closeIssue.IdempotencyKey,
 		ApprovalID: closeGrant.ApprovalID, Deadline: closeGrant.Deadline,
 	})
 	if status != http.StatusOK {

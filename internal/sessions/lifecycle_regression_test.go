@@ -145,11 +145,11 @@ func TestManagerCloseRetriesIncompleteCleanup(t *testing.T) {
 	)
 	mgr, actor, id := openLifecycleSession(t, t.TempDir(), channel)
 
-	first, err := mgr.Close(context.Background(), id, actor, "first close", false)
+	first, err := mgr.Close(context.Background(), id, actor, "first close")
 	if !errors.Is(err, context.DeadlineExceeded) || first.State != domain.SessionStateClosing {
 		t.Fatalf("first close = state %q err %v, want retryable closing timeout", first.State, err)
 	}
-	second, err := mgr.Close(context.Background(), id, actor, "retry close", false)
+	second, err := mgr.Close(context.Background(), id, actor, "retry close")
 	if err != nil || second.State != domain.SessionStateClosed {
 		t.Fatalf("retry close = state %q err %v, want closed", second.State, err)
 	}
@@ -158,7 +158,7 @@ func TestManagerCloseRetriesIncompleteCleanup(t *testing.T) {
 	}
 }
 
-func TestManagerForceCloseRetainsIncompleteCleanupForRetryAndShutdown(t *testing.T) {
+func TestManagerCloseRetainsIncompleteCleanupForRetryAndShutdown(t *testing.T) {
 	channel := newLifecycleChannel(
 		guestssh.CloseOutcome{Complete: false, Err: context.DeadlineExceeded},
 		guestssh.CloseOutcome{Complete: false, Err: context.DeadlineExceeded},
@@ -167,23 +167,23 @@ func TestManagerForceCloseRetainsIncompleteCleanupForRetryAndShutdown(t *testing
 	dir := t.TempDir()
 	mgr, actor, id := openLifecycleSession(t, dir, channel)
 
-	first, err := mgr.Close(context.Background(), id, actor, "forced close", true)
+	first, err := mgr.Close(context.Background(), id, actor, "close")
 	if !errors.Is(err, context.DeadlineExceeded) || first.State != domain.SessionStateClosing || first.ClosedAt != nil {
-		t.Fatalf("forced close = %+v err %v, want durable retryable cleanup-pending state", first, err)
+		t.Fatalf("close = %+v err %v, want durable retryable cleanup-pending state", first, err)
 	}
 	loaded, err := sessions.NewManager(dir, nil, time.Now).Get(context.Background(), id, actor)
 	if err != nil || loaded.State != domain.SessionStateClosing || loaded.ClosedAt != nil {
-		t.Fatalf("persisted forced close = %+v err %v, want cleanup-pending truth", loaded, err)
+		t.Fatalf("persisted close = %+v err %v, want cleanup-pending truth", loaded, err)
 	}
 	if err := mgr.Shutdown(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("first shutdown error = %v, want retained cleanup timeout", err)
 	}
-	retried, err := mgr.Close(context.Background(), id, actor, "retry cleanup", true)
+	retried, err := mgr.Close(context.Background(), id, actor, "retry cleanup")
 	if err != nil || retried.State != domain.SessionStateClosed {
 		t.Fatalf("retry close = %+v err %v, want cleanup completion", retried, err)
 	}
 	if got := channel.closeCalls.Load(); got != 3 {
-		t.Fatalf("transport close calls = %d, want forced close, shutdown retry, and explicit retry", got)
+		t.Fatalf("transport close calls = %d, want close, shutdown retry, and explicit retry", got)
 	}
 }
 
@@ -192,11 +192,11 @@ func TestManagerReplaysCompletedCleanupFailure(t *testing.T) {
 	dir := t.TempDir()
 	mgr, actor, id := openLifecycleSession(t, dir, channel)
 
-	first, err := mgr.Close(context.Background(), id, actor, "close", false)
+	first, err := mgr.Close(context.Background(), id, actor, "close")
 	if !errors.Is(err, errSyntheticCleanup) || first.State != domain.SessionStateFailed {
 		t.Fatalf("first close = state %q err %v, want failed cleanup evidence", first.State, err)
 	}
-	replayed, err := mgr.Close(context.Background(), id, actor, "repeat close", false)
+	replayed, err := mgr.Close(context.Background(), id, actor, "repeat close")
 	if !errors.Is(err, errSyntheticCleanup) || replayed.State != domain.SessionStateFailed {
 		t.Fatalf("repeated close = state %q err %v, want cached failure", replayed.State, err)
 	}
@@ -218,11 +218,11 @@ func TestManagerBareEOFCleanupClosesCleanly(t *testing.T) {
 	dir := t.TempDir()
 	mgr, actor, id := openLifecycleSession(t, dir, channel)
 
-	first, err := mgr.Close(context.Background(), id, actor, "close", false)
+	first, err := mgr.Close(context.Background(), id, actor, "close")
 	if err != nil || first.State != domain.SessionStateClosed || first.ErrorMessage != "" {
 		t.Fatalf("first close = state %q category %q err %v, want clean closed", first.State, first.ErrorMessage, err)
 	}
-	replayed, err := mgr.Close(context.Background(), id, actor, "repeat close", false)
+	replayed, err := mgr.Close(context.Background(), id, actor, "repeat close")
 	if err != nil || replayed.State != domain.SessionStateClosed {
 		t.Fatalf("repeated close = state %q err %v, want cached clean close", replayed.State, err)
 	}
@@ -244,13 +244,13 @@ func TestManagerCompositeEOFCleanupFailureRemainsStable(t *testing.T) {
 	dir := t.TempDir()
 	mgr, actor, id := openLifecycleSession(t, dir, channel)
 
-	first, err := mgr.Close(context.Background(), id, actor, "close", false)
+	first, err := mgr.Close(context.Background(), id, actor, "close")
 	if first.State != domain.SessionStateFailed || first.ErrorMessage != "transport_close_failed" {
 		t.Fatalf("first close = %+v, want failed cleanup truth", first)
 	}
 	assertStableCompositeCleanupError(t, err, closeErr.Error())
 
-	replayed, err := mgr.Close(context.Background(), id, actor, "repeat close", false)
+	replayed, err := mgr.Close(context.Background(), id, actor, "repeat close")
 	if replayed.State != domain.SessionStateFailed {
 		t.Fatalf("repeated close state = %q, want failed", replayed.State)
 	}
@@ -343,7 +343,7 @@ func TestManagerNaturalExitIncompleteCleanupCanBeClosedExplicitly(t *testing.T) 
 	if incomplete.ClosedAt != nil || incomplete.ExitCode == nil || *incomplete.ExitCode != 23 || incomplete.ErrorMessage != "transport_cleanup_incomplete" {
 		t.Fatalf("incomplete natural exit = %+v, want retryable cleanup truth", incomplete)
 	}
-	closed, err := mgr.Close(context.Background(), id, actor, "retry natural cleanup", false)
+	closed, err := mgr.Close(context.Background(), id, actor, "retry natural cleanup")
 	if err != nil || closed.State != domain.SessionStateClosed || closed.ClosedAt == nil {
 		t.Fatalf("explicit cleanup retry = %+v err %v, want closed", closed, err)
 	}
@@ -413,7 +413,7 @@ func TestManagerExplicitCloseAndShutdownShareOneFinalizer(t *testing.T) {
 
 	closeDone := make(chan error, 1)
 	go func() {
-		_, err := mgr.Close(context.Background(), id, actor, "explicit close", false)
+		_, err := mgr.Close(context.Background(), id, actor, "explicit close")
 		closeDone <- err
 	}()
 	<-channel.closeStarted
@@ -456,7 +456,7 @@ func TestManagerWriteRacingExplicitCloseStopsAtClosingCutover(t *testing.T) {
 
 	closeDone := make(chan error, 1)
 	go func() {
-		_, err := mgr.Close(context.Background(), id, actor, "explicit close cutover", false)
+		_, err := mgr.Close(context.Background(), id, actor, "explicit close cutover")
 		closeDone <- err
 	}()
 	awaitLifecycleSignal(t, channel.closeStarted, "explicit close cutover")
@@ -508,7 +508,7 @@ func TestManagerControlRacingNaturalExitStopsAtClosingCutover(t *testing.T) {
 		t.Fatalf("racing control error = %v, want session closed", err)
 	}
 	close(channel.allowClose)
-	closed, err := mgr.Close(context.Background(), id, actor, "observe natural exit completion", false)
+	closed, err := mgr.Close(context.Background(), id, actor, "observe natural exit completion")
 	if err != nil || closed.State != domain.SessionStateClosed {
 		t.Fatalf("natural exit completion = %+v err %v, want closed", closed, err)
 	}

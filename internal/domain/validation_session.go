@@ -254,15 +254,8 @@ func validateSessionCloseParams(params map[string]any) error {
 		return err
 	}
 
-	for k, v := range params {
-		switch k {
-		case "session_id":
-			// validated
-		case "force":
-			if _, ok := v.(bool); !ok {
-				return fmt.Errorf("%w: force must be a bool", ErrNonCanonicalParameter)
-			}
-		default:
+	for k := range params {
+		if k != "session_id" {
 			return fmt.Errorf("%w: unexpected parameter %q for session.close", ErrNonCanonicalParameter, k)
 		}
 	}
