@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/domain"
-	"github.com/Horcag/agent-machine-control/internal/statedir"
 )
 
 func reconcileSessionFile(filePath string, now time.Time) (*domain.SessionID, error) {
@@ -36,7 +35,7 @@ func reconcileSessionFile(filePath string, now time.Time) (*domain.SessionID, er
 	if err != nil {
 		return nil, fmt.Errorf("sessions: failed to marshal session %s: %w", obs.ID, err)
 	}
-	if err := os.WriteFile(filePath, updatedData, 0600); err != nil {
+	if err := replaceSessionFile(filePath, updatedData); err != nil {
 		return nil, fmt.Errorf("sessions: failed to write session file %s: %w", filePath, err)
 	}
 
@@ -61,7 +60,6 @@ func ReconcileCrashedSessions(_ context.Context, sessionsDir string, now time.Ti
 	}
 
 	var reconciled []domain.SessionID
-	hasUpdates := false
 
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") || !strings.HasPrefix(entry.Name(), "sess-") {
@@ -75,13 +73,6 @@ func ReconcileCrashedSessions(_ context.Context, sessionsDir string, now time.Ti
 		}
 		if id != nil {
 			reconciled = append(reconciled, *id)
-			hasUpdates = true
-		}
-	}
-
-	if hasUpdates {
-		if err := statedir.SyncDir(sessionsDir); err != nil {
-			return reconciled, fmt.Errorf("sessions: failed to sync sessions dir: %w", err)
 		}
 	}
 

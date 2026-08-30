@@ -165,6 +165,69 @@ func TestManagerReplaysCompletedCleanupFailure(t *testing.T) {
 	}
 }
 
+func TestManagerBareEOFCleanupClosesCleanly(t *testing.T) {
+	channel := newLifecycleChannel(guestssh.CloseOutcome{Complete: true, Err: io.EOF})
+	dir := t.TempDir()
+	mgr, actor, id := openLifecycleSession(t, dir, channel)
+
+	first, err := mgr.Close(context.Background(), id, actor, "close", false)
+	if err != nil || first.State != domain.SessionStateClosed || first.ErrorMessage != "" {
+		t.Fatalf("first close = state %q category %q err %v, want clean closed", first.State, first.ErrorMessage, err)
+	}
+	replayed, err := mgr.Close(context.Background(), id, actor, "repeat close", false)
+	if err != nil || replayed.State != domain.SessionStateClosed {
+		t.Fatalf("repeated close = state %q err %v, want cached clean close", replayed.State, err)
+	}
+	if err := mgr.Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown replayed bare EOF as failure: %v", err)
+	}
+	if got := channel.closeCalls.Load(); got != 1 {
+		t.Fatalf("transport close calls = %d, want exactly 1", got)
+	}
+	loaded, err := sessions.NewManager(dir, nil, time.Now).Get(context.Background(), id, actor)
+	if err != nil || loaded.State != domain.SessionStateClosed || loaded.ErrorMessage != "" {
+		t.Fatalf("restart observation = %+v err %v, want clean closed truth", loaded, err)
+	}
+}
+
+func TestManagerCompositeEOFCleanupFailureRemainsStable(t *testing.T) {
+	closeErr := errors.Join(io.EOF, errSyntheticCleanup)
+	channel := newLifecycleChannel(guestssh.CloseOutcome{Complete: true, Err: closeErr})
+	dir := t.TempDir()
+	mgr, actor, id := openLifecycleSession(t, dir, channel)
+
+	first, err := mgr.Close(context.Background(), id, actor, "close", false)
+	if first.State != domain.SessionStateFailed || first.ErrorMessage != "transport_close_failed" {
+		t.Fatalf("first close = %+v, want failed cleanup truth", first)
+	}
+	assertStableCompositeCleanupError(t, err, closeErr.Error())
+
+	replayed, err := mgr.Close(context.Background(), id, actor, "repeat close", false)
+	if replayed.State != domain.SessionStateFailed {
+		t.Fatalf("repeated close state = %q, want failed", replayed.State)
+	}
+	assertStableCompositeCleanupError(t, err, closeErr.Error())
+	assertStableCompositeCleanupError(t, mgr.Shutdown(context.Background()), closeErr.Error())
+	if got := channel.closeCalls.Load(); got != 1 {
+		t.Fatalf("transport close calls = %d, want exactly 1", got)
+	}
+
+	loaded, err := sessions.NewManager(dir, nil, time.Now).Get(context.Background(), id, actor)
+	if err != nil || loaded.State != domain.SessionStateFailed || loaded.ErrorMessage != "transport_close_failed" {
+		t.Fatalf("restart observation = %+v err %v, want persisted failed cleanup truth", loaded, err)
+	}
+}
+
+func assertStableCompositeCleanupError(t *testing.T, err error, wantMessage string) {
+	t.Helper()
+	if !errors.Is(err, io.EOF) || !errors.Is(err, errSyntheticCleanup) {
+		t.Fatalf("cleanup error = %v, want EOF and synthetic cleanup components", err)
+	}
+	if err.Error() != wantMessage {
+		t.Fatalf("cleanup error message = %q, want stable %q", err, wantMessage)
+	}
+}
+
 func TestManagerNaturalExitTruthAndCleanup(t *testing.T) {
 	tests := []struct {
 		name         string

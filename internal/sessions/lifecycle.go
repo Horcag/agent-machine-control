@@ -74,7 +74,7 @@ func (m *Manager) finalizeSession(
 	s.mu.Unlock()
 
 	closeComplete, closeErr := closeChannel(ctx, s.channel)
-	if errors.Is(closeErr, io.EOF) {
+	if closeErr == io.EOF {
 		closeErr = nil
 	}
 
