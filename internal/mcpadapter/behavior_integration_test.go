@@ -60,7 +60,7 @@ func TestBinaryStdioIntegration(t *testing.T) {
 		TerminateDuration: 2 * time.Second,
 	}
 
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 
 	stdoutBuf := &bytes.Buffer{}

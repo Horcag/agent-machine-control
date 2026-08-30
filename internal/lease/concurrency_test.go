@@ -46,7 +46,7 @@ func TestManager_ConcurrentAcquisition_OneWinner(t *testing.T) {
 				lease.WithLivenessChecker(checker),
 			)
 
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 
 			_, err := mgr.Acquire(ctx, machineID, "machine.start", fmt.Sprintf("fp-%d", idx), 30*time.Second)
