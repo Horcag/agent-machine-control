@@ -52,9 +52,9 @@ func atomicReplace(oldPath, newPath string) error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, windows.ERROR_INVALID_FUNCTION) || errors.Is(err, windows.ERROR_INVALID_PARAMETER) ||
-		errors.Is(err, windows.ERROR_INVALID_NAME) || errors.Is(err, windows.ERROR_NOT_SUPPORTED) {
-		return windows.Rename(oldPath, newPath)
+	fallbackErr := windows.Rename(oldPath, newPath)
+	if fallbackErr == nil {
+		return nil
 	}
-	return err
+	return errors.Join(err, fallbackErr)
 }
