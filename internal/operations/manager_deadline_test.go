@@ -36,8 +36,9 @@ func runManagerPreProviderDeadline(t *testing.T, key string, install func(*mockB
 	backend := &mockBackend{}
 	var seamCalls atomic.Int32
 	install(backend, &seamCalls)
-	manager, hub, _ := setupTestManager(t, backend)
-	operation := deadlineTestOperation(key, time.Now().Add(time.Second))
+	testNow := time.Now().UTC()
+	manager, hub, _ := setupTestManager(t, backend, operations.WithClock(func() time.Time { return testNow }))
+	operation := deadlineTestOperation(key, testNow.Add(time.Second))
 
 	started := time.Now()
 	record, _, err := manager.Submit(context.Background(), operation, 5*time.Second)
@@ -57,8 +58,6 @@ func runManagerPreProviderDeadline(t *testing.T, key string, install func(*mockB
 	if seamCalls.Load() != 1 {
 		t.Fatalf("blocking seam calls = %d, want one", seamCalls.Load())
 	}
-	waitForManagerDrain(t, manager)
-
 	retry, existing, err := manager.Submit(context.Background(), operation, 5*time.Second)
 	if err != nil || !existing || retry.ID != record.ID {
 		t.Fatalf("idempotent retry = (%+v, %v, %v), want original terminal operation", retry, existing, err)
@@ -66,6 +65,7 @@ func runManagerPreProviderDeadline(t *testing.T, key string, install func(*mockB
 	if backend.startCount.Load() != 0 {
 		t.Fatalf("retry provider calls = %d, want zero", backend.startCount.Load())
 	}
+	assertManagerShutdownDrains(t, manager)
 }
 
 func TestManagerOperatorCancellationRemainsDistinctFromDeadline(t *testing.T) {
@@ -77,8 +77,9 @@ func TestManagerOperatorCancellationRemainsDistinctFromDeadline(t *testing.T) {
 			return nil, ctx.Err()
 		},
 	}
-	manager, hub, _ := setupTestManager(t, backend)
-	operation := deadlineTestOperation("operator-cancel", time.Now().Add(5*time.Second))
+	testNow := time.Now().UTC()
+	manager, hub, _ := setupTestManager(t, backend, operations.WithClock(func() time.Time { return testNow }))
+	operation := deadlineTestOperation("operator-cancel", testNow.Add(5*time.Second))
 	record, _, err := manager.Submit(context.Background(), operation, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
@@ -92,17 +93,18 @@ func TestManagerOperatorCancellationRemainsDistinctFromDeadline(t *testing.T) {
 	if final.State != domain.OpStateCancelled || final.ErrorCategory != "cancelled" {
 		t.Fatalf("terminal state = %s category = %q, want cancelled", final.State, final.ErrorCategory)
 	}
-	waitForManagerDrain(t, manager)
+	assertManagerShutdownDrains(t, manager)
 	if backend.startCount.Load() != 0 {
 		t.Fatalf("provider calls = %d, want zero", backend.startCount.Load())
 	}
 }
 
-func waitForManagerDrain(t *testing.T, manager *operations.Manager) {
+func assertManagerShutdownDrains(t *testing.T, manager *operations.Manager) {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for !manager.Drained() && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := manager.Shutdown(ctx); err != nil {
+		t.Fatalf("manager shutdown: %v", err)
 	}
 	if !manager.Drained() {
 		t.Fatal("manager retained live capacity after terminal operation")

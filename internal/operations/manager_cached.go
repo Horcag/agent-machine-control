@@ -144,7 +144,14 @@ func mapOutcome(outcome domain.ExecutionOutcome) (domain.OperationState, string,
 	case domain.OutcomeFailed:
 		return domain.OpStateFailed, "", ""
 	case domain.OutcomeAborted:
-		return domain.OpStateCancelled, "", ""
+		switch outcome.ErrorCategory {
+		case "deadline_exceeded":
+			return domain.OpStateFailed, "timeout", "operation deadline exceeded"
+		case "caller_canceled":
+			return domain.OpStateCancelled, "cancelled", "operation cancelled"
+		default:
+			return domain.OpStateCancelled, "", ""
+		}
 	default:
 		return domain.OpStatePending, "", ""
 	}

@@ -48,6 +48,12 @@ func TestDirectRecoveryRollbackDeadlinePersistsAbortAndSkipsProvider(t *testing.
 	if !errors.Is(err, context.DeadlineExceeded) || retry.ReceiptID != receipt.ReceiptID {
 		t.Fatalf("retry receipt = %s error = %v, want cached timeout %s", retry.ReceiptID, err, receipt.ReceiptID)
 	}
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	canceledRetry, _, err := service.StartMachine(canceledCtx, request)
+	if !errors.Is(err, context.DeadlineExceeded) || canceledRetry.ReceiptID != receipt.ReceiptID {
+		t.Fatalf("cancelled-context retry receipt = %s error = %v, want cached timeout %s", canceledRetry.ReceiptID, err, receipt.ReceiptID)
+	}
 	if providerCalls.Load() != 0 {
 		t.Fatalf("retry provider calls = %d, want zero", providerCalls.Load())
 	}

@@ -85,7 +85,7 @@ func (m *mockBackend) RestoreCheckpoint(_ context.Context, _ string, _ string) (
 	return domain.MachineObservation{}, nil
 }
 
-func setupTestManager(t *testing.T, backend app.Backend) (*operations.Manager, *events.Hub, string) {
+func setupTestManager(t *testing.T, backend app.Backend, opts ...operations.Option) (*operations.Manager, *events.Hub, string) {
 	dir := t.TempDir()
 	leasesDir := t.TempDir()
 	auditDir := t.TempDir()
@@ -99,7 +99,7 @@ func setupTestManager(t *testing.T, backend app.Backend) (*operations.Manager, *
 	eventHub := events.NewHub(dir)
 
 	recoverySvc := app.NewRecoveryService(backend, leaseMgr, auditStore, rcptStore, apprStore)
-	mgr := operations.NewManager(dir, recoverySvc, rcptStore, auditStore, eventHub)
+	mgr := operations.NewManager(dir, recoverySvc, rcptStore, auditStore, eventHub, opts...)
 	t.Cleanup(func() {
 		_ = mgr.Shutdown(context.Background())
 	})

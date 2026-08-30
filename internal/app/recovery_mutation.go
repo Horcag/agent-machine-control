@@ -202,17 +202,20 @@ func runLifecycleHooks(ctx context.Context, req MutationRequest) error {
 }
 
 func (s *RecoveryService) checkPreconditions(ctx context.Context, op domain.Operation) (*domain.Receipt, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
 	if s.receiptStore != nil {
-		cached, err := s.receiptStore.LookupIdempotencyContext(ctx, op)
+		// Durable terminal truth wins over caller cancellation for an exact retry.
+		lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		cached, err := s.receiptStore.LookupIdempotencyContext(lookupCtx, op)
+		cancel()
 		if err != nil {
 			return nil, err
 		}
 		if cached != nil {
 			return cached, nil
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	if s.auditStore != nil {
 		if err := s.auditStore.CheckWritableContext(ctx); err != nil {
