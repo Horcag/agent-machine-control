@@ -116,6 +116,7 @@ func LoadOrCreate(authDir string, opts ...Option) (*Store, error) {
 		domain.ScopeSessionClose,
 		domain.ScopeSessionAdmin,
 		domain.ScopeEvidenceCapture,
+		domain.ScopeTargetAdmin,
 	}
 	opScopeSet := domain.NewScopeSet(opScopes...)
 	opActor, err := domain.NewActorContext(domain.ActorID(principal), domain.ActorID(principal), opScopeSet, opScopeSet)

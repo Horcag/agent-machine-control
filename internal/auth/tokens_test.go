@@ -87,6 +87,7 @@ func TestAuth_Authenticate(t *testing.T) {
 		domain.ScopeSessionOpen,
 		domain.ScopeSessionRead,
 		domain.ScopeSessionWrite,
+		domain.ScopeTargetAdmin,
 	}
 	if !slices.Equal(scopes, wantOperatorScopes) {
 		t.Errorf("operator scopes = %v, want %v", scopes, wantOperatorScopes)

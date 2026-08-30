@@ -22,6 +22,7 @@ const (
 	ScopeSessionClose    = "session:close"
 	ScopeSessionAdmin    = "session:admin"
 	ScopeEvidenceCapture = "evidence:sensitive:capture"
+	ScopeTargetAdmin     = "target:admin"
 )
 
 // ActorID is a strongly typed, validated principal identifier.

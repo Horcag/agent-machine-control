@@ -2,8 +2,6 @@ package app
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"slices"
@@ -71,12 +69,14 @@ func NewTargetService(inventory *TrustedInventory, store *target.Store, options 
 
 // TargetPlan is an immutable logical target-authority transition prepared from fresh inventory.
 type TargetPlan struct {
-	Kind       domain.OperationKind
-	Resolution TargetResolution
-	Prior      *target.Default
-	Desired    *target.Default
-	StateHash  string
-	AliasCount int
+	Kind        domain.OperationKind
+	Resolution  TargetResolution
+	Prior       *target.Default
+	Desired     *target.Default
+	StateHash   string
+	PriorHash   string
+	DesiredHash string
+	AliasCount  int
 }
 
 // PrepareEnrollDefaultTarget resolves and validates enrollment without changing durable authority.
@@ -125,6 +125,21 @@ func (s *TargetService) PrepareClearDefaultTarget(ctx context.Context) (TargetPl
 		return TargetPlan{}, err
 	}
 	resolution, err := s.resolveCanonical(ctx, prior.Locator)
+	if err != nil {
+		return TargetPlan{}, err
+	}
+	return newTargetPlan("target.clear", resolution, &prior, nil), nil
+}
+
+func (s *TargetService) prepareReservedClear(ctx context.Context, locator domain.MachineLocator) (TargetPlan, error) {
+	if err := s.refreshInventory(ctx); err != nil {
+		return TargetPlan{}, err
+	}
+	resolution, err := s.resolveCanonical(ctx, locator)
+	if err != nil {
+		return TargetPlan{}, err
+	}
+	prior, err := target.NewDefault(locator, nil)
 	if err != nil {
 		return TargetPlan{}, err
 	}
@@ -224,11 +239,13 @@ func (s *TargetService) loadOptional(ctx context.Context) (*target.Default, erro
 }
 
 func newTargetPlan(kind domain.OperationKind, resolution TargetResolution, prior, desired *target.Default) TargetPlan {
-	plan := TargetPlan{Kind: kind, Resolution: resolution, Prior: cloneDefault(prior), Desired: cloneDefault(desired)}
+	plan := TargetPlan{
+		Kind: kind, Resolution: resolution, Prior: cloneDefault(prior), Desired: cloneDefault(desired),
+		StateHash: target.TransitionDigest(prior, desired), PriorHash: target.StateDigest(prior), DesiredHash: target.StateDigest(desired),
+	}
 	if desired != nil {
 		plan.AliasCount = len(desired.Aliases)
 	}
-	plan.StateHash = targetStateHash(prior, desired)
 	return plan
 }
 
@@ -240,23 +257,6 @@ func cloneDefault(value *target.Default) *target.Default {
 	return &clone
 }
 
-func targetStateHash(prior, desired *target.Default) string {
-	hash := sha256.New()
-	for _, value := range []*target.Default{prior, desired} {
-		if value == nil {
-			hash.Write([]byte("absent\x00"))
-			continue
-		}
-		hash.Write([]byte(value.Locator.String()))
-		hash.Write([]byte{0})
-		for _, alias := range value.Aliases {
-			digest := sha256.Sum256([]byte(alias))
-			hash.Write(digest[:])
-		}
-	}
-	return hex.EncodeToString(hash.Sum(nil))
-}
-
 func validateTargetPlan(plan TargetPlan) error {
 	if plan.Kind != "target.enroll" && plan.Kind != "target.clear" {
 		return domain.ErrInvalidOperationKind
@@ -264,7 +264,8 @@ func validateTargetPlan(plan TargetPlan) error {
 	if err := plan.Resolution.Validate(); err != nil {
 		return err
 	}
-	if plan.StateHash != targetStateHash(plan.Prior, plan.Desired) {
+	if plan.StateHash != target.TransitionDigest(plan.Prior, plan.Desired) ||
+		plan.PriorHash != target.StateDigest(plan.Prior) || plan.DesiredHash != target.StateDigest(plan.Desired) {
 		return errors.New("app: target plan identity mismatch")
 	}
 	if plan.Kind == "target.enroll" && plan.Desired == nil {

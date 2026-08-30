@@ -3,6 +3,8 @@ package target
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,6 +34,8 @@ var (
 	ErrHostSecurityUnproven  = errors.New("target: Windows host-path security could not be proven")
 	ErrAtomicCommitUncertain = errors.New("target: atomic replacement returned without effect truth")
 	ErrInventoryRefresh      = errors.New("target: local inventory refresh failed")
+	ErrAccessDenied          = errors.New("target: operator target authority is required")
+	ErrApprovalRequired      = errors.New("target: exact active approval is required")
 )
 
 // Default is the complete persisted target authority. Display names are deliberately absent.
@@ -80,6 +84,28 @@ func (d Default) Clone() Default {
 
 func (d Default) equal(other Default) bool {
 	return d.Locator == other.Locator && slices.Equal(d.Aliases, other.Aliases)
+}
+
+// StateDigest returns a redacted exact digest of canonical target authority.
+func StateDigest(value *Default) string {
+	hash := sha256.New()
+	if value == nil {
+		hash.Write([]byte("absent\x00"))
+		return hex.EncodeToString(hash.Sum(nil))
+	}
+	hash.Write([]byte(value.Locator.String()))
+	hash.Write([]byte{0})
+	for _, alias := range value.Aliases {
+		digest := sha256.Sum256([]byte(alias))
+		hash.Write(digest[:])
+	}
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
+// TransitionDigest binds prior and desired authority without exposing alias plaintext.
+func TransitionDigest(prior, desired *Default) string {
+	digest := sha256.Sum256([]byte(StateDigest(prior) + "\x00" + StateDigest(desired)))
+	return hex.EncodeToString(digest[:])
 }
 
 type document struct {
