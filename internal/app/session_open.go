@@ -2,10 +2,12 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/domain"
+	"github.com/Horcag/agent-machine-control/internal/sessions"
 )
 
 func buildOpenOperation(params SessionOpenParams, deadline time.Time) (domain.Operation, uint16, uint16, string) {
@@ -53,7 +55,13 @@ func (s *SessionService) OpenSession(ctx context.Context, params SessionOpenPara
 
 	result, rcpt, err := s.coordinateSessionMutation(ctx, op, flightKey, params.Approval, timeout, func(execCtx context.Context) (sessionMutationResult, error) {
 		observed, err := s.sessionMgr.Open(execCtx, op, cols, rows, term)
-		return sessionMutationResult{Observation: observed, EffectApplied: observed != nil}, err
+		result := sessionMutationResult{Observation: observed, EffectApplied: observed != nil}
+		var openFailure *sessions.OpenFailure
+		if errors.As(err, &openFailure) && openFailure.ChannelCreated && !openFailure.CleanupComplete {
+			result.EffectApplied = true
+			result.EvidenceRefs = []string{"session-channel-cleanup-incomplete"}
+		}
+		return result, err
 	})
 	return result.Observation, rcpt, err
 }

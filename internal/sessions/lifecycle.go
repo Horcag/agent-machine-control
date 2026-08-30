@@ -113,9 +113,16 @@ func (m *Manager) finalizeSession(
 
 func finalizeNaturalExit(s *Session, now time.Time, exitCode *int, waitErr error, closeComplete bool, closeErr error) {
 	s.obs.ExitCode = exitCode
+	s.naturalWaitErr = waitErr
+	s.terminalErr = errors.Join(waitErr, closeErr)
+	if !closeComplete {
+		s.obs.State = domain.SessionStateClosing
+		s.obs.ClosedAt = nil
+		s.obs.ErrorMessage = "transport_cleanup_incomplete"
+		return
+	}
 	s.closed = true
 	s.obs.ClosedAt = &now
-	s.terminalErr = errors.Join(waitErr, closeErr)
 	switch {
 	case waitErr != nil && closeErr != nil:
 		s.obs.State = domain.SessionStateFailed
@@ -135,30 +142,44 @@ func finalizeNaturalExit(s *Session, now time.Time, exitCode *int, waitErr error
 func finalizeShutdown(s *Session, now time.Time, closeComplete bool, closeErr error) {
 	s.closed = true
 	s.obs.ClosedAt = &now
-	s.terminalErr = closeErr
-	if closeComplete && closeErr == nil {
+	s.terminalErr = errors.Join(s.naturalWaitErr, closeErr)
+	switch {
+	case s.naturalWaitErr != nil && closeErr != nil:
+		s.obs.State = domain.SessionStateFailed
+		s.obs.ErrorMessage = "transport_wait_and_cleanup_failed"
+	case s.naturalWaitErr != nil:
+		s.obs.State = domain.SessionStateFailed
+		s.obs.ErrorMessage = "transport_wait_failed"
+	case closeComplete && closeErr == nil:
 		s.obs.State = domain.SessionStateClosed
 		s.obs.ErrorMessage = ""
-		return
+	default:
+		s.obs.State = domain.SessionStateFailed
+		s.obs.ErrorMessage = "transport_close_failed"
 	}
-	s.obs.State = domain.SessionStateFailed
-	s.obs.ErrorMessage = "transport_close_failed"
 }
 
 func finalizeExplicitClose(s *Session, now time.Time, closeComplete bool, closeErr error, force bool) {
-	s.terminalErr = closeErr
-	switch {
-	case closeComplete && closeErr == nil:
-		s.closed = true
-		s.obs.State = domain.SessionStateClosed
-		s.obs.ClosedAt = &now
-		s.obs.ErrorMessage = ""
-	case closeComplete || force:
-		s.closed = true
-		s.obs.State = domain.SessionStateFailed
-		s.obs.ClosedAt = &now
-		s.obs.ErrorMessage = "transport_close_failed"
-	default:
+	s.terminalErr = errors.Join(s.naturalWaitErr, closeErr)
+	if !closeComplete && !force {
+		s.obs.ClosedAt = nil
 		s.obs.ErrorMessage = "transport_close_incomplete"
+		return
+	}
+	s.closed = true
+	s.obs.ClosedAt = &now
+	switch {
+	case s.naturalWaitErr != nil && closeErr != nil:
+		s.obs.State = domain.SessionStateFailed
+		s.obs.ErrorMessage = "transport_wait_and_cleanup_failed"
+	case s.naturalWaitErr != nil:
+		s.obs.State = domain.SessionStateFailed
+		s.obs.ErrorMessage = "transport_wait_failed"
+	case closeComplete && closeErr == nil:
+		s.obs.State = domain.SessionStateClosed
+		s.obs.ErrorMessage = ""
+	default:
+		s.obs.State = domain.SessionStateFailed
+		s.obs.ErrorMessage = "transport_close_failed"
 	}
 }

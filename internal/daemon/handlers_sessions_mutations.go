@@ -327,7 +327,7 @@ func (s *Server) mapSessionError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadGateway, "host_key_mismatch", "guest host key verification failed")
 	case errors.Is(err, domain.ErrMissingHostKeyPin):
 		writeError(w, http.StatusBadGateway, "missing_host_key_pin", "guest host key pin missing")
-	case errors.Is(err, domain.ErrNonCanonicalParameter) || errors.Is(err, domain.ErrInvalidControlKey) || errors.Is(err, domain.ErrInvalidTerminalDimensions):
+	case errors.Is(err, domain.ErrNonCanonicalParameter) || errors.Is(err, domain.ErrInvalidControlKey) || errors.Is(err, domain.ErrInvalidTerminalDimensions) || errors.Is(err, domain.ErrInvalidTerminalType):
 		writeError(w, http.StatusBadRequest, "invalid_argument", "invalid parameter")
 	default:
 		writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")

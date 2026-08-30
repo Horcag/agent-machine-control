@@ -3,16 +3,107 @@ package app_test
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/Horcag/agent-machine-control/internal/app"
+	"github.com/Horcag/agent-machine-control/internal/approval"
 	"github.com/Horcag/agent-machine-control/internal/audit"
 	"github.com/Horcag/agent-machine-control/internal/domain"
+	"github.com/Horcag/agent-machine-control/internal/lease"
 	"github.com/Horcag/agent-machine-control/internal/receipt"
 	"github.com/Horcag/agent-machine-control/internal/sessions"
+	"github.com/Horcag/agent-machine-control/internal/statedir"
 )
+
+type validationNeverSafety struct{}
+
+func (validationNeverSafety) ResolveSafety(context.Context, domain.MachineRef) (app.SafetyResolution, error) {
+	panic("safety resolution must not run for invalid canonical session parameters")
+}
+
+func TestSessionOpenCanonicalParametersFailBeforePrivilegedAdmission(t *testing.T) {
+	sd, err := statedir.Resolve(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sd.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+
+	var journalCalls, receiptCalls, auditCalls atomic.Int32
+	journal := sessions.NewMutationJournal(filepath.Join(sd.SessionsDir(), "mutations"), sessions.WithMutationJournalHook(func(string) error {
+		journalCalls.Add(1)
+		return nil
+	}))
+	receipts := receipt.NewStore(sd.ReceiptsDir(), receipt.WithSaveHook(func(domain.Receipt) error {
+		receiptCalls.Add(1)
+		return nil
+	}))
+	audits := audit.NewStore(sd.AuditDir(), audit.WithAppendHook(func(audit.Event) error {
+		auditCalls.Add(1)
+		return nil
+	}))
+	transport := &trackingTransport{panicOnDial: true}
+	mgr := sessions.NewManager(sd.SessionsDir(), transport, time.Now)
+	leases := lease.NewManager(sd.LeasesDir())
+	svc := app.NewSessionService(
+		mgr, validationNeverSafety{}, leases, audits, receipts, approval.NewStore(sd.ApprovalsDir()),
+		app.WithSessionMutationJournal(journal),
+	)
+	scopes := domain.NewScopeSet(domain.ScopeSessionOpen, domain.ScopeSessionAdmin)
+	actor, err := domain.NewActorContext("agent:validation", "agent:validation", scopes, scopes)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name string
+		cols uint16
+		rows uint16
+		term string
+	}{
+		{name: "cols", cols: 1, rows: 24, term: domain.DefaultTermType},
+		{name: "rows", cols: 80, rows: 1, term: domain.DefaultTermType},
+		{name: "term", cols: 80, rows: 24, term: "not a terminal type"},
+	}
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			obs, rcpt, err := svc.OpenSession(context.Background(), app.SessionOpenParams{
+				Target:         "c4a523d4-6b99-4d62-a5e2-4752c0f20001",
+				Caller:         actor,
+				Reason:         "reject invalid canonical terminal parameters",
+				IdempotencyKey: "invalid-canonical-" + tt.name,
+				Cols:           tt.cols,
+				Rows:           tt.rows,
+				Term:           tt.term,
+				Approval:       &domain.Approval{ID: "app-0123456789abcdef0123456789abcdef"},
+			})
+			if obs != nil || rcpt != nil || !errors.Is(err, domain.ErrNonCanonicalParameter) {
+				t.Fatalf("invalid open %d = obs %+v receipt %+v err %v", i, obs, rcpt, err)
+			}
+		})
+	}
+
+	if got := atomic.LoadInt32(&transport.dialCalls); got != 0 {
+		t.Fatalf("transport dial calls = %d, want 0", got)
+	}
+	if journalCalls.Load() != 0 || receiptCalls.Load() != 0 || auditCalls.Load() != 0 {
+		t.Fatalf("durable side effects = journal %d receipt %d audit %d, want zero", journalCalls.Load(), receiptCalls.Load(), auditCalls.Load())
+	}
+	for name, dir := range map[string]string{"approvals": sd.ApprovalsDir(), "leases": sd.LeasesDir(), "sessions": sd.SessionsDir()} {
+		entries, readErr := os.ReadDir(dir)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if len(entries) != 0 {
+			t.Fatalf("%s side effects = %v, want empty", name, entries)
+		}
+	}
+}
 
 func TestSessionWriteAcceptedBytesRemainFailedTruthAndExactRetryDoesNotReplay(t *testing.T) {
 	h := newFinalizationHarness(t)

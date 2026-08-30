@@ -1,13 +1,30 @@
 package daemon
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/Horcag/agent-machine-control/internal/domain"
 )
+
+func TestSessionInvalidTerminalTypeMapsToCanonicalBadRequest(t *testing.T) {
+	w := httptest.NewRecorder()
+	(&Server{}).MapSessionErrorForTest(w, fmt.Errorf("canonical terminal validation: %w", domain.ErrInvalidTerminalType))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+	var body ErrorEnvelope
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Category != "invalid_argument" {
+		t.Fatalf("error category = %v, want invalid_argument", body.Error.Category)
+	}
+}
 
 func TestParseSessionSubrouteValidatesDecodedID(t *testing.T) {
 	t.Parallel()

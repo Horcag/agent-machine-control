@@ -265,6 +265,17 @@ func testMCPValidationParamErrors(ctx context.Context, t *testing.T, adapter *Ad
 		t.Errorf("expected validation error for invalid target")
 	}
 
+	// Invalid terminal parameters are rejected before client/transport resolution.
+	res, _, _ = adapter.SessionOpen(ctx, nil, SessionOpenInput{
+		Target:         "c4a523d4-6b99-4d62-a5e2-4752c0f20001",
+		Reason:         "test",
+		IdempotencyKey: "invalid-terminal",
+		Term:           "not a terminal type",
+	})
+	if res == nil || !res.IsError {
+		t.Errorf("expected validation error for invalid terminal type")
+	}
+
 	// Invalid session ID on read
 	res, _, _ = adapter.SessionRead(ctx, nil, SessionReadInput{SessionID: "bad-id"})
 	if res == nil || !res.IsError {
@@ -342,6 +353,19 @@ func TestMCPSessions_ValidationErrors(t *testing.T) {
 
 	testMCPValidationParamErrors(ctx, t, adapter, sessID)
 	testMCPValidationTimeoutErrors(ctx, t, adapter, sessID)
+}
+
+func TestMCPSessionOpenRejectsInvalidTerminalBeforeClientResolution(t *testing.T) {
+	adapter := NewAdapter(t.TempDir())
+	res, _, err := adapter.SessionOpen(context.Background(), nil, SessionOpenInput{
+		Target:         "c4a523d4-6b99-4d62-a5e2-4752c0f20001",
+		Reason:         "reject invalid terminal before client resolution",
+		IdempotencyKey: "invalid-terminal-before-client",
+		Term:           "not a terminal type",
+	})
+	if err != nil || res == nil || !res.IsError {
+		t.Fatalf("invalid terminal result = %+v err %v, want MCP input error", res, err)
+	}
 }
 
 func testMCPMutationsError(ctx context.Context, t *testing.T, adapter *Adapter, machGUID, sessID, desc string) {

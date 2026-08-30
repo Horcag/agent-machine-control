@@ -270,6 +270,96 @@ func TestManagerNaturalExitTruthAndCleanup(t *testing.T) {
 	}
 }
 
+func waitForRetryableNaturalExit(t *testing.T, mgr *sessions.Manager, actor domain.ActorContext, id domain.SessionID, channel *lifecycleChannel) *domain.SessionObservation {
+	t.Helper()
+	channel.waitOnce.Do(func() { close(channel.waitRelease) })
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		obs, err := mgr.Get(context.Background(), id, actor)
+		if err == nil && channel.closeCalls.Load() == 1 && obs.State == domain.SessionStateClosing {
+			return obs
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("natural exit did not persist retryable incomplete cleanup")
+	return nil
+}
+
+func TestManagerNaturalExitIncompleteCleanupCanBeClosedExplicitly(t *testing.T) {
+	channel := newLifecycleChannel(
+		guestssh.CloseOutcome{Complete: false, Err: context.DeadlineExceeded},
+		guestssh.CloseOutcome{Complete: true},
+	)
+	channel.waitCode = 23
+	mgr, actor, id := openLifecycleSession(t, t.TempDir(), channel)
+
+	incomplete := waitForRetryableNaturalExit(t, mgr, actor, id, channel)
+	if incomplete.ClosedAt != nil || incomplete.ExitCode == nil || *incomplete.ExitCode != 23 || incomplete.ErrorMessage != "transport_cleanup_incomplete" {
+		t.Fatalf("incomplete natural exit = %+v, want retryable cleanup truth", incomplete)
+	}
+	closed, err := mgr.Close(context.Background(), id, actor, "retry natural cleanup", false)
+	if err != nil || closed.State != domain.SessionStateClosed || closed.ClosedAt == nil {
+		t.Fatalf("explicit cleanup retry = %+v err %v, want closed", closed, err)
+	}
+	if got := channel.closeCalls.Load(); got != 2 {
+		t.Fatalf("transport cleanup calls = %d, want 2", got)
+	}
+}
+
+func TestManagerShutdownRetriesIncompleteNaturalExitCleanup(t *testing.T) {
+	channel := newLifecycleChannel(
+		guestssh.CloseOutcome{Complete: false, Err: context.DeadlineExceeded},
+		guestssh.CloseOutcome{Complete: true},
+	)
+	dir := t.TempDir()
+	mgr, actor, id := openLifecycleSession(t, dir, channel)
+	incomplete := waitForRetryableNaturalExit(t, mgr, actor, id, channel)
+	if incomplete.State.IsTerminal() || incomplete.ClosedAt != nil {
+		t.Fatalf("natural exit prematurely terminalized: %+v", incomplete)
+	}
+
+	if err := mgr.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	closed, err := mgr.Get(context.Background(), id, actor)
+	if err != nil || closed.State != domain.SessionStateClosed || closed.ClosedAt == nil {
+		t.Fatalf("shutdown cleanup retry = %+v err %v, want closed", closed, err)
+	}
+	if got := channel.closeCalls.Load(); got != 2 {
+		t.Fatalf("transport cleanup calls = %d, want 2", got)
+	}
+}
+
+func TestManagerIncompleteNaturalExitPersistsNonterminalRestartTruth(t *testing.T) {
+	channel := newLifecycleChannel(guestssh.CloseOutcome{Complete: false, Err: context.DeadlineExceeded})
+	dir := t.TempDir()
+	mgr, actor, id := openLifecycleSession(t, dir, channel)
+	incomplete := waitForRetryableNaturalExit(t, mgr, actor, id, channel)
+
+	var loaded *domain.SessionObservation
+	var err error
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		loaded, err = sessions.NewManager(dir, nil, time.Now).Get(context.Background(), id, actor)
+		if err == nil && loaded.State == domain.SessionStateClosing {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err != nil || loaded.State != domain.SessionStateClosing || loaded.ClosedAt != nil || loaded.ErrorMessage != "transport_cleanup_incomplete" {
+		t.Fatalf("persisted incomplete cleanup = %+v err %v", loaded, err)
+	}
+	reconciledAt := time.Now().UTC()
+	reconciled, err := sessions.ReconcileCrashedSessions(context.Background(), dir, reconciledAt)
+	if err != nil || len(reconciled) != 1 || reconciled[0] != incomplete.ID {
+		t.Fatalf("restart reconciliation = %v err %v", reconciled, err)
+	}
+	afterRestart, err := sessions.NewManager(dir, nil, time.Now).Get(context.Background(), id, actor)
+	if err != nil || afterRestart.State != domain.SessionStateCrashed || afterRestart.ErrorMessage != "daemon_crash_recovered" {
+		t.Fatalf("restart truth = %+v err %v, want crashed not cleaned", afterRestart, err)
+	}
+}
+
 func TestManagerExplicitCloseAndShutdownShareOneFinalizer(t *testing.T) {
 	channel := newLifecycleChannel(guestssh.CloseOutcome{Complete: true})
 	channel.allowClose = make(chan struct{})

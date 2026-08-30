@@ -62,6 +62,9 @@ func (s *SessionService) validateAndFingerprint(op domain.Operation) (domain.Fin
 	if err := op.Validate(); err != nil {
 		return "", "", err
 	}
+	if err := domain.ValidateOperationParameters(op.Kind, op.Parameters); err != nil {
+		return "", "", err
+	}
 	fp, err := op.Fingerprint()
 	if err != nil {
 		return "", "", err
@@ -301,7 +304,10 @@ func (s *SessionService) executeMutation(
 
 	var evidenceRefs []string
 	if result.EffectApplied {
-		evidenceRefs = extractEvidenceRefs(op, result.Observation)
+		evidenceRefs = result.EvidenceRefs
+		if len(evidenceRefs) == 0 {
+			evidenceRefs = extractEvidenceRefs(op, result.Observation)
+		}
 	}
 	rcpt, persistErr := s.persistOutcome(op, fp, idFp, decision, startedAt, completedAt, runErr, rollbackRef, evidenceRefs, result.ExitCode, result.EffectApplied)
 	if persistErr == nil {

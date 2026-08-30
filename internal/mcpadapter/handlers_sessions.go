@@ -15,6 +15,9 @@ func (a *Adapter) SessionOpen(ctx context.Context, _ *mcp.CallToolRequest, in Se
 	if err := validateMutationParams(in.Target, in.Reason, in.IdempotencyKey); err != nil {
 		return mcpToolError(err), SessionOpenResult{}, nil
 	}
+	if err := validateSessionOpenInput(in); err != nil {
+		return mcpToolError(NewInputError(err.Error())), SessionOpenResult{}, nil
+	}
 
 	timeout, err := parseTimeout(in.Timeout, true)
 	if err != nil {
@@ -50,6 +53,26 @@ func (a *Adapter) SessionOpen(ctx context.Context, _ *mcp.CallToolRequest, in Se
 		Session:         resp.Session,
 		Receipt:         resp.Receipt,
 	}, nil
+}
+
+func validateSessionOpenInput(in SessionOpenInput) error {
+	cols := in.Cols
+	if cols == 0 {
+		cols = domain.DefaultCols
+	}
+	rows := in.Rows
+	if rows == 0 {
+		rows = domain.DefaultRows
+	}
+	term := in.Term
+	if term == "" {
+		term = domain.DefaultTermType
+	}
+	return domain.ValidateOperationParameters("session.open", map[string]any{
+		"cols": cols,
+		"rows": rows,
+		"term": term,
+	})
 }
 
 func (a *Adapter) SessionRead(ctx context.Context, _ *mcp.CallToolRequest, in SessionReadInput) (*mcp.CallToolResult, SessionReadResult, error) {

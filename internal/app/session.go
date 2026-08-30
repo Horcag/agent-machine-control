@@ -40,6 +40,7 @@ type inFlightSessionCall struct {
 type sessionMutationResult struct {
 	BytesWritten  int
 	Observation   *domain.SessionObservation
+	EvidenceRefs  []string
 	ExitCode      int
 	EffectApplied bool
 }

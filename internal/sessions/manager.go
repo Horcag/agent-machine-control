@@ -14,31 +14,34 @@ import (
 
 // Session represents an active or durable persistent SSH terminal session.
 type Session struct {
-	mu           sync.RWMutex
-	persistMu    sync.Mutex
-	writeSem     chan struct{}
-	closeSem     chan struct{}
-	obs          domain.SessionObservation
-	channel      guestssh.Channel
-	buffer       *RingBuffer
-	sanitizer    *guestssh.StreamSanitizer
-	closed       bool
-	terminalErr  error
-	closedCh     chan struct{}
-	closeOnce    sync.Once
-	openParamsFp string
+	mu             sync.RWMutex
+	persistMu      sync.Mutex
+	writeSem       chan struct{}
+	closeSem       chan struct{}
+	obs            domain.SessionObservation
+	channel        guestssh.Channel
+	buffer         *RingBuffer
+	sanitizer      *guestssh.StreamSanitizer
+	closed         bool
+	terminalErr    error
+	naturalWaitErr error
+	closedCh       chan struct{}
+	closeOnce      sync.Once
+	openParamsFp   string
 }
 
 // Manager orchestrates lifecycle, state transitions, and concurrency for terminal sessions.
 type Manager struct {
-	mu              sync.RWMutex
-	sessionsDir     string
-	transport       guestssh.Transport
-	clock           func() time.Time
-	sessions        map[domain.SessionID]*Session
-	idempotency     map[string]domain.SessionID // key: actor:target:idempotencyKey -> SessionID
-	sanitizerConfig guestssh.SanitizerConfig
-	closed          bool
+	mu                sync.RWMutex
+	sessionsDir       string
+	transport         guestssh.Transport
+	clock             func() time.Time
+	generateSessionID func() (domain.SessionID, error)
+	publishOpenHook   func() error
+	sessions          map[domain.SessionID]*Session
+	idempotency       map[string]domain.SessionID // key: actor:target:idempotencyKey -> SessionID
+	sanitizerConfig   guestssh.SanitizerConfig
+	closed            bool
 }
 
 // ManagerOption configures a session manager.
@@ -49,17 +52,32 @@ func WithSanitizerConfig(config guestssh.SanitizerConfig) ManagerOption {
 	return func(m *Manager) { m.sanitizerConfig = config }
 }
 
+// WithSessionIDGenerator installs a deterministic session ID generator for failure-path tests.
+func WithSessionIDGenerator(generate func() (domain.SessionID, error)) ManagerOption {
+	return func(m *Manager) {
+		if generate != nil {
+			m.generateSessionID = generate
+		}
+	}
+}
+
+// WithPublishOpenHook injects a failure immediately before durable session publication.
+func WithPublishOpenHook(hook func() error) ManagerOption {
+	return func(m *Manager) { m.publishOpenHook = hook }
+}
+
 // NewManager constructs a SessionManager.
 func NewManager(sessionsDir string, transport guestssh.Transport, clock func() time.Time, opts ...ManagerOption) *Manager {
 	if clock == nil {
 		clock = time.Now
 	}
 	m := &Manager{
-		sessionsDir: sessionsDir,
-		transport:   transport,
-		clock:       clock,
-		sessions:    make(map[domain.SessionID]*Session),
-		idempotency: make(map[string]domain.SessionID),
+		sessionsDir:       sessionsDir,
+		transport:         transport,
+		clock:             clock,
+		generateSessionID: domain.GenerateSessionID,
+		sessions:          make(map[domain.SessionID]*Session),
+		idempotency:       make(map[string]domain.SessionID),
 	}
 	for _, opt := range opts {
 		opt(m)
@@ -100,10 +118,7 @@ func (m *Manager) dialSessionChannel(ctx context.Context, op domain.Operation, c
 		return nil, err
 	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), sessionCleanupTimeout)
-		defer cancel()
-		_, _ = closeChannel(cleanupCtx, channel)
-		return nil, ctxErr
+		return nil, cleanupFailedOpen(ctx, channel, ctxErr)
 	}
 	return channel, nil
 }
@@ -136,6 +151,11 @@ func (m *Manager) publishOpenSession(session *Session, idemKey string) error {
 	defer m.mu.Unlock()
 	if m.closed {
 		return domain.ErrSessionManagerClosed
+	}
+	if m.publishOpenHook != nil {
+		if err := m.publishOpenHook(); err != nil {
+			return err
+		}
 	}
 	if err := m.persistSession(session); err != nil {
 		return err
@@ -180,10 +200,9 @@ func (m *Manager) Open(ctx context.Context, op domain.Operation, cols, rows uint
 		return nil, err
 	}
 
-	sessID, err := domain.GenerateSessionID()
+	sessID, err := m.generateSessionID()
 	if err != nil {
-		_ = channel.Close(context.Background())
-		return nil, err
+		return nil, cleanupFailedOpen(ctx, channel, err)
 	}
 
 	now := m.now()
@@ -216,8 +235,7 @@ func (m *Manager) Open(ctx context.Context, op domain.Operation, cols, rows uint
 		publishKey = idemKey
 	}
 	if err := m.publishOpenSession(session, publishKey); err != nil {
-		_ = channel.Close(context.Background())
-		return nil, err
+		return nil, cleanupFailedOpen(ctx, channel, err)
 	}
 
 	// Start reader goroutine
