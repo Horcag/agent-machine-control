@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"sync"
 	"time"
@@ -40,7 +41,12 @@ type Manager struct {
 	publishOpenHook   func() error
 	sessions          map[domain.SessionID]*Session
 	idempotency       map[string]domain.SessionID // key: actor:target:idempotencyKey -> SessionID
+	pendingCleanups   map[uint64]*pendingCleanup
+	nextCleanupID     uint64
+	activeOpens       int
+	opensDrained      chan struct{}
 	sanitizerConfig   guestssh.SanitizerConfig
+	cleanupTimeout    time.Duration
 	closed            bool
 }
 
@@ -78,6 +84,8 @@ func NewManager(sessionsDir string, transport guestssh.Transport, clock func() t
 		generateSessionID: domain.GenerateSessionID,
 		sessions:          make(map[domain.SessionID]*Session),
 		idempotency:       make(map[string]domain.SessionID),
+		pendingCleanups:   make(map[uint64]*pendingCleanup),
+		cleanupTimeout:    sessionCleanupTimeout,
 	}
 	for _, opt := range opts {
 		opt(m)
@@ -118,7 +126,7 @@ func (m *Manager) dialSessionChannel(ctx context.Context, op domain.Operation, c
 		return nil, err
 	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		return nil, cleanupFailedOpen(ctx, channel, ctxErr)
+		return nil, m.cleanupFailedOpen(ctx, channel, ctxErr)
 	}
 	return channel, nil
 }
@@ -187,6 +195,10 @@ func (m *Manager) Open(ctx context.Context, op domain.Operation, cols, rows uint
 	if err := domain.ValidateTerminalType(term); err != nil {
 		return nil, err
 	}
+	if err := m.beginOpen(); err != nil {
+		return nil, err
+	}
+	defer m.endOpen()
 
 	paramsFp := fmt.Sprintf("%d:%d:%s", cols, rows, term)
 	idemKey := fmt.Sprintf("%s:%s:%s", op.Actor.EffectiveActor, op.Target, op.IdempotencyKey)
@@ -202,7 +214,7 @@ func (m *Manager) Open(ctx context.Context, op domain.Operation, cols, rows uint
 
 	sessID, err := m.generateSessionID()
 	if err != nil {
-		return nil, cleanupFailedOpen(ctx, channel, err)
+		return nil, m.cleanupFailedOpen(ctx, channel, err)
 	}
 
 	now := m.now()
@@ -235,7 +247,7 @@ func (m *Manager) Open(ctx context.Context, op domain.Operation, cols, rows uint
 		publishKey = idemKey
 	}
 	if err := m.publishOpenSession(session, publishKey); err != nil {
-		return nil, cleanupFailedOpen(ctx, channel, err)
+		return nil, m.cleanupFailedOpen(ctx, channel, err)
 	}
 
 	// Start reader goroutine
@@ -330,7 +342,7 @@ func (m *Manager) Write(ctx context.Context, id domain.SessionID, caller domain.
 	s.mu.RLock()
 	state := s.obs.State
 	s.mu.RUnlock()
-	if state.IsTerminal() {
+	if state != domain.SessionStateActive {
 		return 0, domain.ErrSessionClosed
 	}
 
@@ -338,6 +350,13 @@ func (m *Manager) Write(ctx context.Context, id domain.SessionID, caller domain.
 		return 0, err
 	}
 	defer func() { <-s.writeSem }()
+
+	s.mu.RLock()
+	state = s.obs.State
+	s.mu.RUnlock()
+	if state != domain.SessionStateActive {
+		return 0, domain.ErrSessionClosed
+	}
 
 	n, writeErr := s.channel.Write(ctx, []byte(data))
 	s.mu.Lock()
@@ -354,41 +373,48 @@ func (m *Manager) Write(ctx context.Context, id domain.SessionID, caller domain.
 }
 
 // Control sends a whitelisted terminal control key or escape sequence.
-func (m *Manager) Control(ctx context.Context, id domain.SessionID, caller domain.ActorContext, key domain.ControlKey, _, _ string) (int, error) {
+func (m *Manager) Control(ctx context.Context, id domain.SessionID, caller domain.ActorContext, key domain.ControlKey, _, _ string) (guestssh.ControlResult, error) {
 	if !caller.HasScope(domain.ScopeSessionWrite) {
-		return 0, domain.ErrSessionAccessDenied
+		return guestssh.ControlResult{}, domain.ErrSessionAccessDenied
 	}
 	if err := domain.ValidateSessionID(string(id)); err != nil {
-		return 0, err
+		return guestssh.ControlResult{}, err
 	}
 
 	m.mu.RLock()
 	s, ok := m.sessions[id]
 	m.mu.RUnlock()
 	if !ok || !m.authorize(caller, s) {
-		return 0, domain.ErrSessionNotFound
+		return guestssh.ControlResult{}, domain.ErrSessionNotFound
 	}
 
 	s.mu.RLock()
 	state := s.obs.State
 	s.mu.RUnlock()
-	if state.IsTerminal() {
-		return 0, domain.ErrSessionClosed
+	if state != domain.SessionStateActive {
+		return guestssh.ControlResult{}, domain.ErrSessionClosed
 	}
 
 	if err := acquireSessionLane(ctx, s.writeSem); err != nil {
-		return 0, err
+		return guestssh.ControlResult{}, err
 	}
 	defer func() { <-s.writeSem }()
 
-	n, controlErr := s.channel.SendControl(ctx, key)
-	if n == 0 {
-		return 0, controlErr
+	s.mu.RLock()
+	state = s.obs.State
+	s.mu.RUnlock()
+	if state != domain.SessionStateActive {
+		return guestssh.ControlResult{}, domain.ErrSessionClosed
+	}
+
+	result, controlErr := s.channel.SendControl(ctx, key)
+	if !result.EffectApplied {
+		return result, controlErr
 	}
 	s.mu.Lock()
 	s.obs.LastActivityAt = m.now()
 	s.mu.Unlock()
-	return n, errors.Join(controlErr, m.persistSession(s))
+	return result, errors.Join(controlErr, m.persistSession(s))
 }
 
 // Close terminates the session and returns its final observation.
@@ -417,11 +443,25 @@ func (m *Manager) Close(ctx context.Context, id domain.SessionID, caller domain.
 func (m *Manager) Shutdown(ctx context.Context) error {
 	m.mu.Lock()
 	m.closed = true
+	opensDrained := m.opensDrained
+	m.mu.Unlock()
+
+	if opensDrained != nil {
+		select {
+		case <-opensDrained:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
+	m.mu.RLock()
 	sessions := make([]*Session, 0, len(m.sessions))
 	for _, s := range m.sessions {
 		sessions = append(sessions, s)
 	}
-	m.mu.Unlock()
+	pending := make(map[uint64]*pendingCleanup, len(m.pendingCleanups))
+	maps.Copy(pending, m.pendingCleanups)
+	m.mu.RUnlock()
 
 	var errs []error
 	for _, s := range sessions {
@@ -434,6 +474,11 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 			errs = append(errs, closeErr)
 		}
 		releaseSessionCloseLane(s)
+	}
+	for id, cleanup := range pending {
+		if err := m.retryPendingCleanup(ctx, id, cleanup, false); err != nil {
+			errs = append(errs, err)
+		}
 	}
 
 	return errors.Join(errs...)

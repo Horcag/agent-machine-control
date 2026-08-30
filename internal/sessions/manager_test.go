@@ -52,9 +52,9 @@ func (c *deadlineGuardChannel) Write(context.Context, []byte) (int, error) {
 	c.writeCalls.Add(1)
 	return 0, nil
 }
-func (c *deadlineGuardChannel) SendControl(context.Context, domain.ControlKey) (int, error) {
+func (c *deadlineGuardChannel) SendControl(context.Context, domain.ControlKey) (guestssh.ControlResult, error) {
 	c.controlCalls.Add(1)
-	return 1, nil
+	return guestssh.ControlResult{AcceptedBytes: 1, EffectApplied: true}, nil
 }
 func (c *deadlineGuardChannel) Resize(uint16, uint16) error { return nil }
 func (c *deadlineGuardChannel) Close(ctx context.Context) error {
@@ -542,8 +542,8 @@ func (c *shutdownFailureChannel) Read([]byte) (int, error) { return 0, io.EOF }
 func (c *shutdownFailureChannel) Write(context.Context, []byte) (int, error) {
 	return 0, nil
 }
-func (c *shutdownFailureChannel) SendControl(context.Context, domain.ControlKey) (int, error) {
-	return 1, nil
+func (c *shutdownFailureChannel) SendControl(context.Context, domain.ControlKey) (guestssh.ControlResult, error) {
+	return guestssh.ControlResult{AcceptedBytes: 1, EffectApplied: true}, nil
 }
 func (c *shutdownFailureChannel) Resize(uint16, uint16) error { return nil }
 func (c *shutdownFailureChannel) Close(context.Context) error {

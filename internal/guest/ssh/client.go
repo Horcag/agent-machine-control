@@ -22,10 +22,16 @@ type Transport interface {
 type Channel interface {
 	io.Reader
 	Write(ctx context.Context, p []byte) (int, error)
-	SendControl(ctx context.Context, key domain.ControlKey) (int, error)
+	SendControl(ctx context.Context, key domain.ControlKey) (ControlResult, error)
 	Resize(cols, rows uint16) error
 	Close(ctx context.Context) error
 	Wait() (exitCode int, err error)
+}
+
+// ControlResult reports transport-owned truth for an attempted control effect.
+type ControlResult struct {
+	AcceptedBytes int
+	EffectApplied bool
 }
 
 // CloseOutcome reports whether transport cleanup completed and the immutable result of that attempt.
@@ -304,16 +310,17 @@ func (c *sshChannel) Write(ctx context.Context, p []byte) (int, error) {
 	return n, err
 }
 
-func (c *sshChannel) SendControl(ctx context.Context, key domain.ControlKey) (int, error) {
+func (c *sshChannel) SendControl(ctx context.Context, key domain.ControlKey) (ControlResult, error) {
 	norm, err := domain.NormalizeControlKey(string(key))
 	if err != nil {
-		return 0, err
+		return ControlResult{}, err
 	}
 	bytes := norm.ToBytes()
 	if len(bytes) == 0 {
-		return 0, domain.ErrInvalidControlKey
+		return ControlResult{}, domain.ErrInvalidControlKey
 	}
-	return c.Write(ctx, bytes)
+	n, writeErr := c.Write(ctx, bytes)
+	return ControlResult{AcceptedBytes: n, EffectApplied: n > 0}, writeErr
 }
 
 func (c *sshChannel) Resize(cols, rows uint16) error {

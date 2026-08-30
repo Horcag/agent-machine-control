@@ -86,9 +86,9 @@ func (c *trackingChannel) Write(ctx context.Context, p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (c *trackingChannel) SendControl(_ context.Context, _ domain.ControlKey) (int, error) {
+func (c *trackingChannel) SendControl(_ context.Context, _ domain.ControlKey) (guestssh.ControlResult, error) {
 	atomic.AddInt32(&c.parent.controlCalls, 1)
-	return 1, nil
+	return guestssh.ControlResult{AcceptedBytes: 1, EffectApplied: true}, nil
 }
 
 func (c *trackingChannel) Resize(_, _ uint16) error {

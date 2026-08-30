@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -19,8 +20,12 @@ import (
 )
 
 type incompleteOpenTransport struct {
-	dialCalls  atomic.Int32
-	closeCalls atomic.Int32
+	dialCalls         atomic.Int32
+	closeCalls        atomic.Int32
+	supervisorStarted chan struct{}
+	releaseSupervisor chan struct{}
+	supervisorDone    chan struct{}
+	supervisorOnce    sync.Once
 }
 
 func (t *incompleteOpenTransport) Dial(context.Context, domain.MachineRef, uint16, uint16, string) (guestssh.Channel, error) {
@@ -30,22 +35,38 @@ func (t *incompleteOpenTransport) Dial(context.Context, domain.MachineRef, uint1
 
 type incompleteOpenChannel struct {
 	transport *incompleteOpenTransport
+	mu        sync.Mutex
 	last      guestssh.CloseOutcome
 }
 
 func (*incompleteOpenChannel) Read([]byte) (int, error)                   { return 0, io.EOF }
 func (*incompleteOpenChannel) Write(context.Context, []byte) (int, error) { return 0, nil }
-func (*incompleteOpenChannel) SendControl(context.Context, domain.ControlKey) (int, error) {
-	return 1, nil
+func (*incompleteOpenChannel) SendControl(context.Context, domain.ControlKey) (guestssh.ControlResult, error) {
+	return guestssh.ControlResult{AcceptedBytes: 1, EffectApplied: true}, nil
 }
 func (*incompleteOpenChannel) Resize(uint16, uint16) error { return nil }
 func (c *incompleteOpenChannel) Close(context.Context) error {
-	c.transport.closeCalls.Add(1)
+	call := c.transport.closeCalls.Add(1)
+	if call == 2 && c.transport.releaseSupervisor != nil {
+		c.transport.supervisorOnce.Do(func() { close(c.transport.supervisorStarted) })
+		<-c.transport.releaseSupervisor
+		defer close(c.transport.supervisorDone)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if call >= 3 {
+		c.last = guestssh.CloseOutcome{Complete: true}
+		return nil
+	}
 	c.last = guestssh.CloseOutcome{Complete: false, Err: context.DeadlineExceeded}
 	return c.last.Err
 }
-func (c *incompleteOpenChannel) LastCloseOutcome() guestssh.CloseOutcome { return c.last }
-func (*incompleteOpenChannel) Wait() (int, error)                        { return 0, nil }
+func (c *incompleteOpenChannel) LastCloseOutcome() guestssh.CloseOutcome {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.last
+}
+func (*incompleteOpenChannel) Wait() (int, error) { return 0, nil }
 
 func assertIncompleteOpenFailure(t *testing.T, obs *domain.SessionObservation, rcpt *domain.Receipt, err error) {
 	t.Helper()
@@ -73,10 +94,10 @@ func assertIncompleteOpenFailure(t *testing.T, obs *domain.SessionObservation, r
 	}
 }
 
-func assertOpenTransportCalls(t *testing.T, transport *incompleteOpenTransport, wantDial, wantClose int32) {
+func assertOpenTransportCalls(t *testing.T, transport *incompleteOpenTransport, wantClose int32) {
 	t.Helper()
-	if got := transport.dialCalls.Load(); got != wantDial {
-		t.Fatalf("transport dial calls = %d, want %d", got, wantDial)
+	if got := transport.dialCalls.Load(); got != 1 {
+		t.Fatalf("transport dial calls = %d, want 1", got)
 	}
 	if got := transport.closeCalls.Load(); got != wantClose {
 		t.Fatalf("transport close calls = %d, want %d", got, wantClose)
@@ -108,7 +129,11 @@ func TestSessionOpenIncompletePostEffectCleanupIsDurableAndNotRedialed(t *testin
 	if err := sd.EnsureDirs(); err != nil {
 		t.Fatal(err)
 	}
-	transport := &incompleteOpenTransport{}
+	transport := &incompleteOpenTransport{
+		supervisorStarted: make(chan struct{}),
+		releaseSupervisor: make(chan struct{}),
+		supervisorDone:    make(chan struct{}),
+	}
 	mgr := sessions.NewManager(
 		sd.SessionsDir(),
 		transport,
@@ -140,9 +165,28 @@ func TestSessionOpenIncompletePostEffectCleanupIsDurableAndNotRedialed(t *testin
 
 	obs, firstReceipt, firstErr := svc.OpenSession(context.Background(), params)
 	assertIncompleteOpenFailure(t, obs, firstReceipt, firstErr)
-	assertOpenTransportCalls(t, transport, 1, 1)
+	select {
+	case <-transport.supervisorStarted:
+	case <-time.After(time.Second):
+		t.Fatal("supervised cleanup did not start")
+	}
+	assertOpenTransportCalls(t, transport, 2)
 	assertIncompleteOpenRetry(t, svc, params, firstReceipt)
-	assertOpenTransportCalls(t, transport, 1, 1)
+	assertOpenTransportCalls(t, transport, 2)
+	close(transport.releaseSupervisor)
+	select {
+	case <-transport.supervisorDone:
+	case <-time.After(time.Second):
+		t.Fatal("supervised cleanup did not finish")
+	}
+	if err := mgr.Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown cleanup retry failed: %v", err)
+	}
+	assertOpenTransportCalls(t, transport, 3)
+	if err := mgr.Shutdown(context.Background()); err != nil {
+		t.Fatalf("repeated shutdown after cleanup failed: %v", err)
+	}
+	assertOpenTransportCalls(t, transport, 3)
 }
 
 func TestSessionOpenCompletedPostEffectCleanupDoesNotClaimLiveSession(t *testing.T) {

@@ -166,9 +166,9 @@ func TestSSHChannelSendControlPreservesAcceptedBytesWhenContextCancelsAfterWrite
 		closeLane: make(chan struct{}, 1),
 	}
 
-	n, err := channel.SendControl(ctx, domain.ControlKeyCtrlC)
-	if n != 1 || !errors.Is(err, context.Canceled) {
-		t.Fatalf("SendControl() = (%d, %v), want (1, context canceled)", n, err)
+	result, err := channel.SendControl(ctx, domain.ControlKeyCtrlC)
+	if result.AcceptedBytes != 1 || !result.EffectApplied || !errors.Is(err, context.Canceled) {
+		t.Fatalf("SendControl() = (%+v, %v), want one accepted byte, applied effect, and context canceled", result, err)
 	}
 }
 

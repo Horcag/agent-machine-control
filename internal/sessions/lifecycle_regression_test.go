@@ -28,14 +28,19 @@ type lifecycleChannel struct {
 	readRelease  chan struct{}
 	closeStarted chan struct{}
 	allowClose   chan struct{}
+	writeStarted chan struct{}
+	allowWrite   chan struct{}
 	waitOnce     sync.Once
 	readOnce     sync.Once
 	startOnce    sync.Once
+	writeOnce    sync.Once
 	waitCode     int
 	waitErr      error
 	closePlan    []guestssh.CloseOutcome
 	lastOutcome  guestssh.CloseOutcome
 	closeCalls   atomic.Int32
+	writeCalls   atomic.Int32
+	controlCalls atomic.Int32
 }
 
 func newLifecycleChannel(plan ...guestssh.CloseOutcome) *lifecycleChannel {
@@ -52,9 +57,21 @@ func (c *lifecycleChannel) Read([]byte) (int, error) {
 	return 0, io.EOF
 }
 
-func (c *lifecycleChannel) Write(_ context.Context, data []byte) (int, error) { return len(data), nil }
-func (c *lifecycleChannel) SendControl(context.Context, domain.ControlKey) (int, error) {
-	return 1, nil
+func (c *lifecycleChannel) Write(ctx context.Context, data []byte) (int, error) {
+	c.writeCalls.Add(1)
+	if c.allowWrite != nil {
+		c.writeOnce.Do(func() { close(c.writeStarted) })
+		select {
+		case <-c.allowWrite:
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		}
+	}
+	return len(data), nil
+}
+func (c *lifecycleChannel) SendControl(context.Context, domain.ControlKey) (guestssh.ControlResult, error) {
+	c.controlCalls.Add(1)
+	return guestssh.ControlResult{AcceptedBytes: 1, EffectApplied: true}, nil
 }
 func (c *lifecycleChannel) Resize(uint16, uint16) error { return nil }
 
@@ -382,5 +399,103 @@ func TestManagerExplicitCloseAndShutdownShareOneFinalizer(t *testing.T) {
 	}
 	if got := channel.closeCalls.Load(); got != 1 {
 		t.Fatalf("transport close calls = %d, want exactly 1", got)
+	}
+}
+
+func TestManagerWriteRacingExplicitCloseStopsAtClosingCutover(t *testing.T) {
+	channel := newLifecycleChannel(guestssh.CloseOutcome{Complete: true})
+	channel.writeStarted = make(chan struct{})
+	channel.allowWrite = make(chan struct{})
+	channel.allowClose = make(chan struct{})
+	mgr, actor, id := openLifecycleSession(t, t.TempDir(), channel)
+
+	firstWriteDone := make(chan error, 1)
+	go func() {
+		_, err := mgr.Write(context.Background(), id, actor, "first", "hold write lane", "write-cutover-first")
+		firstWriteDone <- err
+	}()
+	awaitLifecycleSignal(t, channel.writeStarted, "first transport write")
+
+	secondStarted := make(chan struct{})
+	secondWriteDone := make(chan error, 1)
+	go func() {
+		close(secondStarted)
+		_, err := mgr.Write(context.Background(), id, actor, "second", "race close", "write-cutover-second")
+		secondWriteDone <- err
+	}()
+	awaitLifecycleSignal(t, secondStarted, "second manager write")
+
+	closeDone := make(chan error, 1)
+	go func() {
+		_, err := mgr.Close(context.Background(), id, actor, "explicit close cutover", false)
+		closeDone <- err
+	}()
+	awaitLifecycleSignal(t, channel.closeStarted, "explicit close cutover")
+	close(channel.allowWrite)
+	if err := <-firstWriteDone; err != nil {
+		t.Fatalf("first write error = %v", err)
+	}
+	if err := <-secondWriteDone; !errors.Is(err, domain.ErrSessionClosed) {
+		t.Fatalf("racing write error = %v, want session closed", err)
+	}
+	close(channel.allowClose)
+	if err := <-closeDone; err != nil {
+		t.Fatalf("explicit close error = %v", err)
+	}
+	if got := channel.writeCalls.Load(); got != 1 {
+		t.Fatalf("transport write calls = %d, want only the admitted write", got)
+	}
+}
+
+func TestManagerControlRacingNaturalExitStopsAtClosingCutover(t *testing.T) {
+	channel := newLifecycleChannel(guestssh.CloseOutcome{Complete: true})
+	channel.writeStarted = make(chan struct{})
+	channel.allowWrite = make(chan struct{})
+	channel.allowClose = make(chan struct{})
+	mgr, actor, id := openLifecycleSession(t, t.TempDir(), channel)
+
+	firstWriteDone := make(chan error, 1)
+	go func() {
+		_, err := mgr.Write(context.Background(), id, actor, "first", "hold mutation lane", "control-cutover-first")
+		firstWriteDone <- err
+	}()
+	awaitLifecycleSignal(t, channel.writeStarted, "first transport write")
+
+	controlStarted := make(chan struct{})
+	controlDone := make(chan error, 1)
+	go func() {
+		close(controlStarted)
+		_, err := mgr.Control(context.Background(), id, actor, domain.ControlKeyCtrlC, "race natural exit", "control-cutover-second")
+		controlDone <- err
+	}()
+	awaitLifecycleSignal(t, controlStarted, "manager control")
+	channel.waitOnce.Do(func() { close(channel.waitRelease) })
+	awaitLifecycleSignal(t, channel.closeStarted, "natural exit cutover")
+	close(channel.allowWrite)
+	if err := <-firstWriteDone; err != nil {
+		t.Fatalf("first write error = %v", err)
+	}
+	if err := <-controlDone; !errors.Is(err, domain.ErrSessionClosed) {
+		t.Fatalf("racing control error = %v, want session closed", err)
+	}
+	close(channel.allowClose)
+	closed, err := mgr.Close(context.Background(), id, actor, "observe natural exit completion", false)
+	if err != nil || closed.State != domain.SessionStateClosed {
+		t.Fatalf("natural exit completion = %+v err %v, want closed", closed, err)
+	}
+	if got := channel.controlCalls.Load(); got != 0 {
+		t.Fatalf("transport control calls = %d, want zero after natural-exit cutover", got)
+	}
+	if got := channel.closeCalls.Load(); got != 1 {
+		t.Fatalf("transport close calls = %d, want one natural-exit cleanup", got)
+	}
+}
+
+func awaitLifecycleSignal(t *testing.T, signal <-chan struct{}, name string) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-time.After(time.Second):
+		t.Fatalf("timed out waiting for %s", name)
 	}
 }

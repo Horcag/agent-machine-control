@@ -39,8 +39,8 @@ type shutdownAdmissionChannel struct {
 
 func (c *shutdownAdmissionChannel) Read([]byte) (int, error)                   { <-c.done; return 0, io.EOF }
 func (c *shutdownAdmissionChannel) Write(context.Context, []byte) (int, error) { return 0, nil }
-func (c *shutdownAdmissionChannel) SendControl(context.Context, domain.ControlKey) (int, error) {
-	return 1, nil
+func (c *shutdownAdmissionChannel) SendControl(context.Context, domain.ControlKey) (guestssh.ControlResult, error) {
+	return guestssh.ControlResult{AcceptedBytes: 1, EffectApplied: true}, nil
 }
 func (c *shutdownAdmissionChannel) Resize(uint16, uint16) error { return nil }
 func (c *shutdownAdmissionChannel) Close(ctx context.Context) error {

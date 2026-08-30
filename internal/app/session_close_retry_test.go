@@ -35,8 +35,8 @@ type retryCloseChannel struct {
 
 func (c *retryCloseChannel) Read([]byte) (int, error)                          { <-c.done; return 0, io.EOF }
 func (c *retryCloseChannel) Write(_ context.Context, data []byte) (int, error) { return len(data), nil }
-func (c *retryCloseChannel) SendControl(context.Context, domain.ControlKey) (int, error) {
-	return 1, nil
+func (c *retryCloseChannel) SendControl(context.Context, domain.ControlKey) (guestssh.ControlResult, error) {
+	return guestssh.ControlResult{AcceptedBytes: 1, EffectApplied: true}, nil
 }
 func (c *retryCloseChannel) Resize(uint16, uint16) error { return nil }
 func (c *retryCloseChannel) Wait() (int, error)          { <-c.done; return 0, nil }

@@ -81,8 +81,8 @@ func (s *SessionService) ControlSession(ctx context.Context, params SessionContr
 
 	flightKey := fmt.Sprintf("%s:%s:%s", params.Caller.EffectiveActor, target, params.IdempotencyKey)
 	_, rcpt, err := s.coordinateSessionMutation(ctx, op, flightKey, params.Approval, timeout, func(execCtx context.Context) (sessionMutationResult, error) {
-		bytesWritten, err := s.sessionMgr.Control(execCtx, params.SessionID, params.Caller, params.Key, params.Reason, params.IdempotencyKey)
-		return sessionMutationResult{BytesWritten: bytesWritten, EffectApplied: bytesWritten > 0}, err
+		controlResult, err := s.sessionMgr.Control(execCtx, params.SessionID, params.Caller, params.Key, params.Reason, params.IdempotencyKey)
+		return sessionMutationResult{BytesWritten: controlResult.AcceptedBytes, EffectApplied: controlResult.EffectApplied}, err
 	})
 	return rcpt, err
 }

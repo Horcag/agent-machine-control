@@ -85,9 +85,9 @@ func (c *deadlineCaptureChannel) Write(ctx context.Context, p []byte) (int, erro
 	c.parent.record(ctx, "write")
 	return len(p), nil
 }
-func (c *deadlineCaptureChannel) SendControl(ctx context.Context, _ domain.ControlKey) (int, error) {
+func (c *deadlineCaptureChannel) SendControl(ctx context.Context, _ domain.ControlKey) (guestssh.ControlResult, error) {
 	c.parent.record(ctx, "control")
-	return 1, nil
+	return guestssh.ControlResult{AcceptedBytes: 1, EffectApplied: true}, nil
 }
 func (c *deadlineCaptureChannel) Resize(uint16, uint16) error { return nil }
 func (c *deadlineCaptureChannel) Close(ctx context.Context) error {

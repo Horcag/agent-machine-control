@@ -39,11 +39,11 @@ func (c *acceptedControlCancelChannel) Read([]byte) (int, error) { <-c.done; ret
 func (c *acceptedControlCancelChannel) Write(_ context.Context, data []byte) (int, error) {
 	return len(data), nil
 }
-func (c *acceptedControlCancelChannel) SendControl(ctx context.Context, _ domain.ControlKey) (int, error) {
+func (c *acceptedControlCancelChannel) SendControl(ctx context.Context, _ domain.ControlKey) (guestssh.ControlResult, error) {
 	c.calls.Add(1)
 	c.cancel()
 	<-ctx.Done()
-	return 1, ctx.Err()
+	return guestssh.ControlResult{AcceptedBytes: 1, EffectApplied: true}, ctx.Err()
 }
 func (c *acceptedControlCancelChannel) Resize(uint16, uint16) error { return nil }
 func (c *acceptedControlCancelChannel) Close(context.Context) error {
@@ -51,6 +51,27 @@ func (c *acceptedControlCancelChannel) Close(context.Context) error {
 	return nil
 }
 func (c *acceptedControlCancelChannel) Wait() (int, error) { <-c.done; return 0, nil }
+
+type zeroByteAppliedControlChannel struct {
+	done  chan struct{}
+	calls atomic.Int32
+	once  sync.Once
+}
+
+func (c *zeroByteAppliedControlChannel) Read([]byte) (int, error) { <-c.done; return 0, io.EOF }
+func (c *zeroByteAppliedControlChannel) Write(_ context.Context, data []byte) (int, error) {
+	return len(data), nil
+}
+func (c *zeroByteAppliedControlChannel) SendControl(context.Context, domain.ControlKey) (guestssh.ControlResult, error) {
+	c.calls.Add(1)
+	return guestssh.ControlResult{EffectApplied: true}, nil
+}
+func (c *zeroByteAppliedControlChannel) Resize(uint16, uint16) error { return nil }
+func (c *zeroByteAppliedControlChannel) Close(context.Context) error {
+	c.once.Do(func() { close(c.done) })
+	return nil
+}
+func (c *zeroByteAppliedControlChannel) Wait() (int, error) { <-c.done; return 0, nil }
 
 type terminalCloseDeadlineChannel struct {
 	done  chan struct{}
@@ -64,8 +85,8 @@ func (c *terminalCloseDeadlineChannel) Read([]byte) (int, error) { <-c.done; ret
 func (c *terminalCloseDeadlineChannel) Write(_ context.Context, data []byte) (int, error) {
 	return len(data), nil
 }
-func (c *terminalCloseDeadlineChannel) SendControl(context.Context, domain.ControlKey) (int, error) {
-	return 1, nil
+func (c *terminalCloseDeadlineChannel) SendControl(context.Context, domain.ControlKey) (guestssh.ControlResult, error) {
+	return guestssh.ControlResult{AcceptedBytes: 1, EffectApplied: true}, nil
 }
 func (c *terminalCloseDeadlineChannel) Resize(uint16, uint16) error { return nil }
 func (c *terminalCloseDeadlineChannel) Close(context.Context) error {
@@ -185,6 +206,31 @@ func TestControlAcceptedBytesThenCancellationFinalizesEffectTruth(t *testing.T) 
 	retryReceipt, retryErr := h.svc.ControlSession(context.Background(), params)
 	if retryErr == nil || retryReceipt == nil || retryReceipt.ReceiptID != firstReceipt.ReceiptID {
 		t.Fatalf("exact retry = receipt %+v err %v, want identical failed durable truth", retryReceipt, retryErr)
+	}
+	if got := channel.calls.Load(); got != 1 {
+		t.Fatalf("control calls after exact retry = %d, want 1", got)
+	}
+}
+
+func TestControlZeroBytesAppliedIsDurableAndNotReplayed(t *testing.T) {
+	channel := &zeroByteAppliedControlChannel{done: make(chan struct{})}
+	h := newEffectTruthHarness(t, channel)
+	params := app.SessionControlParams{
+		SessionID: h.opened.ID, Caller: h.actor, Key: domain.ControlKeyCtrlC,
+		Reason: "control applied without payload bytes", IdempotencyKey: "effect-truth-zero-byte-control", Timeout: time.Second,
+	}
+	firstReceipt, firstErr := h.svc.ControlSession(context.Background(), params)
+	if firstErr != nil || firstReceipt == nil || firstReceipt.Outcome.Status != domain.OutcomeSuccess {
+		t.Fatalf("control receipt = %+v err %v, want success", firstReceipt, firstErr)
+	}
+	reservation := mutationReservationByKey(t, h.mutations, params.IdempotencyKey)
+	if reservation.Result.BytesWritten != 0 || reservation.Result.EffectApplied == nil || !*reservation.Result.EffectApplied {
+		t.Fatalf("durable control result = %+v, want zero accepted bytes and applied effect", reservation.Result)
+	}
+
+	retryReceipt, retryErr := h.svc.ControlSession(context.Background(), params)
+	if retryErr != nil || retryReceipt == nil || retryReceipt.ReceiptID != firstReceipt.ReceiptID {
+		t.Fatalf("exact retry = receipt %+v err %v, want identical success", retryReceipt, retryErr)
 	}
 	if got := channel.calls.Load(); got != 1 {
 		t.Fatalf("control calls after exact retry = %d, want 1", got)
