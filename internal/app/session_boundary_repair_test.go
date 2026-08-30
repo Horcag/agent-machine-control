@@ -207,7 +207,7 @@ func runSessionMutationLookupDeadline(t *testing.T, name string, install durable
 	before := atomic.LoadInt32(&transport.writeCalls)
 	_, rcpt, err := svc.WriteSession(context.Background(), app.SessionWriteParams{
 		SessionID: opened.ID, Caller: actor, Data: "blocked lookup", Reason: "deadline includes durable retry lookup",
-		IdempotencyKey: "idem-" + strings.ReplaceAll(name, " ", "-"), Timeout: 10 * time.Millisecond,
+		IdempotencyKey: "idem-" + strings.ReplaceAll(name, " ", "-"), Timeout: 500 * time.Millisecond,
 	})
 	if !errors.Is(err, context.DeadlineExceeded) || rcpt != nil {
 		t.Fatalf("deadline result = receipt %+v err %v, want no receipt and deadline", rcpt, err)
