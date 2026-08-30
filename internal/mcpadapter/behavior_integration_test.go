@@ -123,7 +123,7 @@ func resolveTestMCPBinary(t *testing.T) string {
 	binaryPath := filepath.Join(t.TempDir(), binaryName)
 	buildCmd := exec.Command("go", "build", "-o", binaryPath, "../../cmd/amc-mcp")
 	buildCmd.Dir = "."
-	buildCmd.Env = append(os.Environ(), "GOTOOLCHAIN=go1.26.6")
+	buildCmd.Env = append(os.Environ(), "GOTOOLCHAIN=go1.26.7")
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		t.Fatalf("failed to build amc-mcp binary: %v\nOutput: %s", err, string(out))
 	}
