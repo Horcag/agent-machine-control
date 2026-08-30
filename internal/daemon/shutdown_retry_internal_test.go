@@ -14,6 +14,8 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/app"
 	"github.com/Horcag/agent-machine-control/internal/domain"
 	guestssh "github.com/Horcag/agent-machine-control/internal/guest/ssh"
+	"github.com/Horcag/agent-machine-control/internal/statedir"
+	"github.com/Horcag/agent-machine-control/internal/target"
 )
 
 type retryShutdownBackend struct {
@@ -26,7 +28,13 @@ func (b *retryShutdownBackend) Doctor(context.Context) (app.DoctorReport, error)
 	return app.DoctorReport{}, nil
 }
 func (b *retryShutdownBackend) ListMachines(context.Context) ([]domain.MachineObservation, error) {
-	return nil, nil
+	locator, _ := domain.NewMachineLocator(domain.LocalHostID, "c4a523d4-6b99-4d62-a5e2-4752c0f20001")
+	return []domain.MachineObservation{{
+		HostID: domain.LocalHostID, Locator: locator, ID: locator.VMID, Name: "shutdown-test-vm",
+		State: domain.MachineStateOff, RawState: "Off", Generation: 2, Version: "10.0",
+		MemoryAssignedBytes: 1024, Capabilities: domain.DirectMachineCapabilities(),
+		ObservedAt: time.Now().UTC(), ObservationType: domain.ObservationObserved,
+	}}, nil
 }
 func (b *retryShutdownBackend) InspectMachine(context.Context, string) (domain.MachineObservation, error) {
 	return domain.MachineObservation{}, nil
@@ -64,11 +72,34 @@ func retryShutdownOperation(t *testing.T) domain.Operation {
 		t.Fatal(err)
 	}
 	return domain.Operation{
-		Kind: "machine.start", Target: "c4a523d4-6b99-4d62-a5e2-4752c0f20001", Actor: actor,
+		Kind: "machine.start", Target: "local:c4a523d4-6b99-4d62-a5e2-4752c0f20001", Actor: actor,
 		Reason: "exercise retryable shutdown ownership", Deadline: time.Now().Add(time.Minute),
 		IdempotencyKey: "shutdown-retry-operation", RequiredCapability: domain.CapabilityMachineStart,
 		RequiredScopes: []string{domain.ScopeMachineWrite}, Classification: domain.ClassReversibleMutation,
 		EvidenceSensitivity: domain.EvidenceSensitivityStandard,
+	}
+}
+
+func seedRetryShutdownTarget(t *testing.T, root string) {
+	t.Helper()
+	state, err := statedir.Resolve(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := target.NewStore(state.TargetsDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	locator, _ := domain.NewMachineLocator(domain.LocalHostID, "c4a523d4-6b99-4d62-a5e2-4752c0f20001")
+	value, err := target.NewDefault(locator, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Save(context.Background(), value); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -88,6 +119,7 @@ func assertShutdownOwnershipPresent(t *testing.T, server *Server, stateDir strin
 
 func TestServerShutdownRetainsOwnershipUntilBlockedOperationDrains(t *testing.T) {
 	stateDir := t.TempDir()
+	seedRetryShutdownTarget(t, stateDir)
 	backend := &retryShutdownBackend{started: make(chan struct{}), release: make(chan struct{})}
 	server, err := NewServer(Config{StateDir: stateDir, ListenAddr: "127.0.0.1:0", Backend: backend})
 	if err != nil {
@@ -220,6 +252,7 @@ func TestServerShutdownRetainsOwnershipForIncompleteSessionTransport(t *testing.
 
 func TestServerShutdownContinuesTeardownAfterTerminalFinalizationError(t *testing.T) {
 	stateDir := t.TempDir()
+	seedRetryShutdownTarget(t, stateDir)
 	backend := &retryShutdownBackend{started: make(chan struct{}), release: make(chan struct{})}
 	server, err := NewServer(Config{StateDir: stateDir, ListenAddr: "127.0.0.1:0", Backend: backend})
 	if err != nil {

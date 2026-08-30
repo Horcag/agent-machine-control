@@ -45,7 +45,7 @@ func TestServer_GlobalEvents_SSE(t *testing.T) {
 	}
 	defer postResp.Body.Close()
 
-	if !waitForSSEEventTarget(opResp.Body, domain.MachineRef(targetID)) {
+	if !waitForSSEEventTarget(opResp.Body, domain.MachineRef("local:"+targetID)) {
 		t.Errorf("expected to receive operation event on global SSE stream")
 	}
 }

@@ -349,6 +349,19 @@ func (i *TrustedInventory) ResolveMachine(reference string) (MachineIndexEntry, 
 	return i.selectOne(matches)
 }
 
+// ResolveSingleLocal returns the only current enabled local machine.
+func (i *TrustedInventory) ResolveSingleLocal() (MachineIndexEntry, error) {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	matches := make([]MachineIndexEntry, 0, 1)
+	for _, entry := range i.machines {
+		if entry.Locator.HostID == domain.LocalHostID {
+			matches = append(matches, entry)
+		}
+	}
+	return i.selectOne(matches)
+}
+
 func (i *TrustedInventory) resolveCanonical(locator domain.MachineLocator) (MachineIndexEntry, error) {
 	i.mu.RLock()
 	defer i.mu.RUnlock()

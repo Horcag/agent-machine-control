@@ -31,6 +31,7 @@ var (
 	ErrDifferentTarget       = errors.New("target: reference does not identify the enrolled target")
 	ErrHostSecurityUnproven  = errors.New("target: Windows host-path security could not be proven")
 	ErrAtomicCommitUncertain = errors.New("target: atomic replacement returned without effect truth")
+	ErrInventoryRefresh      = errors.New("target: local inventory refresh failed")
 )
 
 // Default is the complete persisted target authority. Display names are deliberately absent.

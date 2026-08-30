@@ -82,6 +82,7 @@ func (s *RecoveryService) executeMutation(
 	ctx context.Context,
 	op domain.Operation,
 	req MutationRequest,
+	providerTargetID string,
 	execFn func(context.Context) error,
 ) (domain.Receipt, error) {
 	execCtx, cancelExecution := s.mutationExecutionContext(ctx, op, req)
@@ -120,7 +121,7 @@ func (s *RecoveryService) executeMutation(
 	now := s.now()
 
 	// 3. Rollback discovery & 4. Policy evaluation & 5. Approval check
-	decision, rollbackRef, err := s.prepareAndAuthorizeMutation(ctx, op, req, now)
+	decision, rollbackRef, err := s.prepareAndAuthorizeMutation(ctx, op, req, providerTargetID, now)
 	if err != nil {
 		var deniedErr *PolicyDeniedError
 		if errors.As(err, &deniedErr) {
@@ -133,7 +134,7 @@ func (s *RecoveryService) executeMutation(
 	}
 
 	// 6. Host Lease Acquisition
-	releaseLease, err := s.acquireMutationLease(ctx, op, req, fp)
+	releaseLease, err := s.acquireMutationLease(ctx, op, req, providerTargetID, fp)
 	if err != nil {
 		return s.preProviderFailure(ctx, op, fp, decision, now, err, rollbackRef)
 	}
@@ -167,40 +168,6 @@ func (s *RecoveryService) executeMutation(
 	return s.finalizeMutation(receiptRecord, runErr, persistErr, releaseErr)
 }
 
-func (s *RecoveryService) prepareAndAuthorizeMutation(
-	ctx context.Context,
-	op domain.Operation,
-	req MutationRequest,
-	now time.Time,
-) (policy.Decision, string, error) {
-	rollbackState, rollbackRef, err := s.discoverRollback(ctx, op, req.TargetID)
-	if err != nil {
-		return policy.Decision{}, rollbackRef, err
-	}
-	decision, err := s.evaluateMutationPolicy(ctx, op, req, now, rollbackState)
-	if err != nil {
-		return decision, rollbackRef, err
-	}
-	if err := s.verifyApprovalUnconsumed(ctx, decision, req); err != nil {
-		return decision, rollbackRef, err
-	}
-	return decision, rollbackRef, nil
-}
-
-func runLifecycleHooks(ctx context.Context, req MutationRequest) error {
-	if req.OnAdmitted != nil {
-		if err := req.OnAdmitted(ctx); err != nil {
-			return err
-		}
-	}
-	if req.OnRunning != nil {
-		if err := req.OnRunning(ctx); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (s *RecoveryService) checkPreconditions(ctx context.Context, op domain.Operation) (*domain.Receipt, error) {
 	if s.receiptStore != nil {
 		// Durable terminal truth wins over caller cancellation for an exact retry.
@@ -229,13 +196,14 @@ func (s *RecoveryService) acquireMutationLease(
 	ctx context.Context,
 	op domain.Operation,
 	req MutationRequest,
+	providerTargetID string,
 	fp domain.Fingerprint,
 ) (func() error, error) {
 	if s.leaseManager == nil {
 		return func() error { return nil }, nil
 	}
 	leaseTTL := req.Timeout + 15*time.Second
-	l, err := s.leaseManager.Acquire(ctx, req.TargetID, string(op.Kind), string(fp), leaseTTL)
+	l, err := s.leaseManager.Acquire(ctx, providerTargetID, string(op.Kind), string(fp), leaseTTL)
 	if err != nil {
 		return nil, err
 	}
@@ -339,10 +307,11 @@ func (s *RecoveryService) evaluateMutationPolicy(
 	ctx context.Context,
 	op domain.Operation,
 	req MutationRequest,
+	providerTargetID string,
 	now time.Time,
 	rollback policy.RollbackState,
 ) (policy.Decision, error) {
-	caps, err := s.backend.Capabilities(ctx, req.TargetID)
+	caps, err := s.backend.Capabilities(ctx, providerTargetID)
 	if err != nil {
 		return policy.Decision{}, fmt.Errorf("app: failed to retrieve backend capabilities: %w", err)
 	}

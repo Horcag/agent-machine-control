@@ -62,7 +62,7 @@ func TestClient_AuditAndReceiptAndListFilters(t *testing.T) {
 	// 3. ListOperations with state and machine filters
 	list, err := cl.ListOperations(context.Background(), operations.ListOptions{
 		State:   domain.OpStateCompleted,
-		Machine: domain.MachineRef(targetID),
+		Machine: domain.MachineRef("local:" + targetID),
 		Limit:   5,
 	})
 	if err != nil {

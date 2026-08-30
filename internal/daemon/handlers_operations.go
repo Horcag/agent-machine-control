@@ -13,6 +13,7 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/domain"
 	"github.com/Horcag/agent-machine-control/internal/events"
 	"github.com/Horcag/agent-machine-control/internal/operations"
+	"github.com/Horcag/agent-machine-control/internal/target"
 )
 
 func (s *Server) handleCreateOperation(w http.ResponseWriter, r *http.Request) {
@@ -47,6 +48,12 @@ func (s *Server) handleCreateOperation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_argument", "invalid operation deadline")
 		return
 	}
+	canonicalTarget, err := s.recoveryService.ResolveTargetReference(r.Context(), req.Target)
+	if err != nil {
+		writeTargetResolutionError(w, err)
+		return
+	}
+	op.Target = canonicalTarget
 
 	rec, wasExisting, err := s.opMgr.Submit(r.Context(), op, timeout)
 	if err != nil {
@@ -73,6 +80,19 @@ func (s *Server) handleCreateOperation(w http.ResponseWriter, r *http.Request) {
 
 	dto := ConvertToOperationDTO(*rec)
 	writeJSON(w, status, dto)
+}
+
+func writeTargetResolutionError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, target.ErrNoDefault):
+		writeError(w, http.StatusConflict, "target_not_enrolled", "no target is enrolled; enroll a local target first")
+	case errors.Is(err, target.ErrDifferentTarget):
+		writeError(w, http.StatusBadRequest, "target_mismatch", "target reference does not identify the enrolled target")
+	case errors.Is(err, target.ErrInventoryRefresh), errors.Is(err, domain.ErrMachineHostUnavailable), errors.Is(err, domain.ErrMachineAccessDenied):
+		writeError(w, http.StatusServiceUnavailable, "target_unavailable", "enrolled target inventory is unavailable")
+	default:
+		writeError(w, http.StatusBadRequest, "invalid_target", "target reference is invalid or stale")
+	}
 }
 
 func (s *Server) handleListOperations(w http.ResponseWriter, r *http.Request) {

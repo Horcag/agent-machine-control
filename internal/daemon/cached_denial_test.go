@@ -28,7 +28,7 @@ func (c *countingBackend) Doctor(_ context.Context) (app.DoctorReport, error) {
 }
 
 func (c *countingBackend) ListMachines(_ context.Context) ([]domain.MachineObservation, error) {
-	return nil, nil
+	return []domain.MachineObservation{daemonTestObservation(daemonTestVMID)}, nil
 }
 
 func (c *countingBackend) InspectMachine(_ context.Context, _ string) (domain.MachineObservation, error) {
@@ -125,6 +125,7 @@ func getAuditTerminalCount(t *testing.T, stateDir string) int {
 }
 
 func startServerHelper(t *testing.T, dir string, be app.Backend) (*daemon.Server, string) {
+	seedDaemonTestTarget(t, dir, daemonTestVMID)
 	srv, err := daemon.NewServer(daemon.Config{
 		StateDir:   dir,
 		ListenAddr: "127.0.0.1:0",

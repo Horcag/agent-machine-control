@@ -26,6 +26,7 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/receipt"
 	"github.com/Horcag/agent-machine-control/internal/sessions"
 	"github.com/Horcag/agent-machine-control/internal/statedir"
+	"github.com/Horcag/agent-machine-control/internal/target"
 )
 
 type contextKey string
@@ -48,6 +49,7 @@ type Server struct {
 	receiptStore     *receipt.Store
 	approvalStore    *approval.Store
 	recoveryService  *app.RecoveryService
+	targetService    *app.TargetService
 	eventHub         *events.Hub
 	opMgr            *operations.Manager
 	sessionMgr       *sessions.Manager
@@ -133,8 +135,32 @@ func NewServer(cfg Config) (*Server, error) {
 	if backend == nil {
 		backend = hyperv.New()
 	}
+	inventory, err := app.NewTrustedInventory(nil)
+	if err != nil {
+		_ = lock.Release()
+		return nil, fmt.Errorf("daemon: failed to initialize trusted inventory: %w", err)
+	}
+	targetStore, err := target.NewStore(sd.TargetsDir())
+	if err != nil {
+		_ = lock.Release()
+		return nil, fmt.Errorf("daemon: failed to initialize target authority: %w", err)
+	}
+	refreshTarget := func(ctx context.Context) error {
+		_, refreshErr := app.RefreshTrustedInventory(ctx, inventory, func(host app.HostEntry) app.TrustedHostObserver {
+			if host.ID != domain.LocalHostID {
+				return nil
+			}
+			return backend
+		}, 1)
+		return refreshErr
+	}
+	targetService, err := app.NewTargetService(inventory, targetStore, app.WithTargetRefresh(refreshTarget))
+	if err != nil {
+		_ = lock.Release()
+		return nil, fmt.Errorf("daemon: failed to initialize target service: %w", err)
+	}
 
-	recoverySvc := app.NewRecoveryService(backend, leaseMgr, auditStore, receiptStore, approvalStore)
+	recoverySvc := app.NewRecoveryService(backend, leaseMgr, auditStore, receiptStore, approvalStore, app.WithRecoveryTargetResolver(targetService))
 	opMgr := operations.NewManager(sd.OperationsDir(), recoverySvc, receiptStore, auditStore, eventHub)
 
 	keyProvider := cfg.KeyProvider
@@ -167,6 +193,7 @@ func NewServer(cfg Config) (*Server, error) {
 		receiptStore:     receiptStore,
 		approvalStore:    approvalStore,
 		recoveryService:  recoverySvc,
+		targetService:    targetService,
 		eventHub:         eventHub,
 		opMgr:            opMgr,
 		sessionMgr:       sessionMgr,

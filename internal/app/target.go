@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"slices"
@@ -9,6 +11,19 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/domain"
 	"github.com/Horcag/agent-machine-control/internal/target"
 )
+
+// TargetRefresh performs one caller-bounded read-only inventory refresh.
+type TargetRefresh func(context.Context) error
+
+// TargetOption configures TargetService dependencies.
+type TargetOption func(*TargetService)
+
+// WithTargetRefresh injects the fresh inventory boundary used before every public target interaction.
+func WithTargetRefresh(refresh TargetRefresh) TargetOption {
+	return func(service *TargetService) {
+		service.refresh = refresh
+	}
+}
 
 // TargetResolution separates canonical policy identity from the provider GUID boundary.
 type TargetResolution struct {
@@ -36,14 +51,95 @@ func (r TargetResolution) Validate() error {
 type TargetService struct {
 	inventory *TrustedInventory
 	store     *target.Store
+	refresh   TargetRefresh
 }
 
 // NewTargetService constructs the shared non-transport target seam.
-func NewTargetService(inventory *TrustedInventory, store *target.Store) (*TargetService, error) {
+func NewTargetService(inventory *TrustedInventory, store *target.Store, options ...TargetOption) (*TargetService, error) {
 	if inventory == nil || store == nil {
 		return nil, errors.New("app: target service requires inventory and store")
 	}
-	return &TargetService{inventory: inventory, store: store}, nil
+	service := &TargetService{inventory: inventory, store: store, refresh: func(context.Context) error { return nil }}
+	for _, option := range options {
+		option(service)
+	}
+	if service.refresh == nil {
+		return nil, errors.New("app: target service requires a refresh dependency")
+	}
+	return service, nil
+}
+
+// TargetPlan is an immutable logical target-authority transition prepared from fresh inventory.
+type TargetPlan struct {
+	Kind       domain.OperationKind
+	Resolution TargetResolution
+	Prior      *target.Default
+	Desired    *target.Default
+	StateHash  string
+	AliasCount int
+}
+
+// PrepareEnrollDefaultTarget resolves and validates enrollment without changing durable authority.
+func (s *TargetService) PrepareEnrollDefaultTarget(ctx context.Context, reference string, aliases []string) (TargetPlan, error) {
+	if err := s.refreshInventory(ctx); err != nil {
+		return TargetPlan{}, err
+	}
+	var entry MachineIndexEntry
+	var err error
+	if reference == "" {
+		entry, err = s.inventory.ResolveSingleLocal()
+	} else {
+		entry, err = s.inventory.ResolveMachine(reference)
+	}
+	if err != nil {
+		return TargetPlan{}, err
+	}
+	if entry.Locator.HostID != domain.LocalHostID {
+		return TargetPlan{}, target.ErrUnsupportedHost
+	}
+	desired, err := target.NewDefault(entry.Locator, aliases)
+	if err != nil {
+		return TargetPlan{}, err
+	}
+	if err := s.inventory.ValidateMachineAliases(desired.Locator, desired.Aliases); err != nil {
+		return TargetPlan{}, err
+	}
+	resolution, err := resolutionFromEntry(entry)
+	if err != nil {
+		return TargetPlan{}, err
+	}
+	prior, err := s.loadOptional(ctx)
+	if err != nil {
+		return TargetPlan{}, err
+	}
+	return newTargetPlan("target.enroll", resolution, prior, &desired), nil
+}
+
+// PrepareClearDefaultTarget validates a clear transition without changing durable authority.
+func (s *TargetService) PrepareClearDefaultTarget(ctx context.Context) (TargetPlan, error) {
+	if err := s.refreshInventory(ctx); err != nil {
+		return TargetPlan{}, err
+	}
+	prior, err := s.store.Load(ctx)
+	if err != nil {
+		return TargetPlan{}, err
+	}
+	resolution, err := s.resolveCanonical(ctx, prior.Locator)
+	if err != nil {
+		return TargetPlan{}, err
+	}
+	return newTargetPlan("target.clear", resolution, &prior, nil), nil
+}
+
+// CommitTargetPlan applies one previously prepared immutable authority transition.
+func (s *TargetService) CommitTargetPlan(ctx context.Context, plan TargetPlan) (target.Publication, error) {
+	if err := validateTargetPlan(plan); err != nil {
+		return target.Publication{}, err
+	}
+	if plan.Desired == nil {
+		return s.store.Clear(ctx)
+	}
+	return s.store.Save(ctx, plan.Desired.Clone())
 }
 
 // EnrollDefaultTarget resolves one observed local VM and atomically persists only its canonical identity.
@@ -52,34 +148,17 @@ func (s *TargetService) EnrollDefaultTarget(
 	reference string,
 	aliases []string,
 ) (TargetResolution, target.Publication, error) {
-	if err := ctx.Err(); err != nil {
-		return TargetResolution{}, target.Publication{}, err
-	}
-	entry, err := s.inventory.ResolveMachine(reference)
+	plan, err := s.PrepareEnrollDefaultTarget(ctx, reference, aliases)
 	if err != nil {
 		return TargetResolution{}, target.Publication{}, err
 	}
-	if entry.Locator.HostID != domain.LocalHostID {
-		return TargetResolution{}, target.Publication{}, target.ErrUnsupportedHost
-	}
-	value, err := target.NewDefault(entry.Locator, aliases)
-	if err != nil {
-		return TargetResolution{}, target.Publication{}, err
-	}
-	if err := s.inventory.ValidateMachineAliases(value.Locator, value.Aliases); err != nil {
-		return TargetResolution{}, target.Publication{}, err
-	}
-	resolution, err := resolutionFromEntry(entry)
-	if err != nil {
-		return TargetResolution{}, target.Publication{}, err
-	}
-	publication, err := s.store.Save(ctx, value)
-	return resolution, publication, err
+	publication, err := s.CommitTargetPlan(ctx, plan)
+	return plan.Resolution, publication, err
 }
 
 // ResolveTarget resolves default, stored alias, or an exact inventory reference to the enrolled identity.
 func (s *TargetService) ResolveTarget(ctx context.Context, reference string) (TargetResolution, error) {
-	if err := ctx.Err(); err != nil {
+	if err := s.refreshInventory(ctx); err != nil {
 		return TargetResolution{}, err
 	}
 	value, err := s.store.Load(ctx)
@@ -89,6 +168,11 @@ func (s *TargetService) ResolveTarget(ctx context.Context, reference string) (Ta
 
 	locator := value.Locator
 	if reference != "" && reference != "default" && !slices.Contains(value.Aliases, reference) {
+		if _, err := domain.ParseMachineLocator(reference); err != nil {
+			if _, err := domain.NormalizeMachineGUID(reference); err != nil {
+				return TargetResolution{}, target.ErrDifferentTarget
+			}
+		}
 		entry, err := s.inventory.ResolveMachine(reference)
 		if err != nil {
 			return TargetResolution{}, err
@@ -107,7 +191,89 @@ func (s *TargetService) ShowDefaultTarget(ctx context.Context) (TargetResolution
 
 // ClearDefaultTarget removes the canonical target authority.
 func (s *TargetService) ClearDefaultTarget(ctx context.Context) (target.Publication, error) {
-	return s.store.Clear(ctx)
+	plan, err := s.PrepareClearDefaultTarget(ctx)
+	if err != nil {
+		return target.Publication{}, err
+	}
+	return s.CommitTargetPlan(ctx, plan)
+}
+
+func (s *TargetService) refreshInventory(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := s.refresh(ctx); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return target.ErrInventoryRefresh
+	}
+	return ctx.Err()
+}
+
+func (s *TargetService) loadOptional(ctx context.Context) (*target.Default, error) {
+	value, err := s.store.Load(ctx)
+	if errors.Is(err, target.ErrNoDefault) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	clone := value.Clone()
+	return &clone, nil
+}
+
+func newTargetPlan(kind domain.OperationKind, resolution TargetResolution, prior, desired *target.Default) TargetPlan {
+	plan := TargetPlan{Kind: kind, Resolution: resolution, Prior: cloneDefault(prior), Desired: cloneDefault(desired)}
+	if desired != nil {
+		plan.AliasCount = len(desired.Aliases)
+	}
+	plan.StateHash = targetStateHash(prior, desired)
+	return plan
+}
+
+func cloneDefault(value *target.Default) *target.Default {
+	if value == nil {
+		return nil
+	}
+	clone := value.Clone()
+	return &clone
+}
+
+func targetStateHash(prior, desired *target.Default) string {
+	hash := sha256.New()
+	for _, value := range []*target.Default{prior, desired} {
+		if value == nil {
+			hash.Write([]byte("absent\x00"))
+			continue
+		}
+		hash.Write([]byte(value.Locator.String()))
+		hash.Write([]byte{0})
+		for _, alias := range value.Aliases {
+			digest := sha256.Sum256([]byte(alias))
+			hash.Write(digest[:])
+		}
+	}
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func validateTargetPlan(plan TargetPlan) error {
+	if plan.Kind != "target.enroll" && plan.Kind != "target.clear" {
+		return domain.ErrInvalidOperationKind
+	}
+	if err := plan.Resolution.Validate(); err != nil {
+		return err
+	}
+	if plan.StateHash != targetStateHash(plan.Prior, plan.Desired) {
+		return errors.New("app: target plan identity mismatch")
+	}
+	if plan.Kind == "target.enroll" && plan.Desired == nil {
+		return errors.New("app: enroll plan requires desired state")
+	}
+	if plan.Kind == "target.clear" && (plan.Prior == nil || plan.Desired != nil) {
+		return errors.New("app: clear plan requires prior state and absent desired state")
+	}
+	return nil
 }
 
 func (s *TargetService) resolveCanonical(ctx context.Context, locator domain.MachineLocator) (TargetResolution, error) {

@@ -15,7 +15,11 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/daemon"
 	"github.com/Horcag/agent-machine-control/internal/domain"
 	"github.com/Horcag/agent-machine-control/internal/operations"
+	"github.com/Horcag/agent-machine-control/internal/statedir"
+	"github.com/Horcag/agent-machine-control/internal/target"
 )
+
+const clientTestVMID = "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
 
 type mockBackend struct{}
 
@@ -24,7 +28,13 @@ func (m *mockBackend) Doctor(_ context.Context) (app.DoctorReport, error) {
 }
 
 func (m *mockBackend) ListMachines(_ context.Context) ([]domain.MachineObservation, error) {
-	return nil, nil
+	locator, _ := domain.NewMachineLocator(domain.LocalHostID, clientTestVMID)
+	return []domain.MachineObservation{{
+		HostID: domain.LocalHostID, Locator: locator, ID: clientTestVMID, Name: "client-test-vm",
+		State: domain.MachineStateOff, RawState: "Off", Generation: 2, Version: "10.0",
+		MemoryAssignedBytes: 1024, Capabilities: domain.DirectMachineCapabilities(),
+		ObservedAt: time.Date(2026, 8, 31, 4, 0, 0, 0, time.UTC), ObservationType: domain.ObservationObserved,
+	}}, nil
 }
 
 func (m *mockBackend) InspectMachine(_ context.Context, _ string) (domain.MachineObservation, error) {
@@ -67,6 +77,22 @@ func (m *mockBackend) RestoreCheckpoint(_ context.Context, _ string, _ string) (
 
 func setupDaemon(t *testing.T) (*daemon.Server, string) {
 	dir := t.TempDir()
+	state, err := statedir.Resolve(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := target.NewStore(state.TargetsDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	locator, _ := domain.NewMachineLocator(domain.LocalHostID, clientTestVMID)
+	value, _ := target.NewDefault(locator, nil)
+	if _, err := store.Save(context.Background(), value); err != nil {
+		t.Fatal(err)
+	}
 	srv, err := daemon.NewServer(daemon.Config{
 		StateDir:   dir,
 		ListenAddr: "127.0.0.1:0",

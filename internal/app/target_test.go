@@ -102,11 +102,14 @@ func TestTargetServiceEnrollRestartAndResolveExactReferences(t *testing.T) {
 		t.Fatalf("NewStore restart: %v", err)
 	}
 	reopened := targetService(t, inventory, reopenedStore)
-	for _, reference := range []string{"", "default", "primary", observation.ID, observation.Locator.String(), observation.Name} {
+	for _, reference := range []string{"", "default", "primary", observation.ID, observation.Locator.String()} {
 		got, err := reopened.ResolveTarget(context.Background(), reference)
 		if err != nil || got.Locator != observation.Locator || got.ProviderVMID != observation.ID {
 			t.Fatalf("ResolveTarget(%q) = %+v, %v", reference, got, err)
 		}
+	}
+	if _, err := reopened.ResolveTarget(context.Background(), observation.Name); !errors.Is(err, target.ErrDifferentTarget) {
+		t.Fatalf("display-name reference error = %v", err)
 	}
 
 	other := targetObservation(t, domain.LocalHostID, targetVMB, "vm-bravo")
@@ -115,6 +118,56 @@ func TestTargetServiceEnrollRestartAndResolveExactReferences(t *testing.T) {
 	}
 	if _, err := reopened.ResolveTarget(context.Background(), other.ID); !errors.Is(err, target.ErrDifferentTarget) {
 		t.Fatalf("other target error = %v", err)
+	}
+}
+
+func TestTargetServiceRefreshesAndPreparesZeroReferenceWithoutStoreEffect(t *testing.T) {
+	observation := targetObservation(t, domain.LocalHostID, targetVMA, "vm-alpha")
+	inventory := targetInventory(t, nil)
+	store, _ := targetStore(t)
+	refreshes := 0
+	service, err := NewTargetService(inventory, store, WithTargetRefresh(func(context.Context) error {
+		refreshes++
+		return inventory.ApplySnapshot(HostSnapshot{HostID: domain.LocalHostID, Health: HostHealthObserved, Machines: []domain.MachineObservation{observation}})
+	}))
+	if err != nil {
+		t.Fatalf("NewTargetService: %v", err)
+	}
+	plan, err := service.PrepareEnrollDefaultTarget(context.Background(), "", []string{"primary"})
+	if err != nil {
+		t.Fatalf("PrepareEnrollDefaultTarget: %v", err)
+	}
+	if refreshes != 1 || plan.Resolution.Locator != observation.Locator || plan.Desired == nil || plan.StateHash == "" {
+		t.Fatalf("plan = %+v refreshes=%d", plan, refreshes)
+	}
+	if _, err := store.Load(context.Background()); !errors.Is(err, target.ErrNoDefault) {
+		t.Fatalf("prepare changed store: %v", err)
+	}
+	publication, err := service.CommitTargetPlan(context.Background(), plan)
+	if err != nil || !publication.Committed || !publication.Durable {
+		t.Fatalf("CommitTargetPlan = %+v, %v", publication, err)
+	}
+	if _, err := service.ResolveTarget(context.Background(), "default"); err != nil || refreshes != 2 {
+		t.Fatalf("ResolveTarget refreshes=%d err=%v", refreshes, err)
+	}
+}
+
+func TestTargetServiceZeroReferenceFailsClosedForFreshAmbiguity(t *testing.T) {
+	one := targetObservation(t, domain.LocalHostID, targetVMA, "vm-alpha")
+	two := targetObservation(t, domain.LocalHostID, targetVMB, "vm-bravo")
+	inventory := targetInventory(t, nil)
+	store, _ := targetStore(t)
+	service, err := NewTargetService(inventory, store, WithTargetRefresh(func(context.Context) error {
+		return inventory.ApplySnapshot(HostSnapshot{HostID: domain.LocalHostID, Health: HostHealthObserved, Machines: []domain.MachineObservation{one, two}})
+	}))
+	if err != nil {
+		t.Fatalf("NewTargetService: %v", err)
+	}
+	if _, err := service.PrepareEnrollDefaultTarget(context.Background(), "", nil); !errors.Is(err, domain.ErrMachineReferenceAmbig) {
+		t.Fatalf("PrepareEnrollDefaultTarget error = %v", err)
+	}
+	if _, err := store.Load(context.Background()); !errors.Is(err, target.ErrNoDefault) {
+		t.Fatalf("ambiguous prepare changed store: %v", err)
 	}
 }
 
@@ -133,7 +186,7 @@ func TestTargetServiceDisplayNameRecreationDoesNotRetarget(t *testing.T) {
 	if _, err := service.ShowDefaultTarget(context.Background()); !errors.Is(err, domain.ErrMachineReferenceStale) {
 		t.Fatalf("ShowDefaultTarget error = %v", err)
 	}
-	if _, err := service.ResolveTarget(context.Background(), original.Name); !errors.Is(err, domain.ErrMachineReferenceAmbig) {
+	if _, err := service.ResolveTarget(context.Background(), original.Name); !errors.Is(err, target.ErrDifferentTarget) {
 		t.Fatalf("display-name resolution error = %v", err)
 	}
 }
