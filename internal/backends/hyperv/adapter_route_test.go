@@ -119,13 +119,25 @@ func TestExplicitRemoteHostRouteRejectsLocalID(t *testing.T) {
 	}
 }
 
-func TestAdapterRejectsNonCanonicalRemoteRouteBeforeExecutor(t *testing.T) {
+func TestAdapterRejectsInvalidRemoteRouteBeforeExecutor(t *testing.T) {
 	tests := []struct {
 		name    string
 		host    app.HostEntry
 		route   hyperv.HostRoute
 		wantErr error
 	}{
+		{
+			name:    "local host ID",
+			host:    app.HostEntry{ID: domain.LocalHostID, Address: "local", Enabled: true},
+			route:   hyperv.HostRoute{HostID: domain.LocalHostID, Address: "trusted-host.example", Remote: true},
+			wantErr: domain.ErrInvalidHostID,
+		},
+		{
+			name:    "empty host ID",
+			host:    app.HostEntry{Address: "trusted-host.example", Enabled: true},
+			route:   hyperv.HostRoute{Address: "trusted-host.example", Remote: true},
+			wantErr: domain.ErrInvalidHostID,
+		},
 		{
 			name:    "padded host ID",
 			host:    app.HostEntry{ID: " host-a ", Address: "trusted-host.example", Enabled: true},
@@ -156,6 +168,9 @@ func TestAdapterRejectsNonCanonicalRemoteRouteBeforeExecutor(t *testing.T) {
 			)
 			if _, err := adapter.ListMachines(context.Background()); !errors.Is(err, tt.wantErr) {
 				t.Fatalf("ListMachines expected %v, got %v", tt.wantErr, err)
+			}
+			if caps, err := adapter.Capabilities(context.Background(), "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa"); !errors.Is(err, tt.wantErr) || caps != nil {
+				t.Fatalf("Capabilities = %v, %v; want nil, %v", caps, err, tt.wantErr)
 			}
 		})
 	}

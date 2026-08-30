@@ -39,20 +39,26 @@ func ExplicitRemoteHostRoute(host app.HostEntry) (HostRoute, error) {
 	return HostRoute{HostID: host.ID, Address: host.Address, Remote: true}, nil
 }
 
-func (r HostRoute) validate() error {
+func (r HostRoute) validated() (HostRoute, error) {
+	if r.Remote && (r.HostID == "" || r.HostID == domain.LocalHostID) {
+		return HostRoute{}, fmt.Errorf("%w: remote route requires an explicit non-local host ID", domain.ErrInvalidHostID)
+	}
 	if r.HostID == "" {
 		r.HostID = domain.LocalHostID
 	}
 	if err := r.HostID.Validate(); err != nil {
-		return err
+		return HostRoute{}, err
 	}
 	if r.Remote {
-		return domain.ValidateHostAddress(r.Address)
+		if err := domain.ValidateHostAddress(r.Address); err != nil {
+			return HostRoute{}, err
+		}
+		return r, nil
 	}
 	if r.Address != "" {
-		return fmt.Errorf("%w: local route cannot carry a remote address", domain.ErrInvalidHostAddress)
+		return HostRoute{}, fmt.Errorf("%w: local route cannot carry a remote address", domain.ErrInvalidHostAddress)
 	}
-	return nil
+	return r, nil
 }
 
 // Adapter provides read-only observation queries against local Hyper-V via PowerShell.
@@ -134,11 +140,8 @@ func (a *Adapter) resolveExecutable() (string, error) {
 }
 
 func (a *Adapter) command(script string, env []string) ([]string, []string, error) {
-	route := a.route
-	if route.HostID == "" {
-		route = LocalHostRoute()
-	}
-	if err := route.validate(); err != nil {
+	route, err := a.route.validated()
+	if err != nil {
 		return nil, nil, err
 	}
 	if route.Remote {
@@ -293,11 +296,8 @@ func (a *Adapter) InspectMachine(ctx context.Context, id string) (domain.Machine
 }
 
 func (a *Adapter) withRoute(machines []domain.MachineObservation) ([]domain.MachineObservation, error) {
-	route := a.route
-	if route.HostID == "" {
-		route = LocalHostRoute()
-	}
-	if err := route.validate(); err != nil {
+	route, err := a.route.validated()
+	if err != nil {
 		return nil, err
 	}
 	for idx := range machines {

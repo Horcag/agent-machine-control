@@ -10,14 +10,22 @@ import (
 
 // Capabilities returns the capability set supported by the Hyper-V adapter for the target.
 func (a *Adapter) Capabilities(_ context.Context, _ string) (domain.CapabilitySet, error) {
-	if a.route.Remote {
+	route, err := a.route.validated()
+	if err != nil {
+		return nil, err
+	}
+	if route.Remote {
 		return domain.ReadOnlyMachineCapabilities(), nil
 	}
 	return domain.DirectMachineCapabilities(), nil
 }
 
 func (a *Adapter) rejectRemotePrivilegedRoute() error {
-	if a.route.Remote {
+	route, err := a.route.validated()
+	if err != nil {
+		return err
+	}
+	if route.Remote {
 		return ErrRemoteRouteReadOnly
 	}
 	return nil
