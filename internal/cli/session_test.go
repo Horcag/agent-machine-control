@@ -27,12 +27,21 @@ func handleMockCLIGet(w http.ResponseWriter, r *http.Request, sessID string) boo
 		})
 		return true
 	case "/v1/sessions/" + sessID:
+		exitCode := 0
 		_ = json.NewEncoder(w).Encode(daemon.SessionOpenResponse{
 			SchemaVersion: "1",
 			Session: daemon.SessionDTO{
-				SessionID: sessID,
-				Target:    "c4a523d4-6b99-4d62-a5e2-4752c0f20001",
-				State:     "active",
+				SessionID:    sessID,
+				Target:       "c4a523d4-6b99-4d62-a5e2-4752c0f20001",
+				OwnerActor:   "agent:test",
+				State:        "active",
+				Cols:         80,
+				Rows:         24,
+				TermType:     "xterm-256color",
+				BytesRead:    128,
+				BytesWritten: 64,
+				CreatedAt:    "2026-08-31T00:00:00Z",
+				ExitCode:     &exitCode,
 			},
 		})
 		return true
@@ -299,9 +308,38 @@ func TestCLISession_HumanOutputAndFlags(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
+	code = app.RunWithContext(ctx, []string{"session", "show", sessID}, &stdout, &stderr)
+	if code != cli.ExitSuccess {
+		t.Fatalf("session show human failed: %d, stderr: %s", code, stderr.String())
+	}
+	for _, want := range []string{"Owner Actor:       agent:test", "Dimensions:        80x24 (xterm-256color)", "Exit Code:         0"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("session show human output missing %q: %s", want, stdout.String())
+		}
+	}
+
+	stdout.Reset()
+	stderr.Reset()
 	code = app.RunWithContext(ctx, []string{"session", "close", sessID, "--reason", "finished"}, &stdout, &stderr)
 	if code != cli.ExitSuccess {
 		t.Fatalf("session close human failed: %d, stderr: %s", code, stderr.String())
+	}
+}
+
+func TestCLISessionCloseRejectsMissingApprovalFileBeforeRequest(t *testing.T) {
+	stateDir, server := setupTestCLIState(t)
+	defer server.Close()
+
+	app := cli.NewApp(nil, cli.WithStateDir(stateDir))
+	sessID := "sess-a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
+	missingApproval := t.TempDir() + "/missing-approval.json"
+	var stdout, stderr bytes.Buffer
+	code := app.Run([]string{"session", "close", sessID, "--approval-file", missingApproval}, &stdout, &stderr)
+	if code != cli.ExitDenied {
+		t.Fatalf("missing close approval exit=%d, want %d; stderr=%s", code, cli.ExitDenied, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "invalid approval file") {
+		t.Fatalf("missing close approval error=%q", stderr.String())
 	}
 }
 

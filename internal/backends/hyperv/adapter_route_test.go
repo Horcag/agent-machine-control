@@ -119,6 +119,28 @@ func TestExplicitRemoteHostRouteRejectsLocalID(t *testing.T) {
 	}
 }
 
+func TestZeroHostRouteDefaultsToLocalCapabilities(t *testing.T) {
+	adapter := hyperv.New(hyperv.WithHostRoute(hyperv.HostRoute{}))
+	caps, err := adapter.Capabilities(context.Background(), "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")
+	if err != nil {
+		t.Fatalf("zero local route capabilities: %v", err)
+	}
+	if !slices.Equal(caps.Slice(), domain.DirectMachineCapabilities().Slice()) {
+		t.Fatalf("zero local route capabilities = %v, want direct capabilities", caps.Slice())
+	}
+}
+
+func TestLocalRouteRejectsRemoteAddressBeforeCapabilities(t *testing.T) {
+	adapter := hyperv.New(hyperv.WithHostRoute(hyperv.HostRoute{
+		HostID:  domain.LocalHostID,
+		Address: "trusted-host.example",
+	}))
+	caps, err := adapter.Capabilities(context.Background(), "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")
+	if !errors.Is(err, domain.ErrInvalidHostAddress) || caps != nil {
+		t.Fatalf("local route with remote address capabilities = %v, %v; want nil, %v", caps, err, domain.ErrInvalidHostAddress)
+	}
+}
+
 func TestAdapterRejectsInvalidRemoteRouteBeforeExecutor(t *testing.T) {
 	tests := []struct {
 		name    string
