@@ -10,6 +10,18 @@ const (
 	MaxActorIDLength = 256
 	// MinActorIDLength is the minimum allowed length of an actor identifier.
 	MinActorIDLength = 1
+
+	// Scopes for machine, audit, operation, and persistent sessions.
+	ScopeMachineRead     = "machine:read"
+	ScopeMachineWrite    = "machine:write"
+	ScopeAuditRead       = "audit:read"
+	ScopeOperationCancel = "operation:cancel"
+	ScopeSessionRead     = "session:read"
+	ScopeSessionWrite    = "session:write"
+	ScopeSessionOpen     = "session:open"
+	ScopeSessionClose    = "session:close"
+	ScopeSessionAdmin    = "session:admin"
+	ScopeEvidenceCapture = "evidence:sensitive:capture"
 )
 
 // ActorID is a strongly typed, validated principal identifier.

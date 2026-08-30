@@ -124,6 +124,11 @@ func ConvertFromDTO(dto DTO) (domain.Receipt, error) {
 // Option configures Store dependencies.
 type Option func(*Store)
 
+// WithSaveHook injects a pre-save failure hook for deterministic durability tests.
+func WithSaveHook(fn func(domain.Receipt) error) Option {
+	return func(s *Store) { s.saveHook = fn }
+}
+
 // WithSyncDir configures a custom directory sync function on Store.
 func WithSyncDir(fn func(dir string) error) Option {
 	return func(s *Store) {
@@ -135,6 +140,7 @@ func WithSyncDir(fn func(dir string) error) Option {
 type Store struct {
 	dir       string
 	syncDirFn func(dir string) error
+	saveHook  func(domain.Receipt) error
 	mu        sync.RWMutex
 }
 
@@ -150,6 +156,25 @@ func NewStore(dir string, opts ...Option) *Store {
 	return s
 }
 
+// CheckWritable verifies that a new durable receipt can be created in the store.
+func (s *Store) CheckWritable() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	probe := filepath.Join(s.dir, fmt.Sprintf(".write-test-%d", time.Now().UnixNano()))
+	f, err := os.OpenFile(probe, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(probe)
+		return err
+	}
+	if err := os.Remove(probe); err != nil {
+		return err
+	}
+	return statedir.SyncDir(s.dir)
+}
+
 // MaxReceiptFileSize is the maximum allowed receipt file size (64 KB).
 const MaxReceiptFileSize = 64 * 1024
 
@@ -157,6 +182,11 @@ const MaxReceiptFileSize = 64 * 1024
 func (s *Store) Save(r domain.Receipt) error {
 	if err := r.Validate(); err != nil {
 		return fmt.Errorf("receipt: cannot save invalid receipt: %w", err)
+	}
+	if s.saveHook != nil {
+		if err := s.saveHook(r); err != nil {
+			return err
+		}
 	}
 
 	s.mu.Lock()

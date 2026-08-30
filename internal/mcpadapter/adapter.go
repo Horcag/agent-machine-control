@@ -280,6 +280,46 @@ func (a *Adapter) BuildServer() *mcp.Server {
 		Description: "Show execution receipt details",
 	}, a.ReceiptShow)
 
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "session_open",
+		Description: "Open a persistent SSH pseudo-terminal session with a guest VM",
+	}, a.SessionOpen)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "session_read",
+		Description: "Read output chunks from a persistent terminal session",
+	}, a.SessionRead)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "session_write",
+		Description: "Write input data to a persistent terminal session",
+	}, a.SessionWrite)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "session_control",
+		Description: "Send a control key (ctrl-c, ctrl-d, enter, etc.) to a session",
+	}, a.SessionControl)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "session_wait",
+		Description: "Wait for output settle or regex match on a session",
+	}, a.SessionWait)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "session_list",
+		Description: "List active persistent terminal sessions",
+	}, a.SessionList)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "session_show",
+		Description: "Show details of a persistent terminal session",
+	}, a.SessionShow)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "session_close",
+		Description: "Close a persistent terminal session",
+	}, a.SessionClose)
+
 	return server
 }
 

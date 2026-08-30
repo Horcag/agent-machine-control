@@ -36,6 +36,15 @@ const (
 
 	// SubdirOperations is the subdirectory name for durable operation records.
 	SubdirOperations = "operations"
+
+	// SubdirSessions is the subdirectory name for persistent terminal session state and transcripts.
+	SubdirSessions = "sessions"
+
+	// SubdirKeys is the subdirectory name for local guest private key files.
+	SubdirKeys = "keys"
+
+	// SubdirMachines is the subdirectory name for per-machine connection and host-key configurations.
+	SubdirMachines = "machines"
 )
 
 var (
@@ -89,6 +98,9 @@ func (s *StateDir) EnsureDirs() error {
 		s.DaemonDir(),
 		s.AuthDir(),
 		s.OperationsDir(),
+		s.SessionsDir(),
+		s.KeysDir(),
+		s.MachinesDir(),
 	}
 
 	for _, dir := range subdirs {
@@ -217,6 +229,21 @@ func (s *StateDir) AuthDir() string {
 // OperationsDir returns the path to the operations subdirectory.
 func (s *StateDir) OperationsDir() string {
 	return filepath.Join(s.root, SubdirOperations)
+}
+
+// SessionsDir returns the path to the sessions subdirectory.
+func (s *StateDir) SessionsDir() string {
+	return filepath.Join(s.root, SubdirSessions)
+}
+
+// KeysDir returns the path to the keys subdirectory.
+func (s *StateDir) KeysDir() string {
+	return filepath.Join(s.root, SubdirKeys)
+}
+
+// MachinesDir returns the path to the machines subdirectory.
+func (s *StateDir) MachinesDir() string {
+	return filepath.Join(s.root, SubdirMachines)
 }
 
 func defaultStateDir() (string, error) {

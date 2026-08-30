@@ -1900,5 +1900,1186 @@
       ],
       "type": "object"
     }
+  },
+  {
+    "description": "Close a persistent terminal session",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "force": {
+          "description": "Force close immediately",
+          "type": "boolean"
+        },
+        "idempotency_key": {
+          "description": "Idempotency key",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Reason for closing session",
+          "type": "string"
+        },
+        "session_id": {
+          "description": "Session ID",
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Operation timeout (e.g. 30s, 5m)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "reason",
+        "idempotency_key",
+        "timeout"
+      ],
+      "type": "object"
+    },
+    "name": "session_close",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "receipt": {
+          "additionalProperties": false,
+          "properties": {
+            "actor": {
+              "type": "string"
+            },
+            "class": {
+              "type": "string"
+            },
+            "completed_at": {
+              "type": "string"
+            },
+            "effective_backend": {
+              "type": "string"
+            },
+            "evidence_refs": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "fingerprint": {
+              "type": "string"
+            },
+            "idempotency_fingerprint": {
+              "type": "string"
+            },
+            "idempotency_key": {
+              "type": "string"
+            },
+            "observation_type": {
+              "type": "string"
+            },
+            "operation_kind": {
+              "type": "string"
+            },
+            "outcome": {
+              "additionalProperties": false,
+              "properties": {
+                "error_category": {
+                  "type": "string"
+                },
+                "error_message": {
+                  "type": "string"
+                },
+                "exit_code": {
+                  "type": "integer"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status",
+                "exit_code"
+              ],
+              "type": "object"
+            },
+            "receipt_id": {
+              "type": "string"
+            },
+            "redaction_status": {
+              "type": "string"
+            },
+            "rollback_ref": {
+              "type": "string"
+            },
+            "started_at": {
+              "type": "string"
+            },
+            "target": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "receipt_id",
+            "operation_kind",
+            "fingerprint",
+            "actor",
+            "target",
+            "class",
+            "effective_backend",
+            "started_at",
+            "completed_at",
+            "outcome",
+            "observation_type",
+            "redaction_status"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "schema_version": {
+          "type": "string"
+        },
+        "session": {
+          "additionalProperties": false,
+          "properties": {
+            "bytes_read": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "bytes_written": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "closed_at": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "cols": {
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "created_at": {
+              "type": "string"
+            },
+            "error_message": {
+              "type": "string"
+            },
+            "exit_code": {
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
+            "last_activity_at": {
+              "type": "string"
+            },
+            "observation_type": {
+              "type": "string"
+            },
+            "owner_actor": {
+              "type": "string"
+            },
+            "rows": {
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session_id": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "target": {
+              "type": "string"
+            },
+            "term_type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "session_id",
+            "target",
+            "owner_actor",
+            "state",
+            "created_at",
+            "last_activity_at",
+            "bytes_read",
+            "bytes_written",
+            "cols",
+            "rows",
+            "term_type",
+            "observation_type"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "schema_version",
+        "session"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Send a control key (ctrl-c, ctrl-d, enter, etc.) to a session",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "idempotency_key": {
+          "description": "Idempotency key",
+          "type": "string"
+        },
+        "key": {
+          "description": "Control key name (ctrl-c, ctrl-d, enter, tab, etc.)",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Reason for control keystroke",
+          "type": "string"
+        },
+        "session_id": {
+          "description": "Session ID",
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Operation timeout (e.g. 30s, 5m)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "key",
+        "reason",
+        "idempotency_key",
+        "timeout"
+      ],
+      "type": "object"
+    },
+    "name": "session_control",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "receipt": {
+          "additionalProperties": false,
+          "properties": {
+            "actor": {
+              "type": "string"
+            },
+            "class": {
+              "type": "string"
+            },
+            "completed_at": {
+              "type": "string"
+            },
+            "effective_backend": {
+              "type": "string"
+            },
+            "evidence_refs": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "fingerprint": {
+              "type": "string"
+            },
+            "idempotency_fingerprint": {
+              "type": "string"
+            },
+            "idempotency_key": {
+              "type": "string"
+            },
+            "observation_type": {
+              "type": "string"
+            },
+            "operation_kind": {
+              "type": "string"
+            },
+            "outcome": {
+              "additionalProperties": false,
+              "properties": {
+                "error_category": {
+                  "type": "string"
+                },
+                "error_message": {
+                  "type": "string"
+                },
+                "exit_code": {
+                  "type": "integer"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status",
+                "exit_code"
+              ],
+              "type": "object"
+            },
+            "receipt_id": {
+              "type": "string"
+            },
+            "redaction_status": {
+              "type": "string"
+            },
+            "rollback_ref": {
+              "type": "string"
+            },
+            "started_at": {
+              "type": "string"
+            },
+            "target": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "receipt_id",
+            "operation_kind",
+            "fingerprint",
+            "actor",
+            "target",
+            "class",
+            "effective_backend",
+            "started_at",
+            "completed_at",
+            "outcome",
+            "observation_type",
+            "redaction_status"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "schema_version": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "status"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "List active persistent terminal sessions",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "machine": {
+          "description": "Filter by virtual machine GUID",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "session_list",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "type": "string"
+        },
+        "sessions": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "bytes_read": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "bytes_written": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "closed_at": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "cols": {
+                "maximum": 65535,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "error_message": {
+                "type": "string"
+              },
+              "exit_code": {
+                "type": [
+                  "null",
+                  "integer"
+                ]
+              },
+              "last_activity_at": {
+                "type": "string"
+              },
+              "observation_type": {
+                "type": "string"
+              },
+              "owner_actor": {
+                "type": "string"
+              },
+              "rows": {
+                "maximum": 65535,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "session_id": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string"
+              },
+              "target": {
+                "type": "string"
+              },
+              "term_type": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "session_id",
+              "target",
+              "owner_actor",
+              "state",
+              "created_at",
+              "last_activity_at",
+              "bytes_read",
+              "bytes_written",
+              "cols",
+              "rows",
+              "term_type",
+              "observation_type"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "sessions"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Open a persistent SSH pseudo-terminal session with a guest VM",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "cols": {
+          "description": "Terminal columns (20-500, default 80)",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "idempotency_key": {
+          "description": "Idempotency key",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Reason for opening terminal session",
+          "type": "string"
+        },
+        "rows": {
+          "description": "Terminal rows (5-200, default 24)",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "target": {
+          "description": "Target virtual machine GUID",
+          "type": "string"
+        },
+        "term": {
+          "description": "Terminal emulation type (default xterm-256color)",
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Operation timeout (e.g. 30s, 5m)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "reason",
+        "idempotency_key",
+        "timeout"
+      ],
+      "type": "object"
+    },
+    "name": "session_open",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "observation_type": {
+          "type": "string"
+        },
+        "receipt": {
+          "additionalProperties": false,
+          "properties": {
+            "actor": {
+              "type": "string"
+            },
+            "class": {
+              "type": "string"
+            },
+            "completed_at": {
+              "type": "string"
+            },
+            "effective_backend": {
+              "type": "string"
+            },
+            "evidence_refs": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "fingerprint": {
+              "type": "string"
+            },
+            "idempotency_fingerprint": {
+              "type": "string"
+            },
+            "idempotency_key": {
+              "type": "string"
+            },
+            "observation_type": {
+              "type": "string"
+            },
+            "operation_kind": {
+              "type": "string"
+            },
+            "outcome": {
+              "additionalProperties": false,
+              "properties": {
+                "error_category": {
+                  "type": "string"
+                },
+                "error_message": {
+                  "type": "string"
+                },
+                "exit_code": {
+                  "type": "integer"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status",
+                "exit_code"
+              ],
+              "type": "object"
+            },
+            "receipt_id": {
+              "type": "string"
+            },
+            "redaction_status": {
+              "type": "string"
+            },
+            "rollback_ref": {
+              "type": "string"
+            },
+            "started_at": {
+              "type": "string"
+            },
+            "target": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "receipt_id",
+            "operation_kind",
+            "fingerprint",
+            "actor",
+            "target",
+            "class",
+            "effective_backend",
+            "started_at",
+            "completed_at",
+            "outcome",
+            "observation_type",
+            "redaction_status"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "schema_version": {
+          "type": "string"
+        },
+        "session": {
+          "additionalProperties": false,
+          "properties": {
+            "bytes_read": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "bytes_written": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "closed_at": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "cols": {
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "created_at": {
+              "type": "string"
+            },
+            "error_message": {
+              "type": "string"
+            },
+            "exit_code": {
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
+            "last_activity_at": {
+              "type": "string"
+            },
+            "observation_type": {
+              "type": "string"
+            },
+            "owner_actor": {
+              "type": "string"
+            },
+            "rows": {
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session_id": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "target": {
+              "type": "string"
+            },
+            "term_type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "session_id",
+            "target",
+            "owner_actor",
+            "state",
+            "created_at",
+            "last_activity_at",
+            "bytes_read",
+            "bytes_written",
+            "cols",
+            "rows",
+            "term_type",
+            "observation_type"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "schema_version",
+        "observation_type",
+        "session"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Read output chunks from a persistent terminal session",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "description": "Read chunks strictly after sequence number",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "limit": {
+          "description": "Maximum bytes to read (default 65536)",
+          "type": "integer"
+        },
+        "session_id": {
+          "description": "Session ID (sess-...)",
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Timeout duration",
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id"
+      ],
+      "type": "object"
+    },
+    "name": "session_read",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "chunks": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "data": {
+                "type": "string"
+              },
+              "loss_bytes": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "seq": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "timestamp": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "seq",
+              "timestamp",
+              "data"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "closed": {
+          "type": "boolean"
+        },
+        "exit_code": {
+          "type": [
+            "null",
+            "integer"
+          ]
+        },
+        "has_more": {
+          "type": "boolean"
+        },
+        "loss_bytes": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "next_seq": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schema_version": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "session_id",
+        "chunks",
+        "next_seq",
+        "loss_bytes",
+        "has_more",
+        "closed"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Show details of a persistent terminal session",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "session_id": {
+          "description": "Session ID",
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id"
+      ],
+      "type": "object"
+    },
+    "name": "session_show",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "observation_type": {
+          "type": "string"
+        },
+        "schema_version": {
+          "type": "string"
+        },
+        "session": {
+          "additionalProperties": false,
+          "properties": {
+            "bytes_read": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "bytes_written": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "closed_at": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "cols": {
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "created_at": {
+              "type": "string"
+            },
+            "error_message": {
+              "type": "string"
+            },
+            "exit_code": {
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
+            "last_activity_at": {
+              "type": "string"
+            },
+            "observation_type": {
+              "type": "string"
+            },
+            "owner_actor": {
+              "type": "string"
+            },
+            "rows": {
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session_id": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "target": {
+              "type": "string"
+            },
+            "term_type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "session_id",
+            "target",
+            "owner_actor",
+            "state",
+            "created_at",
+            "last_activity_at",
+            "bytes_read",
+            "bytes_written",
+            "cols",
+            "rows",
+            "term_type",
+            "observation_type"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "schema_version",
+        "observation_type",
+        "session"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Wait for output settle or regex match on a session",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "description": "Sequence number cursor",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "regex": {
+          "description": "Regular expression pattern to match",
+          "type": "string"
+        },
+        "session_id": {
+          "description": "Session ID",
+          "type": "string"
+        },
+        "settle_ms": {
+          "description": "Quiet settle time (default 500)",
+          "type": "integer"
+        },
+        "timeout": {
+          "description": "Timeout duration",
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id"
+      ],
+      "type": "object"
+    },
+    "name": "session_wait",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "chunks": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "data": {
+                "type": "string"
+              },
+              "loss_bytes": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "seq": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "timestamp": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "seq",
+              "timestamp",
+              "data"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "closed": {
+          "type": "boolean"
+        },
+        "loss_bytes": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "matched": {
+          "type": "boolean"
+        },
+        "next_seq": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schema_version": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "session_id",
+        "chunks",
+        "next_seq",
+        "loss_bytes",
+        "matched",
+        "closed"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Write input data to a persistent terminal session",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "description": "Character data or command to write",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "description": "Idempotency key",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Reason for writing data",
+          "type": "string"
+        },
+        "session_id": {
+          "description": "Session ID",
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Operation timeout (e.g. 30s, 5m)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "data",
+        "reason",
+        "idempotency_key",
+        "timeout"
+      ],
+      "type": "object"
+    },
+    "name": "session_write",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "bytes_written": {
+          "type": "integer"
+        },
+        "receipt": {
+          "additionalProperties": false,
+          "properties": {
+            "actor": {
+              "type": "string"
+            },
+            "class": {
+              "type": "string"
+            },
+            "completed_at": {
+              "type": "string"
+            },
+            "effective_backend": {
+              "type": "string"
+            },
+            "evidence_refs": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "fingerprint": {
+              "type": "string"
+            },
+            "idempotency_fingerprint": {
+              "type": "string"
+            },
+            "idempotency_key": {
+              "type": "string"
+            },
+            "observation_type": {
+              "type": "string"
+            },
+            "operation_kind": {
+              "type": "string"
+            },
+            "outcome": {
+              "additionalProperties": false,
+              "properties": {
+                "error_category": {
+                  "type": "string"
+                },
+                "error_message": {
+                  "type": "string"
+                },
+                "exit_code": {
+                  "type": "integer"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status",
+                "exit_code"
+              ],
+              "type": "object"
+            },
+            "receipt_id": {
+              "type": "string"
+            },
+            "redaction_status": {
+              "type": "string"
+            },
+            "rollback_ref": {
+              "type": "string"
+            },
+            "started_at": {
+              "type": "string"
+            },
+            "target": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "receipt_id",
+            "operation_kind",
+            "fingerprint",
+            "actor",
+            "target",
+            "class",
+            "effective_backend",
+            "started_at",
+            "completed_at",
+            "outcome",
+            "observation_type",
+            "redaction_status"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "schema_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "bytes_written"
+      ],
+      "type": "object"
+    }
   }
 ]

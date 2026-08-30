@@ -106,3 +106,37 @@ func TestOperations_ReconcileCrashedOperations(t *testing.T) {
 		t.Errorf("expected outcome status aborted, got %s", rcpt.Outcome.Status)
 	}
 }
+
+func TestOperations_ReconcileExistingReceipt(t *testing.T) {
+	dir := t.TempDir()
+	digest := sha256.Sum256([]byte("fingerprint-crashed-2"))
+	fp := domain.Fingerprint("sha256:" + hex.EncodeToString(digest[:]))
+	target := domain.MachineRef("c4a523d4-6b99-4d62-a5e2-4752c0f20001")
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	ctx := context.Background()
+
+	crashedID2 := "op-00000000000000000000000000000003"
+	recRunning2 := domain.OperationRecord{
+		SchemaVersion:  "1",
+		ID:             crashedID2,
+		Actor:          "agent:mcp-local",
+		Target:         target,
+		Kind:           "machine.start",
+		RequestedClass: domain.ClassReversibleMutation,
+		EffectiveClass: domain.ClassReversibleMutation,
+		Fingerprint:    fp,
+		IdempotencyKey: "idem-crashed-2",
+		Deadline:       now.Add(time.Hour),
+		State:          domain.OpStateRunning,
+		CreatedAt:      now.Add(-10 * time.Minute),
+		ReceiptID:      "rcpt-existing-123",
+	}
+	if err := operations.SaveRecord(dir, recRunning2); err != nil {
+		t.Fatalf("save recRunning2 failed: %v", err)
+	}
+
+	reconciled2, err := operations.ReconcileCrashedOperations(ctx, dir, nil, nil, nil, now)
+	if err != nil || len(reconciled2) != 1 || reconciled2[0] != crashedID2 {
+		t.Fatalf("expected %s reconciled with nil stores: %v", crashedID2, err)
+	}
+}

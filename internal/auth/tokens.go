@@ -107,14 +107,33 @@ func LoadOrCreate(authDir string, opts ...Option) (*Store, error) {
 		return nil, fmt.Errorf("auth: invalid derived operator principal %q: %w", principal, err)
 	}
 
-	opScopes := []string{"machine:read", "machine:write", "audit:read", "operation:cancel"}
+	opScopes := []string{
+		domain.ScopeMachineRead,
+		domain.ScopeMachineWrite,
+		domain.ScopeAuditRead,
+		domain.ScopeOperationCancel,
+		domain.ScopeSessionRead,
+		domain.ScopeSessionWrite,
+		domain.ScopeSessionOpen,
+		domain.ScopeSessionClose,
+		domain.ScopeSessionAdmin,
+		domain.ScopeEvidenceCapture,
+	}
 	opScopeSet := domain.NewScopeSet(opScopes...)
 	opActor, err := domain.NewActorContext(domain.ActorID(principal), domain.ActorID(principal), opScopeSet, opScopeSet)
 	if err != nil {
 		return nil, fmt.Errorf("auth: failed to validate operator actor context: %w", err)
 	}
 
-	agScopes := []string{"machine:read", "machine:write"}
+	agScopes := []string{
+		domain.ScopeMachineRead,
+		domain.ScopeMachineWrite,
+		domain.ScopeSessionRead,
+		domain.ScopeSessionWrite,
+		domain.ScopeSessionOpen,
+		domain.ScopeSessionClose,
+		domain.ScopeEvidenceCapture,
+	}
 	agScopeSet := domain.NewScopeSet(agScopes...)
 	agActor, err := domain.NewActorContext(domain.ActorID(AgentMCPPrincipal), domain.ActorID(AgentMCPPrincipal), agScopeSet, agScopeSet)
 	if err != nil {

@@ -109,6 +109,15 @@ func TestToolList(t *testing.T) {
 		"operation_show":     true,
 		"operation_wait":     true,
 		"receipt_show":       true,
+		// Session tools
+		"session_open":    true,
+		"session_read":    true,
+		"session_write":   true,
+		"session_control": true,
+		"session_wait":    true,
+		"session_list":    true,
+		"session_show":    true,
+		"session_close":   true,
 	}
 
 	foundTools := make(map[string]bool)
@@ -123,6 +132,10 @@ func TestToolList(t *testing.T) {
 		if !foundTools[exp] {
 			t.Errorf("Expected tool %s was not exposed", exp)
 		}
+	}
+
+	if len(toolsResult.Tools) != 20 {
+		t.Errorf("expected exactly 20 tools, got %d", len(toolsResult.Tools))
 	}
 }
 

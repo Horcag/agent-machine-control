@@ -64,4 +64,18 @@ var (
 	ErrIllegalStateTransition = errors.New("domain: illegal operation state transition")
 	ErrInvalidOperationID     = errors.New("domain: invalid operation identifier")
 	ErrInvalidEventSequence   = errors.New("domain: invalid event sequence")
+
+	// Session errors.
+	ErrInvalidSessionID          = errors.New("domain: invalid session identifier")
+	ErrSessionNotFound           = errors.New("domain: session not found")
+	ErrSessionClosed             = errors.New("domain: session is closed")
+	ErrSessionOpening            = errors.New("domain: session is still opening")
+	ErrSessionWriteBusy          = errors.New("domain: concurrent session write in progress")
+	ErrInvalidControlKey         = errors.New("domain: invalid terminal control key")
+	ErrInvalidTerminalDimensions = errors.New("domain: terminal dimensions out of bounds")
+	ErrSessionWaitTimeout        = errors.New("domain: wait condition timed out before settling or matching pattern")
+	ErrSessionAccessDenied       = errors.New("domain: session access denied")
+	ErrSessionConflict           = errors.New("domain: session conflict")
+	ErrHostKeyMismatch           = errors.New("domain: host key mismatch")
+	ErrMissingHostKeyPin         = errors.New("domain: missing pinned host key")
 )

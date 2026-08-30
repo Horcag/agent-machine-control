@@ -1,0 +1,202 @@
+package client
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/url"
+	"time"
+
+	"github.com/Horcag/agent-machine-control/internal/daemon"
+	"github.com/Horcag/agent-machine-control/internal/domain"
+)
+
+// SessionDTO re-exports daemon.SessionDTO.
+type SessionDTO = daemon.SessionDTO
+
+// SessionChunkDTO re-exports daemon.SessionChunkDTO.
+type SessionChunkDTO = daemon.SessionChunkDTO
+
+func firstApproval(approvals []*domain.Approval) *domain.Approval {
+	if len(approvals) > 0 {
+		return approvals[0]
+	}
+	return nil
+}
+
+// OpenSession establishes a new persistent SSH terminal session on the daemon.
+func (c *Client) OpenSession(ctx context.Context, req daemon.SessionOpenRequest) (*daemon.SessionOpenResponse, error) {
+	reqCtx := ctx
+	if req.TimeoutSeconds > 0 {
+		var cancel context.CancelFunc
+		reqCtx, cancel = context.WithTimeout(ctx, time.Duration(req.TimeoutSeconds)*time.Second)
+		defer cancel()
+	}
+	var resp daemon.SessionOpenResponse
+	if err := c.doRequest(reqCtx, http.MethodPost, "/v1/sessions", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// ReadSession reads buffered output chunks starting at the given sequence offset.
+func (c *Client) ReadSession(ctx context.Context, id string, afterSeq uint64, limitBytes int, timeout time.Duration) (*daemon.SessionReadResponse, error) {
+	if err := domain.ValidateSessionID(id); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
+	}
+
+	path := fmt.Sprintf("/v1/sessions/%s/read?after_seq=%d", id, afterSeq)
+	if limitBytes > 0 {
+		path += fmt.Sprintf("&limit_bytes=%d", limitBytes)
+	}
+
+	reqCtx := ctx
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		reqCtx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
+	var resp daemon.SessionReadResponse
+	if err := c.doRequest(reqCtx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// WriteSession transmits character data to the session stdin.
+func (c *Client) WriteSession(ctx context.Context, id string, data string, reason, idempotencyKey string, approval ...*domain.Approval) (*daemon.SessionWriteResponse, error) {
+	return c.WriteSessionWithTimeout(ctx, id, data, reason, idempotencyKey, 30*time.Second, approval...)
+}
+
+// WriteSessionWithTimeout transmits character data with an explicit end-to-end execution bound.
+func (c *Client) WriteSessionWithTimeout(ctx context.Context, id string, data string, reason, idempotencyKey string, timeout time.Duration, approval ...*domain.Approval) (*daemon.SessionWriteResponse, error) {
+	if err := domain.ValidateSessionID(id); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
+	}
+
+	var resp daemon.SessionWriteResponse
+	body := daemon.SessionWriteRequest{
+		Data:           data,
+		Reason:         reason,
+		IdempotencyKey: idempotencyKey,
+		TimeoutSeconds: durationSecondsCeil(timeout),
+		Approval:       firstApproval(approval),
+	}
+	reqCtx, cancel := boundedRequestContext(ctx, timeout)
+	defer cancel()
+	if err := c.doRequest(reqCtx, http.MethodPost, "/v1/sessions/"+id+"/write", body, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// SendControlKey sends a terminal control keystroke or escape code.
+func (c *Client) SendControlKey(ctx context.Context, id string, key domain.ControlKey, reason, idempotencyKey string, approval ...*domain.Approval) (*daemon.SessionControlResponse, error) {
+	return c.SendControlKeyWithTimeout(ctx, id, key, reason, idempotencyKey, 30*time.Second, approval...)
+}
+
+// SendControlKeyWithTimeout sends a control key with an explicit end-to-end execution bound.
+func (c *Client) SendControlKeyWithTimeout(ctx context.Context, id string, key domain.ControlKey, reason, idempotencyKey string, timeout time.Duration, approval ...*domain.Approval) (*daemon.SessionControlResponse, error) {
+	if err := domain.ValidateSessionID(id); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
+	}
+
+	var resp daemon.SessionControlResponse
+	body := daemon.SessionControlRequest{
+		Key:            string(key),
+		Reason:         reason,
+		IdempotencyKey: idempotencyKey,
+		TimeoutSeconds: durationSecondsCeil(timeout),
+		Approval:       firstApproval(approval),
+	}
+	reqCtx, cancel := boundedRequestContext(ctx, timeout)
+	defer cancel()
+	if err := c.doRequest(reqCtx, http.MethodPost, "/v1/sessions/"+id+"/control", body, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// WaitSession blocks until the session settles or matches a regex pattern.
+func (c *Client) WaitSession(ctx context.Context, id string, req daemon.SessionWaitRequest) (*daemon.SessionWaitResponse, error) {
+	if err := domain.ValidateSessionID(id); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
+	}
+
+	var resp daemon.SessionWaitResponse
+	path := fmt.Sprintf("/v1/sessions/%s/wait", id)
+	if err := c.doRequest(ctx, http.MethodPost, path, req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// ListSessions queries active and recent sessions.
+func (c *Client) ListSessions(ctx context.Context, machineRef string) ([]daemon.SessionDTO, error) {
+	path := "/v1/sessions"
+	if machineRef != "" {
+		path = fmt.Sprintf("/v1/sessions?machine=%s", url.QueryEscape(machineRef))
+	}
+
+	var resp daemon.SessionListResponse
+	if err := c.doRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Sessions, nil
+}
+
+// GetSession retrieves the latest observation of a session.
+func (c *Client) GetSession(ctx context.Context, id string) (*daemon.SessionDTO, error) {
+	if err := domain.ValidateSessionID(id); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
+	}
+
+	var resp daemon.SessionOpenResponse
+	path := fmt.Sprintf("/v1/sessions/%s", id)
+	if err := c.doRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp.Session, nil
+}
+
+// CloseSession gracefully terminates a persistent session.
+func (c *Client) CloseSession(ctx context.Context, id string, reason, idempotencyKey string, force bool, approval ...*domain.Approval) (*daemon.SessionCloseResponse, error) {
+	return c.CloseSessionWithTimeout(ctx, id, reason, idempotencyKey, force, 30*time.Second, approval...)
+}
+
+// CloseSessionWithTimeout terminates a session with an explicit end-to-end execution bound.
+func (c *Client) CloseSessionWithTimeout(ctx context.Context, id string, reason, idempotencyKey string, force bool, timeout time.Duration, approval ...*domain.Approval) (*daemon.SessionCloseResponse, error) {
+	if err := domain.ValidateSessionID(id); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
+	}
+
+	var resp daemon.SessionCloseResponse
+	body := daemon.SessionCloseRequest{
+		Reason:         reason,
+		IdempotencyKey: idempotencyKey,
+		TimeoutSeconds: durationSecondsCeil(timeout),
+		Force:          force,
+		Approval:       firstApproval(approval),
+	}
+	reqCtx, cancel := boundedRequestContext(ctx, timeout)
+	defer cancel()
+	if err := c.doRequest(reqCtx, http.MethodPost, "/v1/sessions/"+id+"/close", body, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func durationSecondsCeil(timeout time.Duration) int {
+	if timeout <= 0 {
+		return 0
+	}
+	return int((timeout + time.Second - 1) / time.Second)
+}
+
+func boundedRequestContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, timeout)
+}

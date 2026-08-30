@@ -1,0 +1,363 @@
+package mcpadapter
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/Horcag/agent-machine-control/internal/auth"
+	"github.com/Horcag/agent-machine-control/internal/client"
+	"github.com/Horcag/agent-machine-control/internal/daemon"
+	"github.com/Horcag/agent-machine-control/internal/statedir"
+)
+
+func handleMockMCPMutations(w http.ResponseWriter, r *http.Request, sessID, machGUID string) bool {
+	switch {
+	case r.URL.Path == "/v1/sessions" && r.Method == http.MethodPost:
+		_ = json.NewEncoder(w).Encode(daemon.SessionOpenResponse{
+			SchemaVersion: "1",
+			Session:       daemon.SessionDTO{SessionID: sessID, Target: machGUID, State: "active"},
+		})
+		return true
+	case r.URL.Path == "/v1/sessions/"+sessID+"/write" && r.Method == http.MethodPost:
+		_ = json.NewEncoder(w).Encode(daemon.SessionWriteResponse{SchemaVersion: "1", BytesWritten: 4})
+		return true
+	case r.URL.Path == "/v1/sessions/"+sessID+"/control" && r.Method == http.MethodPost:
+		_ = json.NewEncoder(w).Encode(daemon.SessionControlResponse{SchemaVersion: "1", Status: "sent"})
+		return true
+	case r.URL.Path == "/v1/sessions/"+sessID+"/close" && r.Method == http.MethodPost:
+		_ = json.NewEncoder(w).Encode(daemon.SessionCloseResponse{
+			SchemaVersion: "1",
+			Session:       daemon.SessionDTO{SessionID: sessID, State: "closed"},
+		})
+		return true
+	default:
+		return false
+	}
+}
+
+func handleMockMCPReads(w http.ResponseWriter, r *http.Request, sessID, machGUID string) bool {
+	switch {
+	case r.URL.Path == "/v1/sessions" && r.Method == http.MethodGet:
+		_ = json.NewEncoder(w).Encode(daemon.SessionListResponse{
+			SchemaVersion: "1",
+			Sessions:      []daemon.SessionDTO{{SessionID: sessID, Target: machGUID, State: "active"}},
+		})
+		return true
+	case r.URL.Path == "/v1/sessions/"+sessID && r.Method == http.MethodGet:
+		_ = json.NewEncoder(w).Encode(daemon.SessionOpenResponse{
+			SchemaVersion: "1",
+			Session:       daemon.SessionDTO{SessionID: sessID, Target: machGUID, State: "active"},
+		})
+		return true
+	case r.URL.Path == "/v1/sessions/"+sessID+"/read" && r.Method == http.MethodGet:
+		_ = json.NewEncoder(w).Encode(daemon.SessionReadResponse{
+			SchemaVersion: "1",
+			SessionID:     sessID,
+			Chunks:        []daemon.SessionChunkDTO{{Seq: 1, Data: "prompt> "}},
+			NextSeq:       1,
+		})
+		return true
+	case r.URL.Path == "/v1/sessions/"+sessID+"/wait" && r.Method == http.MethodPost:
+		_ = json.NewEncoder(w).Encode(daemon.SessionWaitResponse{
+			SchemaVersion: "1",
+			SessionID:     sessID,
+			Chunks:        []daemon.SessionChunkDTO{{Seq: 1, Data: "settled"}},
+			Matched:       true,
+		})
+		return true
+	default:
+		return false
+	}
+}
+
+func handleMockMCPSessionRoute(w http.ResponseWriter, r *http.Request, sessID, machGUID string) {
+	w.Header().Set("Content-Type", "application/json")
+	if handleMockMCPMutations(w, r, sessID, machGUID) {
+		return
+	}
+	if handleMockMCPReads(w, r, sessID, machGUID) {
+		return
+	}
+	w.WriteHeader(http.StatusNotFound)
+}
+
+func setupMCPSessionTest(t *testing.T) (*Adapter, func()) {
+	tempDir := t.TempDir()
+	sd, _ := statedir.Resolve(tempDir)
+	_ = sd.EnsureDirs()
+
+	sessID := "sess-a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
+	machGUID := "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handleMockMCPSessionRoute(w, r, sessID, machGUID)
+	}))
+
+	ep := daemon.EndpointRecord{
+		SchemaVersion: daemon.SchemaVersion,
+		Endpoint:      server.URL,
+		PID:           os.Getpid(),
+		RuntimeID:     "test-runtime",
+		StartedAt:     time.Now().UTC(),
+	}
+	_ = daemon.WriteEndpointFile(sd.DaemonDir(), ep)
+
+	tokenStr := strings.Repeat("a", 64)
+	_ = os.WriteFile(filepath.Join(sd.AuthDir(), auth.AgentMCPTokenFileName), []byte(tokenStr), 0600)
+
+	cl := client.New(server.URL, tokenStr)
+	adapter := NewAdapter(tempDir)
+	adapter.client = cl
+
+	return adapter, func() {
+		server.Close()
+	}
+}
+
+func testMCPSessionsMutations(ctx context.Context, t *testing.T, adapter *Adapter, sessID, machGUID string) {
+	resOpen, outOpen, err := adapter.SessionOpen(ctx, nil, SessionOpenInput{
+		Target:         machGUID,
+		Reason:         "open session for testing",
+		IdempotencyKey: "idem-mcp-open-1",
+		Timeout:        "30s",
+	})
+	if err != nil || resOpen != nil || outOpen.Session.SessionID != sessID {
+		t.Fatalf("SessionOpen failed: err=%v, res=%v, out=%v", err, resOpen, outOpen)
+	}
+
+	resWrite, outWrite, err := adapter.SessionWrite(ctx, nil, SessionWriteInput{
+		SessionID:      sessID,
+		Data:           "dir\r\n",
+		Reason:         "run directory listing",
+		IdempotencyKey: "idem-mcp-write-1",
+		Timeout:        "30s",
+	})
+	if err != nil || resWrite != nil || outWrite.BytesWritten != 4 {
+		t.Fatalf("SessionWrite failed: err=%v, res=%v, out=%v", err, resWrite, outWrite)
+	}
+
+	resCtrl, outCtrl, err := adapter.SessionControl(ctx, nil, SessionControlInput{
+		SessionID:      sessID,
+		Key:            "ctrl-c",
+		Reason:         "cancel command",
+		IdempotencyKey: "idem-mcp-ctrl-1",
+		Timeout:        "30s",
+	})
+	if err != nil || resCtrl != nil || outCtrl.Status != "sent" {
+		t.Fatalf("SessionControl failed: err=%v, res=%v, out=%v", err, resCtrl, outCtrl)
+	}
+
+	resClose, outClose, err := adapter.SessionClose(ctx, nil, SessionCloseInput{
+		SessionID:      sessID,
+		Reason:         "finished work",
+		IdempotencyKey: "idem-mcp-close-1",
+		Timeout:        "30s",
+	})
+	if err != nil || resClose != nil || outClose.Session.State != "closed" {
+		t.Fatalf("SessionClose failed: err=%v, res=%v, out=%v", err, resClose, outClose)
+	}
+}
+
+func testMCPSessionsReads(ctx context.Context, t *testing.T, adapter *Adapter, sessID, machGUID string) {
+	resRead, outRead, err := adapter.SessionRead(ctx, nil, SessionReadInput{
+		SessionID: sessID,
+		Timeout:   "5s",
+	})
+	if err != nil || resRead != nil || len(outRead.Chunks) == 0 {
+		t.Fatalf("SessionRead failed: err=%v, res=%v, out=%v", err, resRead, outRead)
+	}
+
+	resWait, outWait, err := adapter.SessionWait(ctx, nil, SessionWaitInput{
+		SessionID: sessID,
+		SettleMs:  100,
+		Timeout:   "5s",
+	})
+	if err != nil || resWait != nil || !outWait.Matched {
+		t.Fatalf("SessionWait failed: err=%v, res=%v, out=%v", err, resWait, outWait)
+	}
+
+	resList, outList, err := adapter.SessionList(ctx, nil, SessionListInput{Machine: machGUID})
+	if err != nil || resList != nil || len(outList.Sessions) == 0 {
+		t.Fatalf("SessionList failed: err=%v, res=%v, out=%v", err, resList, outList)
+	}
+
+	resShow, outShow, err := adapter.SessionShow(ctx, nil, SessionShowInput{SessionID: sessID})
+	if err != nil || resShow != nil || outShow.Session.SessionID != sessID {
+		t.Fatalf("SessionShow failed: err=%v, res=%v, out=%v", err, resShow, outShow)
+	}
+}
+
+func TestMCPSessions_AllTools(t *testing.T) {
+	adapter, cleanup := setupMCPSessionTest(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	machGUID := "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
+	sessID := "sess-a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
+
+	testMCPSessionsMutations(ctx, t, adapter, sessID, machGUID)
+	testMCPSessionsReads(ctx, t, adapter, sessID, machGUID)
+}
+
+func testMCPValidationParamErrors(ctx context.Context, t *testing.T, adapter *Adapter, sessID string) {
+	t.Helper()
+	// Invalid target
+	res, _, _ := adapter.SessionOpen(ctx, nil, SessionOpenInput{
+		Target:         "bad-guid",
+		Reason:         "test",
+		IdempotencyKey: "k",
+	})
+	if res == nil || !res.IsError {
+		t.Errorf("expected validation error for invalid target")
+	}
+
+	// Invalid session ID on read
+	res, _, _ = adapter.SessionRead(ctx, nil, SessionReadInput{SessionID: "bad-id"})
+	if res == nil || !res.IsError {
+		t.Errorf("expected validation error for invalid session id")
+	}
+
+	// Empty data on write
+	res, _, _ = adapter.SessionWrite(ctx, nil, SessionWriteInput{
+		SessionID:      sessID,
+		Data:           "",
+		Reason:         "test",
+		IdempotencyKey: "k",
+	})
+	if res == nil || !res.IsError {
+		t.Errorf("expected validation error for empty write data")
+	}
+
+	// Invalid control key
+	res, _, _ = adapter.SessionControl(ctx, nil, SessionControlInput{
+		SessionID:      sessID,
+		Key:            "not-a-key",
+		Reason:         "test",
+		IdempotencyKey: "k",
+	})
+	if res == nil || !res.IsError {
+		t.Errorf("expected validation error for invalid control key")
+	}
+
+	// Empty reason on close
+	res, _, _ = adapter.SessionClose(ctx, nil, SessionCloseInput{
+		SessionID:      sessID,
+		Reason:         "",
+		IdempotencyKey: "k",
+	})
+	if res == nil || !res.IsError {
+		t.Errorf("expected validation error for empty reason on close")
+	}
+}
+
+func testMCPValidationTimeoutErrors(ctx context.Context, t *testing.T, adapter *Adapter, sessID string) {
+	t.Helper()
+	// Invalid timeout strings
+	res, _, _ := adapter.SessionOpen(ctx, nil, SessionOpenInput{
+		Target:         "c4a523d4-6b99-4d62-a5e2-4752c0f20001",
+		Reason:         "test",
+		IdempotencyKey: "k",
+		Timeout:        "invalid-duration",
+	})
+	if res == nil || !res.IsError {
+		t.Errorf("expected error on invalid timeout in SessionOpen")
+	}
+
+	res, _, _ = adapter.SessionRead(ctx, nil, SessionReadInput{
+		SessionID: sessID,
+		Timeout:   "invalid-duration",
+	})
+	if res == nil || !res.IsError {
+		t.Errorf("expected error on invalid timeout in SessionRead")
+	}
+
+	res, _, _ = adapter.SessionWait(ctx, nil, SessionWaitInput{
+		SessionID: sessID,
+		Timeout:   "invalid-duration",
+	})
+	if res == nil || !res.IsError {
+		t.Errorf("expected error on invalid timeout in SessionWait")
+	}
+}
+
+func TestMCPSessions_ValidationErrors(t *testing.T) {
+	adapter, cleanup := setupMCPSessionTest(t)
+	defer cleanup()
+	ctx := context.Background()
+	sessID := "sess-a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
+
+	testMCPValidationParamErrors(ctx, t, adapter, sessID)
+	testMCPValidationTimeoutErrors(ctx, t, adapter, sessID)
+}
+
+func testMCPMutationsError(ctx context.Context, t *testing.T, adapter *Adapter, machGUID, sessID, desc string) {
+	t.Helper()
+	res, _, _ := adapter.SessionOpen(ctx, nil, SessionOpenInput{Target: machGUID, Reason: "r", IdempotencyKey: "k"})
+	if res == nil || !res.IsError {
+		t.Errorf("expected error for %s in SessionOpen", desc)
+	}
+	res, _, _ = adapter.SessionWrite(ctx, nil, SessionWriteInput{SessionID: sessID, Data: "a", Reason: "r", IdempotencyKey: "k"})
+	if res == nil || !res.IsError {
+		t.Errorf("expected error for %s in SessionWrite", desc)
+	}
+	res, _, _ = adapter.SessionControl(ctx, nil, SessionControlInput{SessionID: sessID, Key: "ctrl-c", Reason: "r", IdempotencyKey: "k"})
+	if res == nil || !res.IsError {
+		t.Errorf("expected error for %s in SessionControl", desc)
+	}
+	res, _, _ = adapter.SessionClose(ctx, nil, SessionCloseInput{SessionID: sessID, Reason: "r", IdempotencyKey: "k"})
+	if res == nil || !res.IsError {
+		t.Errorf("expected error for %s in SessionClose", desc)
+	}
+}
+
+func testMCPReadsError(ctx context.Context, t *testing.T, adapter *Adapter, sessID, desc string) {
+	t.Helper()
+	res, _, _ := adapter.SessionRead(ctx, nil, SessionReadInput{SessionID: sessID})
+	if res == nil || !res.IsError {
+		t.Errorf("expected error for %s in SessionRead", desc)
+	}
+	res, _, _ = adapter.SessionWait(ctx, nil, SessionWaitInput{SessionID: sessID})
+	if res == nil || !res.IsError {
+		t.Errorf("expected error for %s in SessionWait", desc)
+	}
+	res, _, _ = adapter.SessionList(ctx, nil, SessionListInput{})
+	if res == nil || !res.IsError {
+		t.Errorf("expected error for %s in SessionList", desc)
+	}
+	res, _, _ = adapter.SessionShow(ctx, nil, SessionShowInput{SessionID: sessID})
+	if res == nil || !res.IsError {
+		t.Errorf("expected error for %s in SessionShow", desc)
+	}
+}
+
+func TestMCPSessions_ClientFailures(t *testing.T) {
+	ctx := context.Background()
+	machGUID := "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
+	sessID := "sess-a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
+
+	// Unconfigured client
+	adapterUnconfigured := NewAdapter(t.TempDir())
+	testMCPMutationsError(ctx, t, adapterUnconfigured, machGUID, sessID, "unconfigured client")
+	testMCPReadsError(ctx, t, adapterUnconfigured, sessID, "unconfigured client")
+
+	// Server returns 500 error
+	failingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"category": "internal_error", "message": "server failed"}})
+	}))
+	defer failingServer.Close()
+
+	clFailing := client.New(failingServer.URL, "token")
+	adapterFailing := NewAdapter(t.TempDir())
+	adapterFailing.client = clFailing
+
+	testMCPMutationsError(ctx, t, adapterFailing, machGUID, sessID, "server 500 error")
+	testMCPReadsError(ctx, t, adapterFailing, sessID, "server 500 error")
+}

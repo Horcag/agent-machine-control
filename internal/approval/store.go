@@ -23,6 +23,26 @@ func NewStore(dir string) *Store {
 	return &Store{dir: dir}
 }
 
+// CheckWritable verifies that the approval store can durably create new records.
+func (s *Store) CheckWritable() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	probe := filepath.Join(s.dir, fmt.Sprintf(".write-test-%d", time.Now().UnixNano()))
+	f, err := os.OpenFile(probe, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return fmt.Errorf("approval: store is unwritable: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(probe)
+		return fmt.Errorf("approval: failed to close writability probe: %w", err)
+	}
+	if err := os.Remove(probe); err != nil {
+		return fmt.Errorf("approval: failed to remove writability probe: %w", err)
+	}
+	return statedir.SyncDir(s.dir)
+}
+
 func (s *Store) approvalPath(id string) string {
 	return filepath.Join(s.dir, fmt.Sprintf("%s.json", id))
 }

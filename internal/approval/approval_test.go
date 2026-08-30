@@ -48,6 +48,20 @@ func TestLoader_ValidFile(t *testing.T) {
 	}
 }
 
+func TestStoreCheckWritable(t *testing.T) {
+	store := approval.NewStore(t.TempDir())
+	if err := store.CheckWritable(); err != nil {
+		t.Fatalf("writable store rejected: %v", err)
+	}
+	badPath := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(badPath, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := approval.NewStore(badPath).CheckWritable(); err == nil {
+		t.Fatal("non-directory approval store accepted")
+	}
+}
+
 func TestLoader_RejectsUnknownFields(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "unknown_field.json")

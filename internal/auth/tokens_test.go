@@ -4,10 +4,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/Horcag/agent-machine-control/internal/auth"
+	"github.com/Horcag/agent-machine-control/internal/domain"
 )
 
 func TestAuth_LoadOrCreate(t *testing.T) {
@@ -63,8 +65,20 @@ func TestAuth_Authenticate(t *testing.T) {
 	if !ok || act == nil {
 		t.Fatalf("expected operator auth to succeed")
 	}
-	if len(scopes) != 4 {
-		t.Errorf("expected 4 scopes for operator, got %d", len(scopes))
+	wantOperatorScopes := []string{
+		domain.ScopeAuditRead,
+		domain.ScopeEvidenceCapture,
+		domain.ScopeMachineRead,
+		domain.ScopeMachineWrite,
+		domain.ScopeOperationCancel,
+		domain.ScopeSessionAdmin,
+		domain.ScopeSessionClose,
+		domain.ScopeSessionOpen,
+		domain.ScopeSessionRead,
+		domain.ScopeSessionWrite,
+	}
+	if !slices.Equal(scopes, wantOperatorScopes) {
+		t.Errorf("operator scopes = %v, want %v", scopes, wantOperatorScopes)
 	}
 
 	// Authenticate agent
@@ -75,8 +89,17 @@ func TestAuth_Authenticate(t *testing.T) {
 	if act.EffectiveActor != "agent:mcp-local" {
 		t.Errorf("expected agent:mcp-local, got %s", act.EffectiveActor)
 	}
-	if len(scopes) != 2 {
-		t.Errorf("expected 2 scopes for agent, got %d", len(scopes))
+	wantAgentScopes := []string{
+		domain.ScopeEvidenceCapture,
+		domain.ScopeMachineRead,
+		domain.ScopeMachineWrite,
+		domain.ScopeSessionClose,
+		domain.ScopeSessionOpen,
+		domain.ScopeSessionRead,
+		domain.ScopeSessionWrite,
+	}
+	if !slices.Equal(scopes, wantAgentScopes) {
+		t.Errorf("agent scopes = %v, want %v", scopes, wantAgentScopes)
 	}
 
 	// Authenticate invalid

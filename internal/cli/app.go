@@ -271,6 +271,16 @@ func (a *App) RunWithContext(ctx context.Context, args []string, stdout, stderr 
 			stderr,
 		)
 
+	case "session":
+		return runSession(
+			ctx,
+			directMode,
+			stateDir,
+			cmdArgs,
+			stdout,
+			stderr,
+		)
+
 	default:
 		fmt.Fprintf(stderr, "amc: unknown command %q\n", norm.CommandArgs[0])
 		return ExitUsage
@@ -289,6 +299,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  checkpoint list <guid>                   List virtual machine checkpoints")
 	fmt.Fprintln(w, "  checkpoint create <guid> --name <name>   Create checkpoint (routes to amcd by default)")
 	fmt.Fprintln(w, "  checkpoint restore <guid> <chk-guid>     Restore checkpoint (routes to amcd by default)")
+	fmt.Fprintln(w, "  session <subcommand>                     Manage persistent SSH pseudo-terminal sessions (routes to amcd)")
 	fmt.Fprintln(w, "  operation list                           List operations")
 	fmt.Fprintln(w, "  operation show <operation-id>            Show details for a specific operation")
 	fmt.Fprintln(w, "  operation wait <operation-id>            Wait for operation terminal state")

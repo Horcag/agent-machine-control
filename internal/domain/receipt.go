@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"time"
 )
@@ -16,6 +18,15 @@ func (id ReceiptID) String() string {
 // Validate checks that the ReceiptID is a valid canonical identifier.
 func (id ReceiptID) Validate() error {
 	return ValidateReceiptID(string(id))
+}
+
+// GenerateReceiptID creates a new canonical ReceiptID (rcpt-<32 hex chars>).
+func GenerateReceiptID() (ReceiptID, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to generate receipt id: %w", err)
+	}
+	return ReceiptID(fmt.Sprintf("rcpt-%s", hex.EncodeToString(b))), nil
 }
 
 // ObservationType distinguishes verified direct observations from inferred assertions.

@@ -91,8 +91,8 @@ func TestBinaryStdioIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools failed: %v", err)
 	}
-	if len(toolsRes.Tools) != 12 {
-		t.Errorf("expected exactly 12 tools, got %d", len(toolsRes.Tools))
+	if len(toolsRes.Tools) != 20 {
+		t.Errorf("expected exactly 20 tools, got %d", len(toolsRes.Tools))
 	}
 
 	if err := clientSession.Close(); err != nil {

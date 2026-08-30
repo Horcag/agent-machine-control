@@ -1,0 +1,262 @@
+package mcpadapter
+
+import (
+	"context"
+
+	"github.com/Horcag/agent-machine-control/internal/daemon"
+	"github.com/Horcag/agent-machine-control/internal/domain"
+	"github.com/Horcag/agent-machine-control/internal/receipt"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+type ReceiptDTO = receipt.DTO
+
+func (a *Adapter) SessionOpen(ctx context.Context, _ *mcp.CallToolRequest, in SessionOpenInput) (*mcp.CallToolResult, SessionOpenResult, error) {
+	if err := validateMutationParams(in.Target, in.Reason, in.IdempotencyKey); err != nil {
+		return mcpToolError(err), SessionOpenResult{}, nil
+	}
+
+	timeout, err := parseTimeout(in.Timeout, true)
+	if err != nil {
+		return mcpToolError(err), SessionOpenResult{}, nil
+	}
+
+	cl, err := a.getClient()
+	if err != nil {
+		return mcpToolError(err), SessionOpenResult{}, nil
+	}
+
+	req := daemon.SessionOpenRequest{
+		Target:         in.Target,
+		Reason:         in.Reason,
+		IdempotencyKey: in.IdempotencyKey,
+		Cols:           in.Cols,
+		Rows:           in.Rows,
+		Term:           in.Term,
+		TimeoutSeconds: int(timeout.Seconds()),
+	}
+
+	resp, err := cl.OpenSession(ctx, req)
+	if err != nil {
+		return mcpToolError(err), SessionOpenResult{}, nil
+	}
+
+	return nil, SessionOpenResult{
+		SchemaVersion:   SchemaVersion,
+		ObservationType: string(domain.ObservationObserved),
+		Session:         resp.Session,
+		Receipt:         resp.Receipt,
+	}, nil
+}
+
+func (a *Adapter) SessionRead(ctx context.Context, _ *mcp.CallToolRequest, in SessionReadInput) (*mcp.CallToolResult, SessionReadResult, error) {
+	if err := domain.ValidateSessionID(in.SessionID); err != nil {
+		return mcpToolError(NewInputError("invalid session ID")), SessionReadResult{}, nil
+	}
+
+	timeout, err := parseTimeout(in.Timeout, false)
+	if err != nil {
+		return mcpToolError(err), SessionReadResult{}, nil
+	}
+
+	cl, err := a.getClient()
+	if err != nil {
+		return mcpToolError(err), SessionReadResult{}, nil
+	}
+
+	resp, err := cl.ReadSession(ctx, in.SessionID, in.AfterSeq, in.Limit, timeout)
+	if err != nil {
+		return mcpToolError(err), SessionReadResult{}, nil
+	}
+
+	return nil, SessionReadResult{
+		SchemaVersion: SchemaVersion,
+		SessionID:     resp.SessionID,
+		Chunks:        resp.Chunks,
+		NextSeq:       resp.NextSeq,
+		LossBytes:     resp.LossBytes,
+		HasMore:       resp.HasMore,
+		Closed:        resp.Closed,
+		ExitCode:      resp.ExitCode,
+	}, nil
+}
+
+func (a *Adapter) SessionWrite(ctx context.Context, _ *mcp.CallToolRequest, in SessionWriteInput) (*mcp.CallToolResult, SessionWriteResult, error) {
+	if err := domain.ValidateSessionID(in.SessionID); err != nil {
+		return mcpToolError(NewInputError("invalid session ID")), SessionWriteResult{}, nil
+	}
+	if in.Data == "" {
+		return mcpToolError(NewInputError("data cannot be empty")), SessionWriteResult{}, nil
+	}
+	if in.Reason == "" {
+		return mcpToolError(NewInputError("reason cannot be empty")), SessionWriteResult{}, nil
+	}
+	if in.IdempotencyKey == "" {
+		return mcpToolError(NewInputError("idempotency_key cannot be empty")), SessionWriteResult{}, nil
+	}
+	timeout, err := parseTimeout(in.Timeout, true)
+	if err != nil {
+		return mcpToolError(err), SessionWriteResult{}, nil
+	}
+
+	cl, err := a.getClient()
+	if err != nil {
+		return mcpToolError(err), SessionWriteResult{}, nil
+	}
+
+	resp, err := cl.WriteSessionWithTimeout(ctx, in.SessionID, in.Data, in.Reason, in.IdempotencyKey, timeout)
+	if err != nil {
+		return mcpToolError(err), SessionWriteResult{}, nil
+	}
+
+	return nil, SessionWriteResult{
+		SchemaVersion: SchemaVersion,
+		BytesWritten:  resp.BytesWritten,
+		Receipt:       resp.Receipt,
+	}, nil
+}
+
+func (a *Adapter) SessionControl(ctx context.Context, _ *mcp.CallToolRequest, in SessionControlInput) (*mcp.CallToolResult, SessionControlResult, error) {
+	if err := domain.ValidateSessionID(in.SessionID); err != nil {
+		return mcpToolError(NewInputError("invalid session ID")), SessionControlResult{}, nil
+	}
+	if in.Reason == "" {
+		return mcpToolError(NewInputError("reason cannot be empty")), SessionControlResult{}, nil
+	}
+	if in.IdempotencyKey == "" {
+		return mcpToolError(NewInputError("idempotency_key cannot be empty")), SessionControlResult{}, nil
+	}
+	timeout, err := parseTimeout(in.Timeout, true)
+	if err != nil {
+		return mcpToolError(err), SessionControlResult{}, nil
+	}
+	normKey, err := domain.NormalizeControlKey(in.Key)
+	if err != nil {
+		return mcpToolError(NewInputError("invalid control key")), SessionControlResult{}, nil
+	}
+
+	cl, err := a.getClient()
+	if err != nil {
+		return mcpToolError(err), SessionControlResult{}, nil
+	}
+
+	resp, err := cl.SendControlKeyWithTimeout(ctx, in.SessionID, normKey, in.Reason, in.IdempotencyKey, timeout)
+	if err != nil {
+		return mcpToolError(err), SessionControlResult{}, nil
+	}
+
+	return nil, SessionControlResult{
+		SchemaVersion: SchemaVersion,
+		Status:        resp.Status,
+		Receipt:       resp.Receipt,
+	}, nil
+}
+
+func (a *Adapter) SessionWait(ctx context.Context, _ *mcp.CallToolRequest, in SessionWaitInput) (*mcp.CallToolResult, SessionWaitResult, error) {
+	if err := domain.ValidateSessionID(in.SessionID); err != nil {
+		return mcpToolError(NewInputError("invalid session ID")), SessionWaitResult{}, nil
+	}
+
+	timeout, err := parseTimeout(in.Timeout, false)
+	if err != nil {
+		return mcpToolError(err), SessionWaitResult{}, nil
+	}
+
+	cl, err := a.getClient()
+	if err != nil {
+		return mcpToolError(err), SessionWaitResult{}, nil
+	}
+
+	req := daemon.SessionWaitRequest{
+		SettleMs:       in.SettleMs,
+		Regex:          in.Regex,
+		AfterSeq:       in.AfterSeq,
+		TimeoutSeconds: int(timeout.Seconds()),
+	}
+
+	resp, err := cl.WaitSession(ctx, in.SessionID, req)
+	if err != nil {
+		return mcpToolError(err), SessionWaitResult{}, nil
+	}
+
+	return nil, SessionWaitResult{
+		SchemaVersion: SchemaVersion,
+		SessionID:     resp.SessionID,
+		Chunks:        resp.Chunks,
+		NextSeq:       resp.NextSeq,
+		LossBytes:     resp.LossBytes,
+		Matched:       resp.Matched,
+		Closed:        resp.Closed,
+	}, nil
+}
+
+func (a *Adapter) SessionList(ctx context.Context, _ *mcp.CallToolRequest, in SessionListInput) (*mcp.CallToolResult, SessionListResult, error) {
+	cl, err := a.getClient()
+	if err != nil {
+		return mcpToolError(err), SessionListResult{}, nil
+	}
+
+	sessions, err := cl.ListSessions(ctx, in.Machine)
+	if err != nil {
+		return mcpToolError(err), SessionListResult{}, nil
+	}
+
+	return nil, SessionListResult{
+		SchemaVersion: SchemaVersion,
+		Sessions:      sessions,
+	}, nil
+}
+
+func (a *Adapter) SessionShow(ctx context.Context, _ *mcp.CallToolRequest, in SessionShowInput) (*mcp.CallToolResult, SessionShowResult, error) {
+	if err := domain.ValidateSessionID(in.SessionID); err != nil {
+		return mcpToolError(NewInputError("invalid session ID")), SessionShowResult{}, nil
+	}
+
+	cl, err := a.getClient()
+	if err != nil {
+		return mcpToolError(err), SessionShowResult{}, nil
+	}
+
+	sess, err := cl.GetSession(ctx, in.SessionID)
+	if err != nil {
+		return mcpToolError(err), SessionShowResult{}, nil
+	}
+
+	return nil, SessionShowResult{
+		SchemaVersion:   SchemaVersion,
+		ObservationType: string(domain.ObservationObserved),
+		Session:         *sess,
+	}, nil
+}
+
+func (a *Adapter) SessionClose(ctx context.Context, _ *mcp.CallToolRequest, in SessionCloseInput) (*mcp.CallToolResult, SessionCloseResult, error) {
+	if err := domain.ValidateSessionID(in.SessionID); err != nil {
+		return mcpToolError(NewInputError("invalid session ID")), SessionCloseResult{}, nil
+	}
+	if in.Reason == "" {
+		return mcpToolError(NewInputError("reason cannot be empty")), SessionCloseResult{}, nil
+	}
+	if in.IdempotencyKey == "" {
+		return mcpToolError(NewInputError("idempotency_key cannot be empty")), SessionCloseResult{}, nil
+	}
+	timeout, err := parseTimeout(in.Timeout, true)
+	if err != nil {
+		return mcpToolError(err), SessionCloseResult{}, nil
+	}
+
+	cl, err := a.getClient()
+	if err != nil {
+		return mcpToolError(err), SessionCloseResult{}, nil
+	}
+
+	resp, err := cl.CloseSessionWithTimeout(ctx, in.SessionID, in.Reason, in.IdempotencyKey, in.Force, timeout)
+	if err != nil {
+		return mcpToolError(err), SessionCloseResult{}, nil
+	}
+
+	return nil, SessionCloseResult{
+		SchemaVersion: SchemaVersion,
+		Session:       resp.Session,
+		Receipt:       resp.Receipt,
+	}, nil
+}

@@ -19,9 +19,11 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/backends/hyperv"
 	"github.com/Horcag/agent-machine-control/internal/domain"
 	"github.com/Horcag/agent-machine-control/internal/events"
+	guestssh "github.com/Horcag/agent-machine-control/internal/guest/ssh"
 	"github.com/Horcag/agent-machine-control/internal/lease"
 	"github.com/Horcag/agent-machine-control/internal/operations"
 	"github.com/Horcag/agent-machine-control/internal/receipt"
+	"github.com/Horcag/agent-machine-control/internal/sessions"
 	"github.com/Horcag/agent-machine-control/internal/statedir"
 )
 
@@ -41,6 +43,8 @@ type Server struct {
 	recoveryService  *app.RecoveryService
 	eventHub         *events.Hub
 	opMgr            *operations.Manager
+	sessionMgr       *sessions.Manager
+	sessionService   *app.SessionService
 	singletonLock    *SingletonLock
 	httpServer       *http.Server
 	listener         net.Listener
@@ -121,10 +125,26 @@ func NewServer(cfg Config) (*Server, error) {
 	recoverySvc := app.NewRecoveryService(backend, leaseMgr, auditStore, receiptStore, approvalStore)
 	opMgr := operations.NewManager(sd.OperationsDir(), recoverySvc, receiptStore, auditStore, eventHub)
 
+	keyProvider := cfg.KeyProvider
+	if keyProvider == nil {
+		keyProvider = guestssh.NewLocalKeyProvider(sd)
+	}
+	transport := cfg.Transport
+	if transport == nil {
+		transport = guestssh.NewTransport(keyProvider)
+	}
+	safetyResolver := app.NewDefaultSafetyResolver(sshSafetyConfigLoader{provider: keyProvider}, backend)
+	sessionMgr := sessions.NewManager(sd.SessionsDir(), transport, cfg.Clock, sessions.WithSanitizerConfig(cfg.SessionSanitizerConfig))
+	sessionSvc := app.NewSessionService(sessionMgr, safetyResolver, leaseMgr, auditStore, receiptStore, approvalStore, app.WithSessionClock(cfg.Clock))
+
 	// 3. Fail-closed startup crash recovery & stale lease reclamation
 	if _, err := operations.ReconcileCrashedOperations(context.Background(), sd.OperationsDir(), receiptStore, auditStore, eventHub, now); err != nil {
 		_ = lock.Release()
 		return nil, fmt.Errorf("daemon: failed to reconcile crashed operations: %w", err)
+	}
+	if _, err := sessions.ReconcileCrashedSessions(context.Background(), sd.SessionsDir(), now); err != nil {
+		_ = lock.Release()
+		return nil, fmt.Errorf("daemon: failed to reconcile crashed sessions: %w", err)
 	}
 	if _, err := leaseMgr.ReclaimStaleLeases(context.Background()); err != nil {
 		_ = lock.Release()
@@ -144,6 +164,8 @@ func NewServer(cfg Config) (*Server, error) {
 		recoveryService:  recoverySvc,
 		eventHub:         eventHub,
 		opMgr:            opMgr,
+		sessionMgr:       sessionMgr,
+		sessionService:   sessionSvc,
 		singletonLock:    lock,
 		startedAt:        now,
 		pid:              pid,
@@ -214,37 +236,39 @@ func (s *Server) dispatchV1(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case path == "health" && r.Method == http.MethodGet:
 		s.handleHealth(w, r)
-
 	case path == "events" && r.Method == http.MethodGet:
 		s.handleGlobalEvents(w, r)
-
 	case path == "operations" || strings.HasPrefix(path, "operations/"):
 		s.dispatchOperations(w, r, path)
+	case path == "sessions" || strings.HasPrefix(path, "sessions/"):
+		s.dispatchSessions(w, r, path)
+	default:
+		s.dispatchOtherV1(w, r, path)
+	}
+}
 
+func (s *Server) dispatchOtherV1(w http.ResponseWriter, r *http.Request, path string) {
+	switch {
 	case path == "audit":
 		if r.Method == http.MethodGet {
 			s.handleGetAudit(w, r)
 		} else {
 			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 		}
-
 	case path == "receipts":
 		if r.Method == http.MethodGet {
 			s.handleListReceipts(w, r)
 		} else {
 			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 		}
-
 	case strings.HasPrefix(path, "receipts/"):
 		s.dispatchReceiptSubroute(w, r, strings.TrimPrefix(path, "receipts/"))
-
 	case path == "daemon/stop":
 		if r.Method == http.MethodPost {
 			s.handleStopDaemon(w, r)
 		} else {
 			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 		}
-
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "endpoint not found")
 	}
@@ -382,6 +406,13 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.opMgr != nil {
 		if err := s.opMgr.Shutdown(ctx); err != nil {
 			errs = append(errs, fmt.Errorf("daemon: operations manager shutdown error: %w", err))
+		}
+	}
+
+	// 1b. Shutdown session manager (terminates active SSH sessions)
+	if s.sessionMgr != nil {
+		if err := s.sessionMgr.Shutdown(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("daemon: session manager shutdown error: %w", err))
 		}
 	}
 

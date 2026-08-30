@@ -160,9 +160,57 @@ func ValidateOperationParameters(kind OperationKind, params map[string]any) erro
 		return validateCheckpointCreateParams(params)
 	case "checkpoint.restore":
 		return validateCheckpointRestoreParams(params)
+	case "session.open":
+		return validateSessionOpenParams(params)
+	case "session.read":
+		return validateSessionReadParams(params)
+	case "session.write":
+		return validateSessionWriteParams(params)
+	case "session.control":
+		return validateSessionControlParams(params)
+	case "session.wait":
+		return validateSessionWaitParams(params)
+	case "session.list":
+		return validateSessionListParams(params)
+	case "session.show":
+		return validateSessionShowParams(params)
+	case "session.close":
+		return validateSessionCloseParams(params)
 	default:
 		return ErrInvalidOperationKind
 	}
+}
+
+// ValidateSessionID checks that a session identifier matches the canonical sess-<32 lowercase hex> format.
+func ValidateSessionID(s string) error {
+	if len(s) != 37 || !strings.HasPrefix(s, "sess-") {
+		return fmt.Errorf("%w: session ID must be 'sess-' followed by 32 lowercase hex characters", ErrInvalidSessionID)
+	}
+	hexPart := s[5:]
+	for i := 0; i < len(hexPart); i++ {
+		c := hexPart[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return fmt.Errorf("%w: session ID contains non-hexadecimal character %q", ErrInvalidSessionID, c)
+		}
+	}
+	return nil
+}
+
+// ValidateControlKey checks that a control key is a recognized and valid key identifier.
+func ValidateControlKey(s string) error {
+	_, err := NormalizeControlKey(s)
+	return err
+}
+
+// ValidateTerminalDimensions validates columns and rows within allowed bounds.
+func ValidateTerminalDimensions(cols, rows uint16) error {
+	if cols < MinCols || cols > MaxCols {
+		return fmt.Errorf("%w: cols %d out of bounds [%d, %d]", ErrInvalidTerminalDimensions, cols, MinCols, MaxCols)
+	}
+	if rows < MinRows || rows > MaxRows {
+		return fmt.Errorf("%w: rows %d out of bounds [%d, %d]", ErrInvalidTerminalDimensions, rows, MinRows, MaxRows)
+	}
+	return nil
 }
 
 func validateStartParams(params map[string]any) error {

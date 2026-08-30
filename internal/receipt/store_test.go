@@ -67,6 +67,20 @@ func TestStore_SaveAndLookupIdempotency_ExactMatch(t *testing.T) {
 	}
 }
 
+func TestStoreCheckWritable(t *testing.T) {
+	store := receipt.NewStore(t.TempDir())
+	if err := store.CheckWritable(); err != nil {
+		t.Fatalf("writable store rejected: %v", err)
+	}
+	badPath := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(badPath, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := receipt.NewStore(badPath).CheckWritable(); err == nil {
+		t.Fatal("non-directory receipt store accepted")
+	}
+}
+
 func TestStore_LookupIdempotency_CrossActorCollision(t *testing.T) {
 	dir := t.TempDir()
 	store := receipt.NewStore(dir)

@@ -58,6 +58,11 @@ type Event struct {
 // Option configures Store behavior.
 type Option func(*Store)
 
+// WithAppendHook injects a pre-append failure hook for deterministic durability tests.
+func WithAppendHook(fn func(Event) error) Option {
+	return func(s *Store) { s.appendHook = fn }
+}
+
 // Store manages append-only persistence of audit events.
 type Store struct {
 	dir              string
@@ -67,6 +72,7 @@ type Store struct {
 	livenessChecker  lease.LivenessChecker
 	identityProvider lease.IdentityProvider
 	lockTimeout      time.Duration
+	appendHook       func(Event) error
 }
 
 // NewStore creates a new audit Store for the given directory.
@@ -189,6 +195,11 @@ func (s *Store) RecordTerminalOutcome(r domain.Receipt) error {
 func (s *Store) appendEvent(event Event) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.appendHook != nil {
+		if err := s.appendHook(event); err != nil {
+			return err
+		}
+	}
 
 	data, err := json.Marshal(event)
 	if err != nil {
