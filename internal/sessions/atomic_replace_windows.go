@@ -4,22 +4,25 @@ package sessions
 
 import (
 	"errors"
+	"fmt"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
 
 type fileRenameInformation struct {
-	ReplaceIfExists uint32
-	RootDirectory   windows.Handle
-	FileNameLength  uint32
-	FileName        [1]uint16
+	Flags          uint32
+	RootDirectory  windows.Handle
+	FileNameLength uint32
+	FileName       [1]uint16
 }
 
-func atomicReplace(oldPath, newPath string) error {
+const fileRenameInfoExFlags = windows.FILE_RENAME_REPLACE_IF_EXISTS | windows.FILE_RENAME_POSIX_SEMANTICS
+
+func atomicReplace(oldPath, newPath string) (atomicReplaceMethod, error) {
 	oldPath16, err := windows.UTF16PtrFromString(oldPath)
 	if err != nil {
-		return err
+		return "", err
 	}
 	handle, err := windows.CreateFile(
 		oldPath16,
@@ -31,30 +34,38 @@ func atomicReplace(oldPath, newPath string) error {
 		0,
 	)
 	if err != nil {
-		return err
+		return "", err
 	}
-	defer windows.CloseHandle(handle)
 
 	newPath16, err := windows.UTF16FromString(newPath)
 	if err != nil {
-		return err
+		_ = windows.CloseHandle(handle)
+		return "", err
 	}
 	fileNameLength := len(newPath16)*2 - 2
 	var layout fileRenameInformation
 	bufferSize := int(unsafe.Offsetof(layout.FileName)) + fileNameLength
 	buffer := make([]byte, bufferSize)
 	info := (*fileRenameInformation)(unsafe.Pointer(&buffer[0]))
-	info.ReplaceIfExists = windows.FILE_RENAME_REPLACE_IF_EXISTS | windows.FILE_RENAME_POSIX_SEMANTICS
+	info.Flags = fileRenameInfoExFlags
 	info.FileNameLength = uint32(fileNameLength)
 	copy(unsafe.Slice(&info.FileName[0], len(newPath16)-1), newPath16[:len(newPath16)-1])
 
-	err = windows.SetFileInformationByHandle(handle, windows.FileRenameInfoEx, &buffer[0], uint32(bufferSize))
-	if err == nil {
-		return nil
+	renameErr := windows.SetFileInformationByHandle(handle, windows.FileRenameInfoEx, &buffer[0], uint32(bufferSize))
+	closeErr := windows.CloseHandle(handle)
+	if renameErr == nil && closeErr == nil {
+		return atomicReplaceMethodFileRenameInfoEx, nil
+	}
+	if renameErr == nil {
+		return "", fmt.Errorf("sessions: close FileRenameInfoEx source handle: %w", closeErr)
 	}
 	fallbackErr := windows.Rename(oldPath, newPath)
 	if fallbackErr == nil {
-		return nil
+		return atomicReplaceMethodMoveFileEx, nil
 	}
-	return errors.Join(err, fallbackErr)
+	return "", errors.Join(
+		fmt.Errorf("sessions: FileRenameInfoEx: %w", renameErr),
+		fmt.Errorf("sessions: close FileRenameInfoEx source handle: %w", closeErr),
+		fmt.Errorf("sessions: MoveFileEx fallback: %w", fallbackErr),
+	)
 }

@@ -2,8 +2,15 @@
 
 package sessions
 
-import "os"
+import (
+	"context"
+	"os"
+)
 
-func atomicReplace(oldPath, newPath string) error {
-	return os.Rename(oldPath, newPath)
+func atomicReplace(oldPath, newPath string) (atomicReplaceMethod, error) {
+	return atomicReplaceMethodRename, os.Rename(oldPath, newPath)
+}
+
+func verifySessionFilePublication(context.Context, string, []byte) error {
+	return nil
 }

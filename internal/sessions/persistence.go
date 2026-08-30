@@ -10,6 +10,14 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/statedir"
 )
 
+type atomicReplaceMethod string
+
+const (
+	atomicReplaceMethodRename           atomicReplaceMethod = "rename"
+	atomicReplaceMethodFileRenameInfoEx atomicReplaceMethod = "FileRenameInfoEx"
+	atomicReplaceMethodMoveFileEx       atomicReplaceMethod = "MoveFileEx"
+)
+
 func (m *Manager) persistSession(s *Session) error {
 	if m.sessionsDir == "" {
 		return nil
@@ -73,11 +81,15 @@ func replaceSessionFileContext(ctx context.Context, filePath string, data []byte
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := atomicReplace(tmpPath, filePath); err != nil {
+	method, err := atomicReplace(tmpPath, filePath)
+	if err != nil {
 		return err
 	}
 	if err := statedir.SyncDir(dir); err != nil {
 		return err
+	}
+	if err := verifySessionFilePublication(ctx, filePath, data); err != nil {
+		return fmt.Errorf("sessions: canonical publication after %s failed: %w", method, err)
 	}
 	return nil
 }

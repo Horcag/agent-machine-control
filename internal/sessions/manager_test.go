@@ -161,7 +161,7 @@ func TestManagerExpiredContextsNeverReachSessionEffects(t *testing.T) {
 	}
 }
 
-func setupTestManager(t *testing.T) (*sessions.Manager, *fakeserver.FakeSSHServer, domain.ActorContext, domain.ActorContext, string) {
+func setupTestManager(t *testing.T, opts ...sessions.ManagerOption) (*sessions.Manager, *fakeserver.FakeSSHServer, domain.ActorContext, domain.ActorContext, string) {
 	tempDir := t.TempDir()
 	sd, _ := statedir.Resolve(tempDir)
 	_ = sd.EnsureDirs()
@@ -183,7 +183,7 @@ func setupTestManager(t *testing.T) (*sessions.Manager, *fakeserver.FakeSSHServe
 	}
 
 	transport := guestssh.NewTransport(kp)
-	mgr := sessions.NewManager(sd.SessionsDir(), transport, time.Now)
+	mgr := sessions.NewManager(sd.SessionsDir(), transport, time.Now, opts...)
 
 	agentScopes := domain.NewScopeSet(domain.ScopeSessionRead, domain.ScopeSessionWrite, domain.ScopeSessionOpen, domain.ScopeSessionClose)
 	agentActor, _ := domain.NewActorContext("agent:test", "agent:test", agentScopes, agentScopes)
