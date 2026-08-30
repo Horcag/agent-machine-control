@@ -169,8 +169,8 @@ func TestSSHChannelCloseReportsTransportFailuresTruthfully(t *testing.T) {
 	if !errors.Is(err, stdinErr) || !errors.Is(err, connErr) {
 		t.Fatalf("Close error = %v, want joined stdin and connection failures", err)
 	}
-	if err := channel.Close(context.Background()); err != nil {
-		t.Fatalf("idempotent Close after reported failure = %v, want nil", err)
+	if err := channel.Close(context.Background()); !errors.Is(err, stdinErr) || !errors.Is(err, connErr) {
+		t.Fatalf("idempotent Close after reported failure = %v, want cached joined failure", err)
 	}
 	if got := stdin.closeCount.Load(); got != 1 {
 		t.Fatalf("stdin close count = %d, want 1", got)

@@ -129,19 +129,19 @@ func (p *LocalKeyProvider) GetClientSigner(_ context.Context, target domain.Mach
 		alias = cfg.DefaultKeyAlias
 	}
 
-	if err := domain.ValidateBoundedString(alias, 1, 128, domain.ErrNonCanonicalParameter); err != nil {
-		return nil, fmt.Errorf("ssh: invalid key alias %q: %w", alias, err)
+	if err := validateKeyAlias(alias); err != nil {
+		return nil, fmt.Errorf("ssh: invalid key alias: %w", err)
 	}
 
 	data, err := loadPrivateKeyMaterial(p.stateDir.KeysDir(), alias)
 	if err != nil {
-		return nil, fmt.Errorf("ssh: failed to load protected private key for alias %q: %w", alias, err)
+		return nil, fmt.Errorf("ssh: failed to load protected private key for configured alias: %w", err)
 	}
 	defer zeroBytes(data)
 
 	signer, err := gossh.ParsePrivateKey(data)
 	if err != nil {
-		return nil, fmt.Errorf("ssh: failed to parse private key for alias %q: %w", alias, err)
+		return nil, errors.New("ssh: failed to parse protected private key for configured alias")
 	}
 
 	return signer, nil

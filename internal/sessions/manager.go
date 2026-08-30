@@ -2,23 +2,20 @@ package sessions
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/domain"
 	guestssh "github.com/Horcag/agent-machine-control/internal/guest/ssh"
-	"github.com/Horcag/agent-machine-control/internal/statedir"
 )
 
 // Session represents an active or durable persistent SSH terminal session.
 type Session struct {
 	mu           sync.RWMutex
+	persistMu    sync.Mutex
 	writeSem     chan struct{}
 	closeSem     chan struct{}
 	obs          domain.SessionObservation
@@ -26,6 +23,7 @@ type Session struct {
 	buffer       *RingBuffer
 	sanitizer    *guestssh.StreamSanitizer
 	closed       bool
+	terminalErr  error
 	closedCh     chan struct{}
 	closeOnce    sync.Once
 	openParamsFp string
@@ -87,28 +85,6 @@ func (m *Manager) authorize(caller domain.ActorContext, s *Session) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return string(caller.EffectiveActor) == string(s.obs.OwnerActor)
-}
-
-func (m *Manager) persistSession(s *Session) error {
-	if m.sessionsDir == "" {
-		return nil
-	}
-	s.mu.RLock()
-	obs := s.obs
-	s.mu.RUnlock()
-
-	filePath := filepath.Join(m.sessionsDir, fmt.Sprintf("%s.json", obs.ID))
-	data, err := json.MarshalIndent(obs, "", "  ")
-	if err != nil {
-		return fmt.Errorf("sessions: failed to marshal session %s: %w", obs.ID, err)
-	}
-	if err := os.WriteFile(filePath, data, 0600); err != nil {
-		return fmt.Errorf("sessions: failed to write session file %s: %w", filePath, err)
-	}
-	if err := statedir.SyncDir(m.sessionsDir); err != nil {
-		return fmt.Errorf("sessions: failed to sync sessions dir: %w", err)
-	}
-	return nil
 }
 
 // Open establishes a new persistent SSH terminal session or returns an existing idempotent session.
@@ -203,7 +179,7 @@ func (m *Manager) Open(ctx context.Context, op domain.Operation, cols, rows uint
 	go m.pumpChannelOutput(session)
 
 	// Start exit waiter
-	go m.waitChannelExit(session)
+	go m.waitChannelExit(context.WithoutCancel(ctx), session)
 
 	return &obs, nil
 }
@@ -233,23 +209,15 @@ func (m *Manager) pumpChannelOutput(s *Session) {
 	}
 }
 
-func (m *Manager) waitChannelExit(s *Session) {
-	exitCode, _ := s.channel.Wait()
-	now := m.now()
-
-	s.mu.Lock()
-	if !s.obs.State.IsTerminal() && s.obs.State != domain.SessionStateClosing {
-		s.obs.State = domain.SessionStateClosed
-		s.obs.ClosedAt = &now
-		s.obs.ExitCode = &exitCode
-		s.closed = true
+func (m *Manager) waitChannelExit(parent context.Context, s *Session) {
+	exitCode, waitErr := s.channel.Wait()
+	ctx, cancel := context.WithTimeout(parent, sessionCleanupTimeout)
+	defer cancel()
+	if err := acquireSessionCloseLane(ctx, s); err != nil {
+		return
 	}
-	s.mu.Unlock()
-
-	_ = m.persistSession(s)
-	s.closeOnce.Do(func() {
-		close(s.closedCh)
-	})
+	defer releaseSessionCloseLane(s)
+	_, _ = m.finalizeSession(ctx, s, finalizationNaturalExit, &exitCode, waitErr, false)
 }
 
 // Read returns buffered chunks from a session starting after sequence cursor afterSeq.
@@ -372,56 +340,11 @@ func (m *Manager) Close(ctx context.Context, id domain.SessionID, caller domain.
 	if !ok || !m.authorize(caller, s) {
 		return nil, domain.ErrSessionNotFound
 	}
-	select {
-	case s.closeSem <- struct{}{}:
-		defer func() { <-s.closeSem }()
-	case <-ctx.Done():
+	if err := acquireSessionCloseLane(ctx, s); err != nil {
 		return nil, ctx.Err()
 	}
-
-	s.mu.Lock()
-	if s.obs.State.IsTerminal() {
-		obs := s.obs
-		s.mu.Unlock()
-		if obs.State == domain.SessionStateFailed && obs.ErrorMessage != "" {
-			return &obs, errors.New(obs.ErrorMessage)
-		}
-		return &obs, nil
-	}
-	if s.obs.State == domain.SessionStateClosing {
-		obs := s.obs
-		s.mu.Unlock()
-		return &obs, errors.New("sessions: transport close is incomplete")
-	}
-	s.obs.State = domain.SessionStateClosing
-	s.mu.Unlock()
-
-	closeErr := s.channel.Close(ctx)
-	now := m.now()
-	s.mu.Lock()
-	if closeErr != nil {
-		s.obs.ErrorMessage = "transport_close_failed"
-		if force {
-			s.obs.State = domain.SessionStateFailed
-			s.obs.ClosedAt = &now
-			s.closed = true
-		}
-	} else {
-		s.obs.State = domain.SessionStateClosed
-		s.obs.ClosedAt = &now
-		s.closed = true
-	}
-	obs := s.obs
-	s.mu.Unlock()
-
-	if err := m.persistSession(s); err != nil {
-		return &obs, errors.Join(closeErr, err)
-	}
-	if closeErr != nil {
-		return &obs, closeErr
-	}
-
-	return &obs, nil
+	defer releaseSessionCloseLane(s)
+	return m.finalizeSession(ctx, s, finalizationExplicitClose, nil, nil, force)
 }
 
 // Shutdown cleanly terminates all active sessions.
@@ -435,45 +358,15 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 
 	var errs []error
 	for _, s := range sessions {
-		select {
-		case s.closeSem <- struct{}{}:
-		case <-ctx.Done():
+		if err := acquireSessionCloseLane(ctx, s); err != nil {
 			errs = append(errs, ctx.Err())
 			continue
 		}
-
-		s.mu.Lock()
-		terminal := s.obs.State.IsTerminal()
-		if !terminal {
-			s.obs.State = domain.SessionStateClosing
-		}
-		s.mu.Unlock()
-
-		closeErr := s.channel.Close(ctx)
-		if errors.Is(closeErr, io.EOF) {
-			closeErr = nil
-		}
-		if !terminal {
-			now := m.now()
-			s.mu.Lock()
-			s.closed = true
-			s.obs.ClosedAt = &now
-			if closeErr == nil {
-				s.obs.State = domain.SessionStateClosed
-				s.obs.ErrorMessage = ""
-			} else {
-				s.obs.State = domain.SessionStateFailed
-				s.obs.ErrorMessage = "transport_close_failed"
-			}
-			s.mu.Unlock()
-		}
-		if err := m.persistSession(s); err != nil {
-			errs = append(errs, err)
-		}
+		_, closeErr := m.finalizeSession(ctx, s, finalizationShutdown, nil, nil, true)
 		if closeErr != nil {
 			errs = append(errs, closeErr)
 		}
-		<-s.closeSem
+		releaseSessionCloseLane(s)
 	}
 
 	return errors.Join(errs...)

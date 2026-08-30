@@ -387,7 +387,18 @@ func runHTTP(ctx context.Context, server *mcp.Server, stateDir, listenAddr strin
 		return 2
 	}
 	defer listener.Close()
+	return runHTTPListener(ctx, server, listener, expectedAgentToken, sigChan, nil, stderr)
+}
 
+func runHTTPListener(
+	ctx context.Context,
+	server *mcp.Server,
+	listener net.Listener,
+	expectedAgentToken string,
+	sigChan <-chan os.Signal,
+	ready chan<- struct{},
+	stderr io.Writer,
+) int {
 	mcpHandler := mcp.NewStreamableHTTPHandler(func(_ *http.Request) *mcp.Server {
 		return server
 	}, nil)
@@ -415,7 +426,7 @@ func runHTTP(ctx context.Context, server *mcp.Server, stateDir, listenAddr strin
 	}
 
 	httpServer := &http.Server{
-		Addr:              listenAddr,
+		Addr:              listener.Addr().String(),
 		Handler:           authMiddleware(mcpHandler),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
@@ -427,6 +438,9 @@ func runHTTP(ctx context.Context, server *mcp.Server, stateDir, listenAddr strin
 		}
 		close(serveErrChan)
 	}()
+	if ready != nil {
+		close(ready)
+	}
 
 	fmt.Fprintf(stderr, "amc-mcp streamable HTTP server listening on %s\n", listener.Addr().String())
 

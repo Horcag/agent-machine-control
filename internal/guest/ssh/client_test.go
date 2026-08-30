@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -237,7 +238,7 @@ func TestSSHTransport_ChannelMethods(t *testing.T) {
 	}
 
 	// Close channel
-	_ = channel.Close(ctx)
+	firstCloseErr := channel.Close(ctx)
 
 	// Resize after close
 	if err := channel.Resize(80, 24); err != domain.ErrSessionClosed {
@@ -245,8 +246,8 @@ func TestSSHTransport_ChannelMethods(t *testing.T) {
 	}
 
 	// Close again idempotent
-	if err := channel.Close(ctx); err != nil {
-		t.Errorf("expected nil on idempotent Close, got %v", err)
+	if err := channel.Close(ctx); !errors.Is(err, firstCloseErr) {
+		t.Errorf("idempotent Close error = %v, want cached %v", err, firstCloseErr)
 	}
 
 	// Wait

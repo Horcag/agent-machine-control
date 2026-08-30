@@ -28,6 +28,17 @@ type Channel interface {
 	Wait() (exitCode int, err error)
 }
 
+// CloseOutcome reports whether transport cleanup completed and the immutable result of that attempt.
+type CloseOutcome struct {
+	Complete bool
+	Err      error
+}
+
+// CloseOutcomeProvider is implemented by channels that can distinguish a retryable no-effect close from completed cleanup.
+type CloseOutcomeProvider interface {
+	LastCloseOutcome() CloseOutcome
+}
+
 // NativeTransport dials target machines using SSH protocol and allocates pseudo-terminals.
 type NativeTransport struct {
 	keyProvider KeyProvider
@@ -233,6 +244,7 @@ type sshChannel struct {
 	closeLane     chan struct{}
 	closed        bool
 	closeComplete bool
+	closeErr      error
 	waitOnce      sync.Once
 	exitCode      int
 	waitErr       error
@@ -314,8 +326,8 @@ func (c *sshChannel) Close(ctx context.Context) error {
 	}
 	defer releaseContextLane(c.closeLane)
 
-	if !c.startClose() {
-		return nil
+	if complete, err := c.closeResult(); complete {
+		return err
 	}
 	if err := acquireContextLane(ctx, c.writeLane); err != nil {
 		return err
@@ -329,26 +341,34 @@ func (c *sshChannel) Close(ctx context.Context) error {
 		errs = append(errs, err)
 	}
 	errs = append(errs, c.closeTransportResources()...)
-	c.finishClose()
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		errs = append(errs, ctxErr)
 	}
-	return errors.Join(errs...)
+	closeErr := errors.Join(errs...)
+	c.finishClose(closeErr)
+	return closeErr
 }
 
-func (c *sshChannel) startClose() bool {
+func (c *sshChannel) closeResult() (bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closeComplete {
-		return false
+		return true, c.closeErr
 	}
 	c.closed = true
-	return true
+	return false, nil
 }
 
-func (c *sshChannel) finishClose() {
+func (c *sshChannel) LastCloseOutcome() CloseOutcome {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return CloseOutcome{Complete: c.closeComplete, Err: c.closeErr}
+}
+
+func (c *sshChannel) finishClose(err error) {
 	c.mu.Lock()
 	c.closeComplete = true
+	c.closeErr = err
 	c.mu.Unlock()
 }
 

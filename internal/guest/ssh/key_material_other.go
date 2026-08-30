@@ -4,13 +4,18 @@ package ssh
 
 import (
 	"os"
-	"path/filepath"
 )
 
 func loadPrivateKeyMaterial(keysDir, alias string) ([]byte, error) {
-	keyPath := filepath.Join(keysDir, alias+".key")
+	keyPath, err := keyMaterialPath(keysDir, alias, ".key")
+	if err != nil {
+		return nil, err
+	}
 	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
-		keyPath = filepath.Join(keysDir, alias)
+		keyPath, err = keyMaterialPath(keysDir, alias, "")
+		if err != nil {
+			return nil, err
+		}
 	}
 	return validateStrictFile(keyPath)
 }
