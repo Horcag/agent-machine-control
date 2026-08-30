@@ -24,6 +24,7 @@ type capturedSessionRequests struct {
 	listQuery  url.Values
 	close      daemon.SessionCloseRequest
 	showCalled bool
+	approvals  []daemon.SessionApprovalIssueRequest
 }
 
 func newCapturedSessionHandler(t *testing.T, captured *capturedSessionRequests, sessionID string) http.Handler {
@@ -37,6 +38,19 @@ func newCapturedSessionHandler(t *testing.T, captured *capturedSessionRequests, 
 				SessionID: sessionID,
 				Target:    captured.open.Target,
 				State:     "active",
+			},
+		})
+	})
+	mux.HandleFunc("POST /v1/session-approvals", func(w http.ResponseWriter, r *http.Request) {
+		var request daemon.SessionApprovalIssueRequest
+		decodeCapturedRequest(t, r, &request)
+		captured.approvals = append(captured.approvals, request)
+		writeCapturedResponse(t, w, daemon.SessionApprovalIssueResponse{
+			SchemaVersion: "1", ApprovalID: "app-session-0123456789abcdef0123456789abcdef",
+			Deadline: "2026-08-30T10:01:00Z", ExpiresAt: "2026-08-30T10:01:00Z",
+			Operation: daemon.SessionApprovalOperationDTO{
+				Kind: request.Kind, Target: request.Target, Reason: request.Reason,
+				IdempotencyKey: request.IdempotencyKey, Parameters: map[string]any{},
 			},
 		})
 	})
@@ -82,6 +96,99 @@ func newCapturedSessionHandler(t *testing.T, captured *capturedSessionRequests, 
 		})
 	})
 	return mux
+}
+
+type sessionApprovalPrompter struct {
+	confirm bool
+	calls   int
+}
+
+func (p *sessionApprovalPrompter) PromptConfirmation(_ string) bool {
+	p.calls++
+	return p.confirm
+}
+
+func TestCLISessionApproveConfirmsAndTranslatesAllOperationKinds(t *testing.T) {
+	var captured capturedSessionRequests
+	statePath, sessionID := setupCapturedSessionCLI(t, &captured)
+	prompter := &sessionApprovalPrompter{confirm: true}
+	application := cli.NewApp(nil, cli.WithStateDir(statePath), cli.WithPrompter(prompter))
+	machineID := "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
+	writeData := "CLI_PRIVATE_WRITE_42"
+
+	commands := [][]string{
+		{"session", "approve", "open", machineID, "--reason", "approve open", "--idempotency-key", "cli-approve-open", "--valid-for", "45s", "--json"},
+		{"session", "approve", "write", sessionID, "--data", writeData, "--reason", "approve write", "--idempotency-key", "cli-approve-write", "--valid-for", "45s", "--json"},
+		{"session", "approve", "control", sessionID, "ctrl-c", "--reason", "approve control", "--idempotency-key", "cli-approve-control", "--valid-for", "45s", "--json"},
+		{"session", "approve", "close", sessionID, "--force", "--reason", "approve close", "--idempotency-key", "cli-approve-close", "--valid-for", "45s", "--json"},
+	}
+	for _, command := range commands {
+		var stdout, stderr bytes.Buffer
+		if code := application.Run(command, &stdout, &stderr); code != cli.ExitSuccess {
+			t.Fatalf("command %v exit=%d stderr=%s", command, code, stderr.String())
+		}
+		if bytes.Contains(stdout.Bytes(), []byte(writeData)) {
+			t.Fatalf("command %v leaked write plaintext", command)
+		}
+	}
+	if prompter.calls != 4 || len(captured.approvals) != 4 {
+		t.Fatalf("prompts=%d approvals=%d", prompter.calls, len(captured.approvals))
+	}
+	if captured.approvals[0].Kind != "session.open" || captured.approvals[0].Target != machineID || captured.approvals[0].ValidForMillis != 45_000 {
+		t.Fatalf("open approval request=%+v", captured.approvals[0])
+	}
+	if captured.approvals[1].Kind != "session.write" || captured.approvals[1].SessionID != sessionID || captured.approvals[1].Data != writeData {
+		t.Fatalf("write approval request=%+v", captured.approvals[1])
+	}
+	if captured.approvals[2].Key != "ctrl-c" || !captured.approvals[3].Force {
+		t.Fatalf("control/close requests=%+v %+v", captured.approvals[2], captured.approvals[3])
+	}
+}
+
+func TestCLISessionApproveDeclinedConfirmationSendsNothing(t *testing.T) {
+	var captured capturedSessionRequests
+	statePath, _ := setupCapturedSessionCLI(t, &captured)
+	prompter := &sessionApprovalPrompter{confirm: false}
+	application := cli.NewApp(nil, cli.WithStateDir(statePath), cli.WithPrompter(prompter))
+	var stdout, stderr bytes.Buffer
+	code := application.Run([]string{
+		"session", "approve", "open", "c4a523d4-6b99-4d62-a5e2-4752c0f20001",
+		"--reason", "decline approval", "--idempotency-key", "cli-approve-declined", "--valid-for", "30s", "--json",
+	}, &stdout, &stderr)
+	if code != cli.ExitDenied || prompter.calls != 1 || len(captured.approvals) != 0 {
+		t.Fatalf("exit=%d prompts=%d approvals=%d", code, prompter.calls, len(captured.approvals))
+	}
+}
+
+func TestCLISessionApproveHelpAndInvalidRequestsStayLocal(t *testing.T) {
+	var captured capturedSessionRequests
+	statePath, sessionID := setupCapturedSessionCLI(t, &captured)
+	prompter := &sessionApprovalPrompter{confirm: true}
+	application := cli.NewApp(nil, cli.WithStateDir(statePath), cli.WithPrompter(prompter))
+	machineID := "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
+
+	var stdout, stderr bytes.Buffer
+	if code := application.Run([]string{"session", "approve", "--help"}, &stdout, &stderr); code != cli.ExitSuccess {
+		t.Fatalf("help exit=%d stderr=%s", code, stderr.String())
+	}
+	invalid := [][]string{
+		{"session", "approve", "open", machineID, "--idempotency-key", "missing-reason", "--valid-for", "30s"},
+		{"session", "approve", "open", machineID, "--reason", "missing key", "--valid-for", "30s"},
+		{"session", "approve", "open", machineID, "--reason", "bad duration", "--idempotency-key", "bad-duration", "--valid-for", "500ms"},
+		{"session", "approve", "write", sessionID, "--reason", "missing data", "--idempotency-key", "missing-data", "--valid-for", "30s"},
+		{"session", "approve", "control", sessionID, "--reason", "missing control", "--idempotency-key", "missing-control", "--valid-for", "30s"},
+		{"session", "approve", "unknown", machineID, "--reason", "unknown action", "--idempotency-key", "unknown-action", "--valid-for", "30s"},
+	}
+	for _, args := range invalid {
+		stdout.Reset()
+		stderr.Reset()
+		if code := application.Run(args, &stdout, &stderr); code != cli.ExitUsage {
+			t.Fatalf("args=%v exit=%d stderr=%s", args, code, stderr.String())
+		}
+	}
+	if prompter.calls != 0 || len(captured.approvals) != 0 {
+		t.Fatalf("invalid requests prompted=%d sent=%d", prompter.calls, len(captured.approvals))
+	}
 }
 
 func decodeCapturedRequest(t *testing.T, request *http.Request, target any) {

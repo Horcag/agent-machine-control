@@ -48,7 +48,10 @@ func buildOpenOperation(params SessionOpenParams, deadline time.Time) (domain.Op
 
 // OpenSession coordinates policy, audit, and receipt for session.open.
 func (s *SessionService) OpenSession(ctx context.Context, params SessionOpenParams) (*domain.SessionObservation, *domain.Receipt, error) {
-	ctx, cancel, deadline, timeout := s.beginSessionMutation(ctx, params.Timeout)
+	if params.ApprovalID != "" && params.Deadline.IsZero() {
+		return nil, nil, fmt.Errorf("%w: approval_id requires the exact issued deadline", domain.ErrMissingDeadline)
+	}
+	ctx, cancel, deadline, timeout := s.beginSessionMutation(ctx, params.Timeout, params.Deadline)
 	defer cancel()
 	op, cols, rows, term := buildOpenOperation(params, deadline)
 	flightKey := fmt.Sprintf("%s:%s:%s", params.Caller.EffectiveActor, params.Target, params.IdempotencyKey)

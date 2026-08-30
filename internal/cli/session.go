@@ -30,7 +30,7 @@ var sessionSubcommands = map[string]sessionSubcommandRunner{
 	"attach":  runSessionAttach,
 }
 
-func runSession(ctx context.Context, directMode bool, stateDir string, args []string, stdout, stderr io.Writer) int {
+func runSession(ctx context.Context, prompter Prompter, directMode bool, stateDir string, args []string, stdout, stderr io.Writer) int {
 	if directMode {
 		fmt.Fprintln(stderr, "amc: session commands cannot run in --direct mode; daemon amcd is required")
 		return ExitBackendUnavailable
@@ -54,6 +54,9 @@ func runSession(ctx context.Context, directMode bool, stateDir string, args []st
 		fmt.Fprintf(stderr, "amc: sessions require the background daemon (amcd); run 'amcd run' to start the daemon: %v\n", err)
 		return ExitBackendUnavailable
 	}
+	if sub == "approve" {
+		return runSessionApprove(ctx, cl, prompter, subArgs, stdout, stderr)
+	}
 
 	runner, ok := sessionSubcommands[sub]
 	if !ok {
@@ -76,6 +79,7 @@ func printSessionUsage(w io.Writer) {
 	fmt.Fprintln(w, "  list               List active and recent sessions")
 	fmt.Fprintln(w, "  show <session-id>  Show details of a session")
 	fmt.Fprintln(w, "  close <session-id> Close a persistent session")
+	fmt.Fprintln(w, "  approve <operation> Issue one exact, short-lived approval for agent:mcp-local")
 	fmt.Fprintln(w, "  attach <session-id> Interactively attach to a session")
 }
 

@@ -274,6 +274,7 @@ func (a *App) RunWithContext(ctx context.Context, args []string, stdout, stderr 
 	case "session":
 		return runSession(
 			ctx,
+			a.prompter,
 			directMode,
 			stateDir,
 			cmdArgs,

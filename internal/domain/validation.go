@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -192,9 +193,41 @@ func ValidateOperationParameters(kind OperationKind, params map[string]any) erro
 		return validateSessionShowParams(params)
 	case "session.close":
 		return validateSessionCloseParams(params)
+	case "session.approval.issue":
+		return validateSessionApprovalIssueParams(params)
 	default:
 		return ErrInvalidOperationKind
 	}
+}
+
+func validateSessionApprovalIssueParams(params map[string]any) error {
+	required := []string{"approval_id", "approved_fingerprint", "approved_kind", "beneficiary", "deadline"}
+	if len(params) != len(required) {
+		return fmt.Errorf("%w: session.approval.issue requires exactly the canonical issuance fields", ErrNonCanonicalParameter)
+	}
+	for _, key := range required {
+		value, ok := params[key].(string)
+		if !ok || value == "" {
+			return fmt.Errorf("%w: session.approval.issue field %s must be a non-empty string", ErrNonCanonicalParameter, key)
+		}
+	}
+	if err := ValidateApprovalID(params["approval_id"].(string)); err != nil {
+		return fmt.Errorf("%w: invalid approval_id", ErrNonCanonicalParameter)
+	}
+	if err := Fingerprint(params["approved_fingerprint"].(string)).Validate(); err != nil {
+		return fmt.Errorf("%w: invalid approved_fingerprint", ErrNonCanonicalParameter)
+	}
+	if err := OperationKind(params["approved_kind"].(string)).Validate(); err != nil {
+		return fmt.Errorf("%w: invalid approved_kind", ErrNonCanonicalParameter)
+	}
+	if err := ActorID(params["beneficiary"].(string)).Validate(); err != nil {
+		return fmt.Errorf("%w: invalid beneficiary", ErrNonCanonicalParameter)
+	}
+	deadline, err := time.Parse(time.RFC3339Nano, params["deadline"].(string))
+	if err != nil || deadline.UTC().Format(time.RFC3339Nano) != params["deadline"].(string) {
+		return fmt.Errorf("%w: deadline must be canonical RFC3339Nano UTC", ErrNonCanonicalParameter)
+	}
+	return nil
 }
 
 // ValidateSessionID checks that a session identifier matches the canonical sess-<32 lowercase hex> format.

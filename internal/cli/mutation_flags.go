@@ -70,6 +70,8 @@ var knownValueFlags = map[string]bool{
 	"-idempotency-key":  true,
 	"--timeout":         true,
 	"-timeout":          true,
+	"--valid-for":       true,
+	"-valid-for":        true,
 	"--mode":            true,
 	"-mode":             true,
 	"--name":            true,

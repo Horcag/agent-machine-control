@@ -133,6 +133,11 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_argument", "invalid session timeout")
 		return
 	}
+	deadline, err := ResolveSessionDeadline(req.ApprovalID, req.Deadline)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_argument", "invalid session deadline")
+		return
+	}
 
 	obs, rcpt, err := s.sessionService.OpenSession(r.Context(), app.SessionOpenParams{
 		Target:         req.Target,
@@ -140,6 +145,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		Reason:         req.Reason,
 		IdempotencyKey: req.IdempotencyKey,
 		Timeout:        timeout,
+		Deadline:       deadline,
 		Cols:           req.Cols,
 		Rows:           req.Rows,
 		Term:           req.Term,

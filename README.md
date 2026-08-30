@@ -57,7 +57,8 @@ amc --direct checkpoint restore <guid> <checkpoint-guid> --reason "reverting vm"
 Daemon-backed CLI commands and the MCP adapter expose the same application service for managed
 operations, receipts, audit records, and persistent guest SSH/PTTY sessions. See
 [Persistent SSH sessions](docs/ssh-sessions.md) for session setup, security boundaries, and the
-`session open`, `read`, `write`, `control`, `wait`, `list`, `show`, and `close` commands.
+`session open`, `read`, `write`, `control`, `wait`, `list`, `show`, `close`, and operator-only
+`session approve` commands.
 
 ### JSON mode
 

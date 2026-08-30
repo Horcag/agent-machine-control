@@ -31,6 +31,10 @@ func setupTestDaemonWithSSH(t *testing.T) (*daemon.Server, string, string, *fake
 }
 
 func setupTestDaemonWithSSHConfig(t *testing.T, sanitizerConfig guestssh.SanitizerConfig) (*daemon.Server, string, string, string, string, *fakeserver.FakeSSHServer) {
+	return setupTestDaemonWithSSHConfigAndContainment(t, sanitizerConfig, true)
+}
+
+func setupTestDaemonWithSSHConfigAndContainment(t *testing.T, sanitizerConfig guestssh.SanitizerConfig, contained bool) (*daemon.Server, string, string, string, string, *fakeserver.FakeSSHServer) {
 	tempDir := t.TempDir()
 
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
@@ -44,6 +48,10 @@ func setupTestDaemonWithSSHConfig(t *testing.T, sanitizerConfig guestssh.Sanitiz
 
 	chkID := "e4a523d4-6b99-4d62-a5e2-4752c0f20001"
 
+	rollbackID := chkID
+	if !contained {
+		rollbackID = ""
+	}
 	kp := &guestssh.MockKeyProvider{
 		Signer:          signer,
 		PinnedKeySHA256: fakeSSH.HostKeyPin(),
@@ -54,8 +62,8 @@ func setupTestDaemonWithSSHConfig(t *testing.T, sanitizerConfig guestssh.Sanitiz
 			User:                     "testadmin",
 			DefaultKeyAlias:          "default",
 			PinnedHostKeySHA256:      fakeSSH.HostKeyPin(),
-			ExternalEffectsContained: true,
-			RollbackCheckpointID:     chkID,
+			ExternalEffectsContained: contained,
+			RollbackCheckpointID:     rollbackID,
 		},
 	}
 	transport := guestssh.NewTransport(kp)

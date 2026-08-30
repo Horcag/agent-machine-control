@@ -87,6 +87,7 @@ type SessionOpenRequest struct {
 	Term           string           `json:"term,omitempty"`
 	TimeoutSeconds int64            `json:"timeout_seconds,omitempty"`
 	TimeoutMillis  int64            `json:"timeout_ms,omitempty"`
+	Deadline       string           `json:"deadline,omitempty"`
 	ApprovalID     string           `json:"approval_id,omitempty"`
 	Approval       *domain.Approval `json:"approval,omitempty"`
 }
@@ -117,6 +118,7 @@ type SessionWriteRequest struct {
 	IdempotencyKey string           `json:"idempotency_key"`
 	TimeoutSeconds int64            `json:"timeout_seconds,omitempty"`
 	TimeoutMillis  int64            `json:"timeout_ms,omitempty"`
+	Deadline       string           `json:"deadline,omitempty"`
 	ApprovalID     string           `json:"approval_id,omitempty"`
 	Approval       *domain.Approval `json:"approval,omitempty"`
 }
@@ -135,6 +137,7 @@ type SessionControlRequest struct {
 	IdempotencyKey string           `json:"idempotency_key"`
 	TimeoutSeconds int64            `json:"timeout_seconds,omitempty"`
 	TimeoutMillis  int64            `json:"timeout_ms,omitempty"`
+	Deadline       string           `json:"deadline,omitempty"`
 	ApprovalID     string           `json:"approval_id,omitempty"`
 	Approval       *domain.Approval `json:"approval,omitempty"`
 }
@@ -178,10 +181,47 @@ type SessionCloseRequest struct {
 	IdempotencyKey string `json:"idempotency_key"`
 	TimeoutSeconds int64  `json:"timeout_seconds,omitempty"`
 	TimeoutMillis  int64  `json:"timeout_ms,omitempty"`
+	Deadline       string `json:"deadline,omitempty"`
 	// Force requests immediate best-effort close; incomplete cleanup remains closing.
 	Force      bool             `json:"force,omitempty"`
 	ApprovalID string           `json:"approval_id,omitempty"`
 	Approval   *domain.Approval `json:"approval,omitempty"`
+}
+
+// SessionApprovalIssueRequest is the operator-only approval issuance payload.
+// Data is accepted only for hashing and length calculation and is never echoed.
+type SessionApprovalIssueRequest struct {
+	Kind           string `json:"kind"`
+	Target         string `json:"target,omitempty"`
+	SessionID      string `json:"session_id,omitempty"`
+	Data           string `json:"data,omitempty"`
+	Key            string `json:"key,omitempty"`
+	Reason         string `json:"reason"`
+	IdempotencyKey string `json:"idempotency_key"`
+	ValidForMillis int64  `json:"valid_for_ms"`
+	Cols           uint16 `json:"cols,omitempty"`
+	Rows           uint16 `json:"rows,omitempty"`
+	Term           string `json:"term,omitempty"`
+	Force          bool   `json:"force,omitempty"`
+}
+
+// SessionApprovalOperationDTO is the redacted operation identity bound by an approval.
+type SessionApprovalOperationDTO struct {
+	Kind           string         `json:"kind"`
+	Target         string         `json:"target"`
+	Reason         string         `json:"reason"`
+	IdempotencyKey string         `json:"idempotency_key"`
+	Parameters     map[string]any `json:"parameters"`
+}
+
+// SessionApprovalIssueResponse returns only the reference and copy-safe operation identity.
+type SessionApprovalIssueResponse struct {
+	SchemaVersion string                      `json:"schema_version"`
+	ApprovalID    string                      `json:"approval_id"`
+	Deadline      string                      `json:"deadline"`
+	ExpiresAt     string                      `json:"expires_at"`
+	Operation     SessionApprovalOperationDTO `json:"operation"`
+	Receipt       *receipt.DTO                `json:"receipt,omitempty"`
 }
 
 // SessionCloseResponse payload returned by POST /v1/sessions/{id}/close.

@@ -238,6 +238,12 @@ func (s *Server) dispatchV1(w http.ResponseWriter, r *http.Request) {
 		s.dispatchOperations(w, r, path)
 	case path == "sessions" || strings.HasPrefix(path, "sessions/"):
 		s.dispatchSessions(w, r, path)
+	case path == "session-approvals":
+		if r.Method == http.MethodPost {
+			s.handleIssueSessionApproval(w, r)
+		} else {
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+		}
 	default:
 		s.dispatchOtherV1(w, r, path)
 	}

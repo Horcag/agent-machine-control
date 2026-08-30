@@ -1910,6 +1910,10 @@
           "description": "Server-issued approval reference for destructive or privileged execution",
           "type": "string"
         },
+        "deadline": {
+          "description": "Exact canonical RFC3339Nano deadline returned with approval_id",
+          "type": "string"
+        },
         "force": {
           "description": "Request immediate best-effort close; incomplete cleanup remains closing",
           "type": "boolean"
@@ -2134,6 +2138,10 @@
       "properties": {
         "approval_id": {
           "description": "Server-issued approval reference for destructive or privileged execution",
+          "type": "string"
+        },
+        "deadline": {
+          "description": "Exact canonical RFC3339Nano deadline returned with approval_id",
           "type": "string"
         },
         "idempotency_key": {
@@ -2404,6 +2412,10 @@
           "maximum": 65535,
           "minimum": 0,
           "type": "integer"
+        },
+        "deadline": {
+          "description": "Exact canonical RFC3339Nano deadline returned with approval_id",
+          "type": "string"
         },
         "idempotency_key": {
           "description": "Idempotency key",
@@ -2956,6 +2968,10 @@
         },
         "data": {
           "description": "Character data or command to write",
+          "type": "string"
+        },
+        "deadline": {
+          "description": "Exact canonical RFC3339Nano deadline returned with approval_id",
           "type": "string"
         },
         "idempotency_key": {

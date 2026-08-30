@@ -27,6 +27,7 @@ type SessionService struct {
 
 	mu       sync.Mutex
 	inFlight map[string]*inFlightSessionCall
+	issueMu  sync.Mutex
 }
 
 type inFlightSessionCall struct {
@@ -70,6 +71,7 @@ type SessionOpenParams struct {
 	Reason         string
 	IdempotencyKey string
 	Timeout        time.Duration
+	Deadline       time.Time
 	Cols           uint16
 	Rows           uint16
 	Term           string
@@ -85,6 +87,7 @@ type SessionWriteParams struct {
 	Reason         string
 	IdempotencyKey string
 	Timeout        time.Duration
+	Deadline       time.Time
 	ApprovalID     string
 	Approval       *domain.Approval
 }
@@ -97,6 +100,7 @@ type SessionControlParams struct {
 	Reason         string
 	IdempotencyKey string
 	Timeout        time.Duration
+	Deadline       time.Time
 	ApprovalID     string
 	Approval       *domain.Approval
 }
@@ -108,6 +112,7 @@ type SessionCloseParams struct {
 	Reason         string
 	IdempotencyKey string
 	Timeout        time.Duration
+	Deadline       time.Time
 	Force          bool
 	ApprovalID     string
 	Approval       *domain.Approval
@@ -151,7 +156,18 @@ func (s *SessionService) now() time.Time {
 	return time.Now().UTC()
 }
 
-func (s *SessionService) beginSessionMutation(parent context.Context, requested time.Duration) (context.Context, context.CancelFunc, time.Time, time.Duration) {
+func (s *SessionService) beginSessionMutation(parent context.Context, requested time.Duration, exactDeadline time.Time) (context.Context, context.CancelFunc, time.Time, time.Duration) {
+	now := s.now()
+	if !exactDeadline.IsZero() {
+		exactDeadline = exactDeadline.UTC()
+		budget := exactDeadline.Sub(now)
+		if budget <= 0 {
+			ctx, cancel := context.WithCancel(parent)
+			return ctx, cancel, exactDeadline, 0
+		}
+		ctx, cancel := context.WithTimeout(parent, budget)
+		return ctx, cancel, exactDeadline, budget
+	}
 	if requested <= 0 {
 		requested = 30 * time.Second
 	}
@@ -162,7 +178,7 @@ func (s *SessionService) beginSessionMutation(parent context.Context, requested 
 		}
 	}
 	ctx, cancel := context.WithTimeout(parent, budget)
-	return ctx, cancel, s.now().Add(budget), budget
+	return ctx, cancel, now.Add(budget), budget
 }
 
 func (s *SessionService) hasSensitiveEvidenceScope(caller domain.ActorContext) bool {

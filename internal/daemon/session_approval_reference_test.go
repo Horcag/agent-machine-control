@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/daemon"
 	"github.com/Horcag/agent-machine-control/internal/domain"
@@ -41,7 +42,7 @@ func TestDaemonSessions_AgentApprovalReferenceBoundary(t *testing.T) {
 
 	status, _ = doJSONReq(t, http.MethodPost, endpoint+"/v1/sessions", agentToken, daemon.SessionOpenRequest{
 		Target: target, Reason: "load missing approval reference", IdempotencyKey: "agent-approval-boundary-reference",
-		ApprovalID: "app-agent-reference-missing",
+		ApprovalID: "app-agent-reference-missing", Deadline: time.Now().UTC().Add(time.Minute).Format(time.RFC3339Nano),
 	})
 	if status != http.StatusForbidden {
 		t.Fatalf("missing approval reference status = %d, want 403", status)
@@ -49,7 +50,7 @@ func TestDaemonSessions_AgentApprovalReferenceBoundary(t *testing.T) {
 
 	status, _ = doJSONReq(t, http.MethodPost, endpoint+"/v1/sessions", operatorToken, daemon.SessionOpenRequest{
 		Target: target, Reason: "reject mixed approval inputs", IdempotencyKey: "agent-approval-boundary-mixed",
-		ApprovalID: "app-agent-reference-mixed", Approval: &domain.Approval{ID: "app-agent-raw-mixed"},
+		ApprovalID: "app-agent-reference-mixed", Deadline: time.Now().UTC().Add(time.Minute).Format(time.RFC3339Nano), Approval: &domain.Approval{ID: "app-agent-raw-mixed"},
 	})
 	if status != http.StatusBadRequest {
 		t.Fatalf("mixed approval inputs status = %d, want 400", status)

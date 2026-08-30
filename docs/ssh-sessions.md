@@ -184,6 +184,17 @@ amc session close <session-id> --reason "Automation finished" [--approval-file a
 
 # Interactive attach (stream output until disconnect or close)
 amc session attach <session-id>
+
+# Issue one short-lived, one-use approval for the fixed MCP principal.
+# The command always prompts for explicit local confirmation.
+amc session approve open <machine-guid> --reason "Deploying build" \
+  --idempotency-key "mcp-open-1" --valid-for 60s --cols 120 --rows 40 --json
+amc session approve write <session-id> --data "powershell.exe -NoProfile\r\n" \
+  --reason "Start PowerShell" --idempotency-key "mcp-write-1" --valid-for 60s --json
+amc session approve control <session-id> ctrl-c --reason "Interrupt command" \
+  --idempotency-key "mcp-control-1" --valid-for 60s --json
+amc session approve close <session-id> --force --reason "Automation finished" \
+  --idempotency-key "mcp-close-1" --valid-for 60s --json
 ```
 
 ---
@@ -219,16 +230,22 @@ AMC exposes exactly 20 Model Context Protocol (MCP) tools for agent integration:
 8. `session_close`: Close an active terminal session with a required execution timeout; `force` requests immediate best-effort cleanup while incomplete cleanup remains `closing` and owned by AMC.
 
 The four mutating MCP tools (`session_open`, `session_write`, `session_control`, and
-`session_close`) accept an optional canonical `approval_id`. The daemon resolves that identifier
+`session_close`) accept an optional canonical `approval_id`. When it is present, the request must
+also carry the exact canonical RFC3339Nano `deadline` returned by `amc session approve`; omission
+or any change fails closed before a session effect. The daemon resolves the identifier
 only from its protected immutable approval store and validates the issued record against the exact
 effective actor, target, effective class, canonical operation fingerprint, idempotency key, active
 window, and consumption state. MCP schemas never accept raw approval objects or approval authority
 fields, and agents cannot self-issue approvals. Exact retry after successful consumption returns the
 prior durable result without a second session effect.
 
-AMC does not yet expose a session-specific operator CLI or UI flow that issues an `approval_id` for
-an MCP agent. The reference path is intentionally consumption-only; operators must not treat an
-agent-provided identifier, prompt confirmation, or copied approval JSON as authority.
+Issuance is available only through the operator-token daemon route used by `amc session approve`.
+The beneficiary is fixed server-side to `agent:mcp-local`; the agent token cannot issue approvals,
+and no MCP issuance tool exists. Issuance reconstructs the same canonical operation used by
+execution, resolves its current effective safety class, persists immutable authority plus redacted
+audit/receipt evidence, and returns only the approval ID, exact deadline, expiry, and a redacted
+operation summary. Session write data is represented only by its SHA-256 and byte length in those
+artifacts.
 
 ---
 

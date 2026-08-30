@@ -133,14 +133,20 @@ func (s *SessionService) checkDestructiveApproval(ctx context.Context, approval 
 		return fmt.Errorf("app: approval store is unwritable: %w", err)
 	}
 	if err := s.approvalStore.ValidateIssuedContext(ctx, *approval); err != nil {
-		return fmt.Errorf("app: approval provenance is invalid: %w", err)
+		return errors.Join(&PolicyDeniedError{
+			Reason:  policy.DenialApprovalMismatch,
+			Message: "server-issued approval reference is invalid",
+		}, err)
 	}
 	consumed, err := s.approvalStore.IsConsumedContext(ctx, string(approval.ID))
 	if err != nil {
 		return err
 	}
 	if consumed {
-		return domain.ErrApprovalConsumed
+		return errors.Join(&PolicyDeniedError{
+			Reason:  policy.DenialApprovalConsumed,
+			Message: "server-issued approval reference has already been consumed",
+		}, domain.ErrApprovalConsumed)
 	}
 	return nil
 }
@@ -342,60 +348,6 @@ func (s *SessionService) releaseUnexecutedApproval(ctx context.Context, admitted
 	return s.approvalStore.ReleaseUnexecutedContext(releaseCtx, *approval)
 }
 
-func validateSessionApprovalInput(approval *domain.Approval, approvalID string) error {
-	if approval != nil && approvalID != "" {
-		return fmt.Errorf("%w: approval and approval_id are mutually exclusive", domain.ErrInvalidApprovalRecord)
-	}
-	if approvalID == "" {
-		return nil
-	}
-	return domain.ValidateApprovalID(approvalID)
-}
-
-func (s *SessionService) loadSessionApprovalReference(ctx context.Context, approvalID string) (*domain.Approval, error) {
-	if approvalID == "" {
-		return nil, nil
-	}
-	if s.approvalStore == nil {
-		return nil, &PolicyDeniedError{Reason: policy.DenialApprovalMismatch, Message: "server-issued approval reference is invalid"}
-	}
-	loaded, err := s.approvalStore.LoadIssuedContext(ctx, approvalID)
-	if err != nil {
-		return nil, &PolicyDeniedError{Reason: policy.DenialApprovalMismatch, Message: "server-issued approval reference is invalid"}
-	}
-	return loaded, nil
-}
-
-func (s *SessionService) resolveSessionMutationApproval(
-	ctx context.Context,
-	op domain.Operation,
-	initialFP, idFp domain.Fingerprint,
-	approval *domain.Approval,
-	approvalID string,
-) (*domain.Approval, *domain.Receipt, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, nil, err
-	}
-	if approval != nil && !op.Actor.HasScope(domain.ScopeSessionAdmin) {
-		now := s.now()
-		denial := &PolicyDeniedError{
-			Reason:  policy.DenialApprovalRequired,
-			Message: "raw approval objects require an authenticated session administrator",
-		}
-		decision := policy.Decision{Type: policy.DecisionDeny, EffectiveClass: op.Classification}
-		rcpt, persistErr := s.persistOutcome(ctx, op, initialFP, idFp, decision, now, now, denial, "", nil, 7, false)
-		return nil, &rcpt, errors.Join(denial, persistErr)
-	}
-	loaded, err := s.loadSessionApprovalReference(ctx, approvalID)
-	if err != nil {
-		return nil, nil, err
-	}
-	if loaded != nil {
-		return loaded, nil, nil
-	}
-	return approval, nil, nil
-}
-
 func (s *SessionService) lookupCoordinatedSessionRetry(
 	ctx context.Context,
 	op domain.Operation,
@@ -427,7 +379,7 @@ func (s *SessionService) coordinateSessionMutation(
 	if err := validateSessionApprovalInput(approval, approvalID); err != nil {
 		return sessionMutationResult{}, nil, err
 	}
-	initialFP, idFp, err := s.validateAndFingerprint(op)
+	_, idFp, err := s.validateAndFingerprint(op)
 	if err != nil {
 		return sessionMutationResult{}, nil, err
 	}
@@ -447,7 +399,7 @@ func (s *SessionService) coordinateSessionMutation(
 	if result, rcpt, handled, retryErr := s.lookupCoordinatedSessionRetry(ctx, op, entry); handled {
 		return result, rcpt, retryErr
 	}
-	approval, approvalRcpt, err := s.resolveSessionMutationApproval(ctx, op, initialFP, idFp, approval, approvalID)
+	approval, approvalRcpt, err := s.resolveSessionMutationApproval(ctx, op, approval, approvalID)
 	if err != nil {
 		entry.err = err
 		if approvalRcpt != nil {

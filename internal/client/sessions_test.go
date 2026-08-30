@@ -179,6 +179,50 @@ func TestClient_SessionsMethods(t *testing.T) {
 	testClientControlWaitAndClose(ctx, t, cl, sessID)
 }
 
+func TestClient_SessionApprovalIssuanceAndExactDeadlineWireFields(t *testing.T) {
+	sessID := "sess-a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
+	deadline := time.Date(2026, 8, 30, 10, 1, 2, 345, time.UTC)
+	var issued daemon.SessionApprovalIssueRequest
+	var written daemon.SessionWriteRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/session-approvals":
+			if err := json.NewDecoder(r.Body).Decode(&issued); err != nil {
+				t.Error(err)
+			}
+			_ = json.NewEncoder(w).Encode(daemon.SessionApprovalIssueResponse{
+				SchemaVersion: "1", ApprovalID: "app-session-0123456789abcdef0123456789abcdef",
+				Deadline: deadline.Format(time.RFC3339Nano), ExpiresAt: deadline.Format(time.RFC3339Nano),
+				Operation: daemon.SessionApprovalOperationDTO{Kind: issued.Kind, Target: "c4a523d4-6b99-4d62-a5e2-4752c0f20001", Parameters: map[string]any{}},
+			})
+		case "/v1/sessions/" + sessID + "/write":
+			if err := json.NewDecoder(r.Body).Decode(&written); err != nil {
+				t.Error(err)
+			}
+			_ = json.NewEncoder(w).Encode(daemon.SessionWriteResponse{SchemaVersion: "1", BytesWritten: len(written.Data)})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	cl := client.New(server.URL, "test-token")
+	grant, err := cl.IssueSessionApproval(context.Background(), daemon.SessionApprovalIssueRequest{
+		Kind: "session.write", SessionID: sessID, Data: "exact data", Reason: "approve exact write",
+		IdempotencyKey: "client-approval-issue", ValidForMillis: 30_000,
+	})
+	if err != nil || grant.ApprovalID == "" || issued.Kind != "session.write" {
+		t.Fatalf("issue grant=%+v request=%+v err=%v", grant, issued, err)
+	}
+	if _, err := cl.WriteSessionWithApprovalReference(context.Background(), sessID, "exact data", "approve exact write", "client-approval-issue", time.Second, grant.ApprovalID, deadline); err != nil {
+		t.Fatalf("write with approval reference: %v", err)
+	}
+	if written.ApprovalID != grant.ApprovalID || written.Deadline != deadline.Format(time.RFC3339Nano) {
+		t.Fatalf("approval wire fields=%+v", written)
+	}
+}
+
 func TestClient_SessionErrors(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)

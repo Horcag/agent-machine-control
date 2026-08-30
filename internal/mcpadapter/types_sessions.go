@@ -12,6 +12,7 @@ type SessionOpenInput struct {
 	IdempotencyKey string `json:"idempotency_key" jsonschema:"Idempotency key"`
 	Timeout        string `json:"timeout" jsonschema:"Operation timeout (e.g. 30s, 5m)"`
 	ApprovalID     string `json:"approval_id,omitempty" jsonschema:"Server-issued approval reference for destructive or privileged execution"`
+	Deadline       string `json:"deadline,omitempty" jsonschema:"Exact canonical RFC3339Nano deadline returned with approval_id"`
 	Cols           uint16 `json:"cols,omitempty" jsonschema:"Terminal columns (20-500, default 80)"`
 	Rows           uint16 `json:"rows,omitempty" jsonschema:"Terminal rows (5-200, default 24)"`
 	Term           string `json:"term,omitempty" jsonschema:"Terminal emulation type (default xterm-256color)"`
@@ -49,6 +50,7 @@ type SessionWriteInput struct {
 	IdempotencyKey string `json:"idempotency_key" jsonschema:"Idempotency key"`
 	Timeout        string `json:"timeout" jsonschema:"Operation timeout (e.g. 30s, 5m)"`
 	ApprovalID     string `json:"approval_id,omitempty" jsonschema:"Server-issued approval reference for destructive or privileged execution"`
+	Deadline       string `json:"deadline,omitempty" jsonschema:"Exact canonical RFC3339Nano deadline returned with approval_id"`
 }
 
 type SessionWriteResult struct {
@@ -64,6 +66,7 @@ type SessionControlInput struct {
 	IdempotencyKey string `json:"idempotency_key" jsonschema:"Idempotency key"`
 	Timeout        string `json:"timeout" jsonschema:"Operation timeout (e.g. 30s, 5m)"`
 	ApprovalID     string `json:"approval_id,omitempty" jsonschema:"Server-issued approval reference for destructive or privileged execution"`
+	Deadline       string `json:"deadline,omitempty" jsonschema:"Exact canonical RFC3339Nano deadline returned with approval_id"`
 }
 
 type SessionControlResult struct {
@@ -115,6 +118,7 @@ type SessionCloseInput struct {
 	IdempotencyKey string `json:"idempotency_key" jsonschema:"Idempotency key"`
 	Timeout        string `json:"timeout" jsonschema:"Operation timeout (e.g. 30s, 5m)"`
 	ApprovalID     string `json:"approval_id,omitempty" jsonschema:"Server-issued approval reference for destructive or privileged execution"`
+	Deadline       string `json:"deadline,omitempty" jsonschema:"Exact canonical RFC3339Nano deadline returned with approval_id"`
 	Force          bool   `json:"force,omitempty" jsonschema:"Request immediate best-effort close; incomplete cleanup remains closing"`
 }
 

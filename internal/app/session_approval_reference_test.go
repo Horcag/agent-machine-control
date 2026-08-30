@@ -21,12 +21,19 @@ func newMCPApprovalReferenceHarness(t *testing.T) *dynamicClassRetryHarness {
 		domain.ScopeSessionWrite,
 		domain.ScopeSessionClose,
 	)
-	actor, err := domain.NewActorContext("agent:mcp-approval-reference", "agent:mcp-approval-reference", scopes, scopes)
+	actor, err := domain.NewActorContext("agent:mcp-local", "agent:mcp-local", scopes, scopes)
 	if err != nil {
 		t.Fatal(err)
 	}
 	h.actor = actor
 	return h
+}
+
+type approvalReferenceFailureCase struct {
+	name    string
+	setup   func(*testing.T, *dynamicClassRetryHarness, *app.SessionOpenParams)
+	check   func(error) bool
+	durable bool
 }
 
 func issueReferencedOpenApproval(
@@ -37,9 +44,13 @@ func issueReferencedOpenApproval(
 	issuedAt, expiresAt time.Time,
 ) domain.Approval {
 	t.Helper()
+	deadline := h.now.Add(params.Timeout)
+	if !params.Deadline.IsZero() {
+		deadline = params.Deadline
+	}
 	op := domain.Operation{
 		Kind: "session.open", Target: domain.MachineRef(params.Target), Actor: params.Caller,
-		Reason: params.Reason, Deadline: h.now.Add(params.Timeout), IdempotencyKey: params.IdempotencyKey,
+		Reason: params.Reason, Deadline: deadline, IdempotencyKey: params.IdempotencyKey,
 		RequiredCapability: domain.CapabilitySessionOpen, RequiredScopes: []string{domain.ScopeSessionOpen},
 		Classification: domain.ClassDestructivePrivileged, EvidenceSensitivity: domain.EvidenceSensitivityStandard,
 		Parameters: map[string]any{
@@ -66,6 +77,7 @@ func issueReferencedOpenApproval(
 func TestSessionApprovalReferenceAllowsMCPActorAndExactRetryDoesNotReplay(t *testing.T) {
 	h := newMCPApprovalReferenceHarness(t)
 	params := h.openParams("idem-mcp-approval-reference")
+	params.Deadline = h.now.Add(30 * time.Second)
 	issued := issueReferencedOpenApproval(t, h, params, "app-mcp-reference-success", h.now.Add(-time.Minute), h.now.Add(time.Hour))
 	params.ApprovalID = string(issued.ID)
 
@@ -84,12 +96,82 @@ func TestSessionApprovalReferenceAllowsMCPActorAndExactRetryDoesNotReplay(t *tes
 	assertTransportEffects(t, h.transport, 1)
 }
 
+func TestSessionApprovalReferenceChangedDeadlineDenialIsDurableAndIdempotent(t *testing.T) {
+	h := newMCPApprovalReferenceHarness(t)
+	params := h.openParams("idem-mcp-approval-deadline-mismatch")
+	params.Deadline = h.now.Add(30 * time.Second)
+	issued := issueReferencedOpenApproval(t, h, params, "app-mcp-reference-deadline", h.now.Add(-time.Minute), h.now.Add(time.Hour))
+	params.ApprovalID = string(issued.ID)
+	params.Deadline = params.Deadline.Add(time.Nanosecond)
+
+	opened, firstReceipt, firstErr := h.svc.OpenSession(context.Background(), params)
+	if opened != nil || firstReceipt == nil || firstReceipt.Outcome.Status != domain.OutcomeDenied {
+		t.Fatalf("deadline mismatch = session %+v receipt %+v err %v", opened, firstReceipt, firstErr)
+	}
+	var denied *app.PolicyDeniedError
+	if !errors.As(firstErr, &denied) || denied.Reason != policy.DenialApprovalMismatch {
+		t.Fatalf("deadline mismatch error = %v", firstErr)
+	}
+
+	opened, retryReceipt, retryErr := h.svc.OpenSession(context.Background(), params)
+	if opened != nil || retryReceipt == nil || retryReceipt.ReceiptID != firstReceipt.ReceiptID {
+		t.Fatalf("deadline mismatch retry = session %+v receipt %+v err %v", opened, retryReceipt, retryErr)
+	}
+	if !errors.As(retryErr, &denied) || denied.Reason != policy.DenialApprovalMismatch {
+		t.Fatalf("deadline mismatch retry error = %v", retryErr)
+	}
+	assertTransportEffects(t, h.transport, 0)
+}
+
+func TestSessionApprovalReferenceMissingDenialIsDurableAndIdempotent(t *testing.T) {
+	h := newMCPApprovalReferenceHarness(t)
+	params := h.openParams("idem-mcp-approval-missing-durable")
+	params.ApprovalID = "app-mcp-reference-missing-durable"
+	params.Deadline = h.now.Add(30 * time.Second)
+
+	opened, firstReceipt, firstErr := h.svc.OpenSession(context.Background(), params)
+	if opened != nil || firstReceipt == nil || firstReceipt.Outcome.Status != domain.OutcomeDenied || firstReceipt.Class != domain.ClassDestructivePrivileged {
+		t.Fatalf("missing reference = session %+v receipt %+v err %v", opened, firstReceipt, firstErr)
+	}
+	var denied *app.PolicyDeniedError
+	if !errors.As(firstErr, &denied) || denied.Reason != policy.DenialApprovalMismatch {
+		t.Fatalf("missing reference error = %v", firstErr)
+	}
+
+	opened, retryReceipt, retryErr := h.svc.OpenSession(context.Background(), params)
+	if opened != nil || retryReceipt == nil || retryReceipt.ReceiptID != firstReceipt.ReceiptID {
+		t.Fatalf("missing reference retry = session %+v receipt %+v err %v", opened, retryReceipt, retryErr)
+	}
+	if !errors.As(retryErr, &denied) || denied.Reason != policy.DenialApprovalMismatch {
+		t.Fatalf("missing reference retry error = %v", retryErr)
+	}
+	assertTransportEffects(t, h.transport, 0)
+}
+
+func TestSessionApprovalReferencePastExactDeadlineDenialIsDurable(t *testing.T) {
+	h := newMCPApprovalReferenceHarness(t)
+	params := h.openParams("idem-mcp-approval-past-deadline")
+	params.Deadline = h.now.Add(-time.Second)
+	issued := issueReferencedOpenApproval(t, h, params, "app-mcp-reference-past-deadline", h.now.Add(-time.Minute), params.Deadline)
+	params.ApprovalID = string(issued.ID)
+
+	opened, firstReceipt, firstErr := h.svc.OpenSession(context.Background(), params)
+	if opened != nil || firstReceipt == nil || firstReceipt.Outcome.Status != domain.OutcomeDenied {
+		t.Fatalf("past deadline = session %+v receipt %+v err %v", opened, firstReceipt, firstErr)
+	}
+	var denied *app.PolicyDeniedError
+	if !errors.As(firstErr, &denied) || denied.Reason != policy.DenialDeadlinePassed {
+		t.Fatalf("past deadline error = %v", firstErr)
+	}
+	opened, retryReceipt, retryErr := h.svc.OpenSession(context.Background(), params)
+	if opened != nil || retryReceipt == nil || retryReceipt.ReceiptID != firstReceipt.ReceiptID || !errors.As(retryErr, &denied) {
+		t.Fatalf("past deadline retry = session %+v receipt %+v err %v", opened, retryReceipt, retryErr)
+	}
+	assertTransportEffects(t, h.transport, 0)
+}
+
 func TestSessionApprovalReferenceFailuresPerformNoSessionEffect(t *testing.T) {
-	tests := []struct {
-		name  string
-		setup func(*testing.T, *dynamicClassRetryHarness, *app.SessionOpenParams)
-		check func(error) bool
-	}{
+	tests := []approvalReferenceFailureCase{
 		{
 			name: "invalid ID",
 			setup: func(_ *testing.T, _ *dynamicClassRetryHarness, params *app.SessionOpenParams) {
@@ -106,6 +188,7 @@ func TestSessionApprovalReferenceFailuresPerformNoSessionEffect(t *testing.T) {
 				var denied *app.PolicyDeniedError
 				return errors.As(err, &denied) && denied.Reason == policy.DenialApprovalMismatch
 			},
+			durable: true,
 		},
 		{
 			name: "mismatched parameters",
@@ -118,6 +201,7 @@ func TestSessionApprovalReferenceFailuresPerformNoSessionEffect(t *testing.T) {
 				var denied *app.PolicyDeniedError
 				return errors.As(err, &denied) && denied.Reason == policy.DenialApprovalMismatch
 			},
+			durable: true,
 		},
 		{
 			name: "expired",
@@ -129,6 +213,7 @@ func TestSessionApprovalReferenceFailuresPerformNoSessionEffect(t *testing.T) {
 				var denied *app.PolicyDeniedError
 				return errors.As(err, &denied) && denied.Reason == policy.DenialApprovalExpired
 			},
+			durable: true,
 		},
 		{
 			name: "consumed without durable retry truth",
@@ -139,7 +224,11 @@ func TestSessionApprovalReferenceFailuresPerformNoSessionEffect(t *testing.T) {
 				}
 				params.ApprovalID = string(issued.ID)
 			},
-			check: func(err error) bool { return errors.Is(err, domain.ErrApprovalConsumed) },
+			check: func(err error) bool {
+				var denied *app.PolicyDeniedError
+				return errors.Is(err, domain.ErrApprovalConsumed) || (errors.As(err, &denied) && denied.Reason == policy.DenialApprovalConsumed)
+			},
+			durable: true,
 		},
 		{
 			name: "raw agent self approval",
@@ -151,6 +240,7 @@ func TestSessionApprovalReferenceFailuresPerformNoSessionEffect(t *testing.T) {
 				var denied *app.PolicyDeniedError
 				return errors.As(err, &denied)
 			},
+			durable: true,
 		},
 		{
 			name: "raw and reference are mutually exclusive",
@@ -165,14 +255,34 @@ func TestSessionApprovalReferenceFailuresPerformNoSessionEffect(t *testing.T) {
 
 	for i, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := newMCPApprovalReferenceHarness(t)
-			params := h.openParams(fmt.Sprintf("idem-reference-failure-%d", i))
-			tt.setup(t, h, &params)
-			opened, _, err := h.svc.OpenSession(context.Background(), params)
-			if opened != nil || !tt.check(err) {
-				t.Fatalf("open = session %+v err %v", opened, err)
-			}
-			assertTransportEffects(t, h.transport, 0)
+			runApprovalReferenceFailureCase(t, i, tt)
 		})
+	}
+}
+
+func runApprovalReferenceFailureCase(t *testing.T, index int, test approvalReferenceFailureCase) {
+	t.Helper()
+	h := newMCPApprovalReferenceHarness(t)
+	params := h.openParams(fmt.Sprintf("idem-reference-failure-%d", index))
+	params.Deadline = h.now.Add(params.Timeout)
+	test.setup(t, h, &params)
+	opened, denialReceipt, err := h.svc.OpenSession(context.Background(), params)
+	if opened != nil || !test.check(err) {
+		t.Fatalf("open = session %+v err %v", opened, err)
+	}
+	if test.durable {
+		requireDurableApprovalReferenceRetry(t, h, params, denialReceipt, test.check)
+	}
+	assertTransportEffects(t, h.transport, 0)
+}
+
+func requireDurableApprovalReferenceRetry(t *testing.T, h *dynamicClassRetryHarness, params app.SessionOpenParams, denialReceipt *domain.Receipt, check func(error) bool) {
+	t.Helper()
+	if denialReceipt == nil || denialReceipt.Outcome.Status != domain.OutcomeDenied {
+		t.Fatalf("durable denial receipt = %+v", denialReceipt)
+	}
+	retried, retryReceipt, retryErr := h.svc.OpenSession(context.Background(), params)
+	if retried != nil || retryReceipt == nil || retryReceipt.ReceiptID != denialReceipt.ReceiptID || !check(retryErr) {
+		t.Fatalf("retry = session %+v receipt %+v err %v", retried, retryReceipt, retryErr)
 	}
 }

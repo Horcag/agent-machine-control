@@ -2,6 +2,7 @@ package mcpadapter
 
 import (
 	"context"
+	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/daemon"
 	"github.com/Horcag/agent-machine-control/internal/domain"
@@ -19,6 +20,10 @@ func (a *Adapter) SessionOpen(ctx context.Context, _ *mcp.CallToolRequest, in Se
 		return mcpToolError(NewInputError(err.Error())), SessionOpenResult{}, nil
 	}
 	if err := validateApprovalID(in.ApprovalID); err != nil {
+		return mcpToolError(err), SessionOpenResult{}, nil
+	}
+	deadline, err := validateApprovalDeadline(in.ApprovalID, in.Deadline)
+	if err != nil {
 		return mcpToolError(err), SessionOpenResult{}, nil
 	}
 
@@ -40,6 +45,7 @@ func (a *Adapter) SessionOpen(ctx context.Context, _ *mcp.CallToolRequest, in Se
 		Rows:           in.Rows,
 		Term:           in.Term,
 		ApprovalID:     in.ApprovalID,
+		Deadline:       formatApprovalDeadline(deadline),
 	}
 	req.TimeoutSeconds, req.TimeoutMillis, err = daemon.EncodeSessionTimeout(timeout)
 	if err != nil {
@@ -127,6 +133,10 @@ func (a *Adapter) SessionWrite(ctx context.Context, _ *mcp.CallToolRequest, in S
 	if err := validateApprovalID(in.ApprovalID); err != nil {
 		return mcpToolError(err), SessionWriteResult{}, nil
 	}
+	deadline, err := validateApprovalDeadline(in.ApprovalID, in.Deadline)
+	if err != nil {
+		return mcpToolError(err), SessionWriteResult{}, nil
+	}
 	timeout, err := parseTimeout(in.Timeout, true)
 	if err != nil {
 		return mcpToolError(err), SessionWriteResult{}, nil
@@ -137,7 +147,7 @@ func (a *Adapter) SessionWrite(ctx context.Context, _ *mcp.CallToolRequest, in S
 		return mcpToolError(err), SessionWriteResult{}, nil
 	}
 
-	resp, err := cl.WriteSessionWithApprovalID(ctx, in.SessionID, in.Data, in.Reason, in.IdempotencyKey, timeout, in.ApprovalID)
+	resp, err := cl.WriteSessionWithApprovalReference(ctx, in.SessionID, in.Data, in.Reason, in.IdempotencyKey, timeout, in.ApprovalID, deadline)
 	if err != nil {
 		return mcpToolError(err), SessionWriteResult{}, nil
 	}
@@ -162,6 +172,10 @@ func (a *Adapter) SessionControl(ctx context.Context, _ *mcp.CallToolRequest, in
 	if err := validateApprovalID(in.ApprovalID); err != nil {
 		return mcpToolError(err), SessionControlResult{}, nil
 	}
+	deadline, err := validateApprovalDeadline(in.ApprovalID, in.Deadline)
+	if err != nil {
+		return mcpToolError(err), SessionControlResult{}, nil
+	}
 	timeout, err := parseTimeout(in.Timeout, true)
 	if err != nil {
 		return mcpToolError(err), SessionControlResult{}, nil
@@ -176,7 +190,7 @@ func (a *Adapter) SessionControl(ctx context.Context, _ *mcp.CallToolRequest, in
 		return mcpToolError(err), SessionControlResult{}, nil
 	}
 
-	resp, err := cl.SendControlKeyWithApprovalID(ctx, in.SessionID, normKey, in.Reason, in.IdempotencyKey, timeout, in.ApprovalID)
+	resp, err := cl.SendControlKeyWithApprovalReference(ctx, in.SessionID, normKey, in.Reason, in.IdempotencyKey, timeout, in.ApprovalID, deadline)
 	if err != nil {
 		return mcpToolError(err), SessionControlResult{}, nil
 	}
@@ -281,6 +295,10 @@ func (a *Adapter) SessionClose(ctx context.Context, _ *mcp.CallToolRequest, in S
 	if err := validateApprovalID(in.ApprovalID); err != nil {
 		return mcpToolError(err), SessionCloseResult{}, nil
 	}
+	deadline, err := validateApprovalDeadline(in.ApprovalID, in.Deadline)
+	if err != nil {
+		return mcpToolError(err), SessionCloseResult{}, nil
+	}
 	timeout, err := parseTimeout(in.Timeout, true)
 	if err != nil {
 		return mcpToolError(err), SessionCloseResult{}, nil
@@ -291,7 +309,7 @@ func (a *Adapter) SessionClose(ctx context.Context, _ *mcp.CallToolRequest, in S
 		return mcpToolError(err), SessionCloseResult{}, nil
 	}
 
-	resp, err := cl.CloseSessionWithApprovalID(ctx, in.SessionID, in.Reason, in.IdempotencyKey, in.Force, timeout, in.ApprovalID)
+	resp, err := cl.CloseSessionWithApprovalReference(ctx, in.SessionID, in.Reason, in.IdempotencyKey, in.Force, timeout, in.ApprovalID, deadline)
 	if err != nil {
 		return mcpToolError(err), SessionCloseResult{}, nil
 	}
@@ -311,4 +329,19 @@ func validateApprovalID(id string) error {
 		return NewInputError("invalid approval_id")
 	}
 	return nil
+}
+
+func validateApprovalDeadline(approvalID, raw string) (time.Time, error) {
+	deadline, err := daemon.ResolveSessionDeadline(approvalID, raw)
+	if err != nil {
+		return time.Time{}, NewInputError("approval_id requires the exact canonical deadline returned by issuance")
+	}
+	return deadline, nil
+}
+
+func formatApprovalDeadline(deadline time.Time) string {
+	if deadline.IsZero() {
+		return ""
+	}
+	return deadline.UTC().Format(time.RFC3339Nano)
 }
