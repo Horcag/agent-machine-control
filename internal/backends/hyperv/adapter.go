@@ -151,20 +151,19 @@ func (a *Adapter) command(script string, env []string) ([]string, []string, erro
 // Doctor inspects the availability of PowerShell and the Hyper-V provider.
 func (a *Adapter) Doctor(ctx context.Context) (app.DoctorReport, error) {
 	now := a.now()
-	exe, err := a.resolveExecutable()
-	if err != nil {
-		return app.NewUnavailableReport(
-			app.DoctorReasonExecutableMissing,
-			"PowerShell executable (powershell.exe) was not found in PATH",
-			now,
-		), nil
-	}
-
 	args, env, err := a.command(ScriptDoctor, nil)
 	if err != nil {
 		return app.NewUnavailableReport(
 			app.DoctorReasonHostUnavailable,
 			"Hyper-V host route is invalid",
+			now,
+		), nil
+	}
+	exe, err := a.resolveExecutable()
+	if err != nil {
+		return app.NewUnavailableReport(
+			app.DoctorReasonExecutableMissing,
+			"PowerShell executable (powershell.exe) was not found in PATH",
 			now,
 		), nil
 	}
@@ -216,14 +215,13 @@ func (a *Adapter) Doctor(ctx context.Context) (app.DoctorReport, error) {
 // ListMachines discovers all virtual machines on the local Hyper-V host.
 func (a *Adapter) ListMachines(ctx context.Context) ([]domain.MachineObservation, error) {
 	now := a.now()
-	exe, err := a.resolveExecutable()
-	if err != nil {
-		return nil, ErrExecutableNotFound
-	}
-
 	args, env, err := a.command(ScriptList, nil)
 	if err != nil {
 		return nil, err
+	}
+	exe, err := a.resolveExecutable()
+	if err != nil {
+		return nil, ErrExecutableNotFound
 	}
 	stdout, _, runErr := a.executor.Execute(ctx, exe, args, env)
 
@@ -255,11 +253,6 @@ func (a *Adapter) InspectMachine(ctx context.Context, id string) (domain.Machine
 		return domain.MachineObservation{}, err
 	}
 
-	exe, err := a.resolveExecutable()
-	if err != nil {
-		return domain.MachineObservation{}, ErrExecutableNotFound
-	}
-
 	normalizedID, err := domain.NormalizeMachineGUID(id)
 	if err != nil {
 		return domain.MachineObservation{}, err
@@ -267,6 +260,10 @@ func (a *Adapter) InspectMachine(ctx context.Context, id string) (domain.Machine
 	args, env, err := a.command(ScriptInspect, []string{fmt.Sprintf("%s=%s", TargetVMIDEnvVar, normalizedID)})
 	if err != nil {
 		return domain.MachineObservation{}, err
+	}
+	exe, err := a.resolveExecutable()
+	if err != nil {
+		return domain.MachineObservation{}, ErrExecutableNotFound
 	}
 	stdout, _, runErr := a.executor.Execute(ctx, exe, args, env)
 

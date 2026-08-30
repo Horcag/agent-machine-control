@@ -34,19 +34,21 @@ var (
 // HostID is a stable opaque host identifier owned by local operator state.
 type HostID string
 
-// NewHostID validates and normalizes an opaque host ID.
+// NewHostID validates a canonical opaque host ID.
 func NewHostID(value string) (HostID, error) {
-	cleaned := strings.TrimSpace(value)
-	if cleaned == "" || len(cleaned) > maxHostIDLength {
+	if strings.TrimSpace(value) != value {
+		return "", fmt.Errorf("%w: contains leading or trailing whitespace", ErrInvalidHostID)
+	}
+	if value == "" || len(value) > maxHostIDLength {
 		return "", fmt.Errorf("%w: expected 1-%d characters", ErrInvalidHostID, maxHostIDLength)
 	}
-	for _, r := range cleaned {
+	for _, r := range value {
 		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-' || r == '.' {
 			continue
 		}
 		return "", fmt.Errorf("%w: unsupported character %q", ErrInvalidHostID, r)
 	}
-	return HostID(cleaned), nil
+	return HostID(value), nil
 }
 
 // String returns the host ID as a string.
@@ -66,7 +68,7 @@ type MachineLocator struct {
 	VMID   string
 }
 
-// NewMachineLocator validates and normalizes a canonical machine locator.
+// NewMachineLocator validates a canonical host ID and normalizes the machine GUID.
 func NewMachineLocator(hostID HostID, vmid string) (MachineLocator, error) {
 	if err := hostID.Validate(); err != nil {
 		return MachineLocator{}, err
@@ -80,7 +82,10 @@ func NewMachineLocator(hostID HostID, vmid string) (MachineLocator, error) {
 
 // ParseMachineLocator parses the stable string form "host-id:vm-guid".
 func ParseMachineLocator(value string) (MachineLocator, error) {
-	host, vmid, ok := strings.Cut(strings.TrimSpace(value), canonicalLocatorDelim)
+	if strings.TrimSpace(value) != value {
+		return MachineLocator{}, ErrInvalidMachineLocator
+	}
+	host, vmid, ok := strings.Cut(value, canonicalLocatorDelim)
 	if !ok || host == "" || vmid == "" {
 		return MachineLocator{}, ErrInvalidMachineLocator
 	}
@@ -113,11 +118,13 @@ func NormalizeMachineGUID(id string) (string, error) {
 
 // ValidateHostAddress checks an operator-supplied host address without resolving it.
 func ValidateHostAddress(address string) error {
-	cleaned := strings.TrimSpace(address)
-	if cleaned == "" || len(cleaned) > maxHostAddressLength {
+	if strings.TrimSpace(address) != address {
+		return fmt.Errorf("%w: contains leading or trailing whitespace", ErrInvalidHostAddress)
+	}
+	if address == "" || len(address) > maxHostAddressLength {
 		return fmt.Errorf("%w: expected 1-%d characters", ErrInvalidHostAddress, maxHostAddressLength)
 	}
-	for _, r := range cleaned {
+	for _, r := range address {
 		if unicode.IsControl(r) || unicode.IsSpace(r) {
 			return fmt.Errorf("%w: contains whitespace or control character", ErrInvalidHostAddress)
 		}

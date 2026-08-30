@@ -95,6 +95,80 @@ func TestTrustedInventoryInjectsLocalHostAndPreservesExplicitDisable(t *testing.
 	}
 }
 
+func TestTrustedInventoryRejectsNonCanonicalHostAuthorities(t *testing.T) {
+	tests := []struct {
+		name    string
+		hosts   []app.HostEntry
+		wantErr error
+	}{
+		{
+			name: "padded host cannot coexist with canonical host",
+			hosts: []app.HostEntry{
+				host("host-a", "alpha.example", true),
+				host(" host-a ", "bravo.example", true),
+			},
+			wantErr: domain.ErrInvalidHostID,
+		},
+		{
+			name:    "padded local cannot bypass automatic local host",
+			hosts:   []app.HostEntry{host(" local ", "local", true)},
+			wantErr: domain.ErrInvalidHostID,
+		},
+		{
+			name:    "leading whitespace in address",
+			hosts:   []app.HostEntry{host("host-a", " alpha.example", true)},
+			wantErr: domain.ErrInvalidHostAddress,
+		},
+		{
+			name:    "trailing whitespace in address",
+			hosts:   []app.HostEntry{host("host-a", "alpha.example ", true)},
+			wantErr: domain.ErrInvalidHostAddress,
+		},
+		{
+			name: "canonical duplicate host ID",
+			hosts: []app.HostEntry{
+				host("host-a", "alpha.example", true),
+				host("host-a", "bravo.example", true),
+			},
+			wantErr: domain.ErrInvalidHostID,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := app.NewTrustedInventory(tt.hosts); !errors.Is(err, tt.wantErr) {
+				t.Fatalf("NewTrustedInventory expected %v, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestTrustedInventoryReplacementAndLookupRejectNonCanonicalAuthorities(t *testing.T) {
+	now := time.Date(2026, 8, 30, 10, 0, 0, 0, time.UTC)
+	inv, err := app.NewTrustedInventory([]app.HostEntry{host("host-a", "alpha.example", true)})
+	if err != nil {
+		t.Fatalf("NewTrustedInventory failed: %v", err)
+	}
+	if err := inv.ReplaceHosts([]app.HostEntry{host(" host-b ", "bravo.example", true)}); !errors.Is(err, domain.ErrInvalidHostID) {
+		t.Fatalf("ReplaceHosts expected ErrInvalidHostID, got %v", err)
+	}
+	hosts := inv.Hosts()
+	if len(hosts) != 2 || hosts[1].ID != "host-a" {
+		t.Fatalf("rejected replacement changed trusted hosts: %+v", hosts)
+	}
+
+	vm := observed("host-a", "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", "vm-alpha", now)
+	if err := inv.ApplySnapshot(app.HostSnapshot{HostID: "host-a", Health: app.HostHealthObserved, Machines: []domain.MachineObservation{vm}}); err != nil {
+		t.Fatalf("ApplySnapshot failed: %v", err)
+	}
+	if _, err := inv.ResolveMachine(" " + vm.Locator.String() + " "); !errors.Is(err, domain.ErrMachineReferenceMiss) {
+		t.Fatalf("ResolveMachine with padded canonical locator expected ErrMachineReferenceMiss, got %v", err)
+	}
+	entry, err := inv.ResolveMachine(vm.Locator.String())
+	if err != nil || entry.Locator != vm.Locator {
+		t.Fatalf("canonical locator lookup = %+v, %v; want %s", entry, err, vm.Locator)
+	}
+}
+
 func TestHostEntryRejectsInvalidTimeoutsAndLocalAddress(t *testing.T) {
 	if err := (app.HostEntry{ID: "host-a", Address: "alpha.example", Enabled: true, QueryTimeout: -time.Second}).Validate(); err == nil {
 		t.Fatal("expected negative query timeout to be rejected")

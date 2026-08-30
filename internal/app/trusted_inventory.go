@@ -381,6 +381,9 @@ func (i *TrustedInventory) ResolveMachine(reference string) (MachineIndexEntry, 
 	if ref == "" {
 		return MachineIndexEntry{}, domain.ErrMachineReferenceEmpty
 	}
+	if ref != reference {
+		return MachineIndexEntry{}, domain.ErrMachineReferenceMiss
+	}
 	if locator, err := domain.ParseMachineLocator(ref); err == nil {
 		return i.resolveCanonical(locator)
 	}

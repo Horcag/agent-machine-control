@@ -24,6 +24,38 @@ func TestMachineLocatorStableStringAndParse(t *testing.T) {
 	}
 }
 
+func TestHostAuthorityRejectsNonCanonicalWhitespace(t *testing.T) {
+	guid := "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
+	for _, value := range []string{" host-a ", " local "} {
+		t.Run("host ID "+value, func(t *testing.T) {
+			if _, err := domain.NewHostID(value); !errors.Is(err, domain.ErrInvalidHostID) {
+				t.Fatalf("NewHostID(%q) expected ErrInvalidHostID, got %v", value, err)
+			}
+			if err := domain.HostID(value).Validate(); !errors.Is(err, domain.ErrInvalidHostID) {
+				t.Fatalf("HostID(%q).Validate expected ErrInvalidHostID, got %v", value, err)
+			}
+			if _, err := domain.NewMachineLocator(domain.HostID(value), guid); !errors.Is(err, domain.ErrInvalidHostID) {
+				t.Fatalf("NewMachineLocator(%q) expected ErrInvalidHostID, got %v", value, err)
+			}
+		})
+	}
+
+	for _, value := range []string{
+		" host-a:" + guid,
+		"host-a:" + guid + " ",
+	} {
+		if _, err := domain.ParseMachineLocator(value); !errors.Is(err, domain.ErrInvalidMachineLocator) {
+			t.Fatalf("ParseMachineLocator(%q) expected ErrInvalidMachineLocator, got %v", value, err)
+		}
+	}
+
+	for _, address := range []string{" trusted-host.example", "trusted-host.example "} {
+		if err := domain.ValidateHostAddress(address); !errors.Is(err, domain.ErrInvalidHostAddress) {
+			t.Fatalf("ValidateHostAddress(%q) expected ErrInvalidHostAddress, got %v", address, err)
+		}
+	}
+}
+
 func TestHostIDAndAliasValidation(t *testing.T) {
 	if _, err := domain.NewHostID("host one"); !errors.Is(err, domain.ErrInvalidHostID) {
 		t.Fatalf("expected ErrInvalidHostID for whitespace host ID, got %v", err)

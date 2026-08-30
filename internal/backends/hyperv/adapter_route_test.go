@@ -119,6 +119,48 @@ func TestExplicitRemoteHostRouteRejectsLocalID(t *testing.T) {
 	}
 }
 
+func TestAdapterRejectsNonCanonicalRemoteRouteBeforeExecutor(t *testing.T) {
+	tests := []struct {
+		name    string
+		host    app.HostEntry
+		route   hyperv.HostRoute
+		wantErr error
+	}{
+		{
+			name:    "padded host ID",
+			host:    app.HostEntry{ID: " host-a ", Address: "trusted-host.example", Enabled: true},
+			route:   hyperv.HostRoute{HostID: " host-a ", Address: "trusted-host.example", Remote: true},
+			wantErr: domain.ErrInvalidHostID,
+		},
+		{
+			name:    "padded local ID",
+			host:    app.HostEntry{ID: " local ", Address: "trusted-host.example", Enabled: true},
+			route:   hyperv.HostRoute{HostID: " local ", Address: "trusted-host.example", Remote: true},
+			wantErr: domain.ErrInvalidHostID,
+		},
+		{
+			name:    "padded host address",
+			host:    app.HostEntry{ID: "host-a", Address: " trusted-host.example ", Enabled: true},
+			route:   hyperv.HostRoute{HostID: "host-a", Address: " trusted-host.example ", Remote: true},
+			wantErr: domain.ErrInvalidHostAddress,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := hyperv.ExplicitRemoteHostRoute(tt.host); !errors.Is(err, tt.wantErr) {
+				t.Fatalf("ExplicitRemoteHostRoute expected %v, got %v", tt.wantErr, err)
+			}
+			adapter := hyperv.New(
+				hyperv.WithExecutor(noCallExecutor{t: t}),
+				hyperv.WithHostRoute(tt.route),
+			)
+			if _, err := adapter.ListMachines(context.Background()); !errors.Is(err, tt.wantErr) {
+				t.Fatalf("ListMachines expected %v, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
 func TestRemoteRoutePrivilegedMethodsFailClosedBeforeExecutor(t *testing.T) {
 	route, err := hyperv.ExplicitRemoteHostRoute(app.HostEntry{ID: "host-a", Address: "trusted-host.example", Enabled: true})
 	if err != nil {
