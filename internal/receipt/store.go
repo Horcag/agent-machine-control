@@ -145,6 +145,7 @@ type Store struct {
 	dir        string
 	syncDirFn  func(dir string) error
 	saveHook   func(domain.Receipt) error
+	ensureHook func(context.Context, domain.Receipt) error
 	lookupHook func(context.Context) error
 	mu         sync.RWMutex
 }
@@ -152,6 +153,11 @@ type Store struct {
 // WithLookupHook injects a context-aware lookup boundary for deterministic deadline tests.
 func WithLookupHook(fn func(context.Context) error) Option {
 	return func(s *Store) { s.lookupHook = fn }
+}
+
+// WithEnsureHook injects a context-aware pre-save boundary for deterministic deadline tests.
+func WithEnsureHook(fn func(context.Context, domain.Receipt) error) Option {
+	return func(s *Store) { s.ensureHook = fn }
 }
 
 // NewStore creates a new Receipt Store for the given receipts directory.
@@ -239,36 +245,76 @@ func (s *Store) Save(r domain.Receipt) error {
 
 // Ensure idempotently persists the exact receipt and rejects conflicting reuse of its ID.
 func (s *Store) Ensure(r domain.Receipt) error {
+	return s.EnsureContext(context.Background(), r)
+}
+
+// EnsureContext idempotently persists the exact receipt within the caller's deadline.
+func (s *Store) EnsureContext(ctx context.Context, r domain.Receipt) error {
 	if err := r.Validate(); err != nil {
 		return fmt.Errorf("receipt: cannot ensure invalid receipt: %w", err)
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	finalPath := filepath.Join(s.dir, fmt.Sprintf("%s.json", r.ReceiptID))
-	existing, err := s.readReceiptFile(finalPath)
-	if err == nil {
-		if reflect.DeepEqual(ConvertToDTO(*existing), ConvertToDTO(r)) {
-			return nil
-		}
-		return ErrReceiptCollision
-	}
-	if !os.IsNotExist(err) {
+	if err := lockReceiptStoreContext(ctx, &s.mu); err != nil {
 		return err
 	}
-	if s.saveHook != nil {
-		if err := s.saveHook(r); err != nil {
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	finalPath := filepath.Join(s.dir, fmt.Sprintf("%s.json", r.ReceiptID))
+	found, err := s.exactReceiptExistsContext(ctx, finalPath, r)
+	if err != nil || found {
+		return err
+	}
+	if err := s.runEnsureHooksContext(ctx, r); err != nil {
+		return err
+	}
+	return s.persistEnsuredReceiptContext(ctx, finalPath, r)
+}
+
+func (s *Store) exactReceiptExistsContext(ctx context.Context, finalPath string, receipt domain.Receipt) (bool, error) {
+	existing, err := s.readReceiptFileContext(ctx, finalPath)
+	if err == nil {
+		if reflect.DeepEqual(ConvertToDTO(*existing), ConvertToDTO(receipt)) {
+			return true, nil
+		}
+		return false, ErrReceiptCollision
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
+}
+
+func (s *Store) runEnsureHooksContext(ctx context.Context, receipt domain.Receipt) error {
+	if s.ensureHook != nil {
+		if err := s.ensureHook(ctx, receipt); err != nil {
 			return err
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.saveHook != nil {
+		if err := s.saveHook(receipt); err != nil {
+			return err
+		}
+	}
+	return ctx.Err()
+}
 
-	data, err := json.MarshalIndent(ConvertToDTO(r), "", "  ")
+func (s *Store) persistEnsuredReceiptContext(ctx context.Context, finalPath string, receipt domain.Receipt) error {
+	data, err := json.MarshalIndent(ConvertToDTO(receipt), "", "  ")
 	if err != nil {
 		return fmt.Errorf("receipt: failed to marshal receipt: %w", err)
 	}
-	tmpPath := filepath.Join(s.dir, fmt.Sprintf("%s.tmp.%d", r.ReceiptID, time.Now().UnixNano()))
-	if err := s.writeReceiptTemp(tmpPath, data); err != nil {
+	tmpPath := filepath.Join(s.dir, fmt.Sprintf("%s.tmp.%d", receipt.ReceiptID, time.Now().UnixNano()))
+	if err := s.writeReceiptTempContext(ctx, tmpPath, data); err != nil {
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("receipt: failed to write receipt temp file: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
 	}
 	if err := os.Rename(tmpPath, finalPath); err != nil {
 		_ = os.Remove(tmpPath)
@@ -281,7 +327,47 @@ func (s *Store) Ensure(r domain.Receipt) error {
 	if err := syncFn(s.dir); err != nil {
 		return fmt.Errorf("receipt: failed to sync directory %q: %w", s.dir, err)
 	}
-	return nil
+	return ctx.Err()
+}
+
+func lockReceiptStoreContext(ctx context.Context, mu *sync.RWMutex) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if mu.TryLock() {
+			return nil
+		}
+		timer := time.NewTimer(time.Millisecond)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func (s *Store) writeReceiptTempContext(ctx context.Context, tmpPath string, data []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	if _, err = f.Write(data); err == nil {
+		err = ctx.Err()
+	}
+	if err == nil {
+		err = f.Sync()
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	return err
 }
 
 func (s *Store) writeReceiptTemp(tmpPath string, data []byte) error {

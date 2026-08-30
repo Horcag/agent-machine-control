@@ -504,7 +504,7 @@ func TestSessionRegression_CancellationAndTimeout(t *testing.T) {
 	_ = sd.EnsureDirs()
 
 	transport := &trackingTransport{
-		writeDelay: 200 * time.Millisecond,
+		writeDelay: 2 * time.Second,
 	}
 	sessionMgr := sessions.NewManager(sd.SessionsDir(), transport, time.Now)
 	auditStore := audit.NewStore(sd.AuditDir())
@@ -541,7 +541,7 @@ func TestSessionRegression_CancellationAndTimeout(t *testing.T) {
 		t.Fatalf("OpenSession failed: %v", err)
 	}
 
-	ctxTimeout, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	ctxTimeout, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
 	_, abortRcpt, err := svc.WriteSession(ctxTimeout, app.SessionWriteParams{

@@ -1,6 +1,8 @@
 package audit_test
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -217,5 +219,39 @@ func TestStore_AdmissionAndTerminalValidation(t *testing.T) {
 	unwritableStore := audit.NewStore("/dev/null/impossible/audit/dir")
 	if err := unwritableStore.CheckWritable(); err == nil {
 		t.Errorf("expected error for unwritable audit path")
+	}
+}
+
+func TestStore_LockCleanupFailuresAreReturnedAndJoined(t *testing.T) {
+	cleanupErr := errors.New("synthetic audit cleanup failure")
+	protectedErr := errors.New("synthetic protected audit failure")
+	for _, tc := range []struct {
+		name      string
+		failBase  string
+		operation error
+	}{
+		{name: "owner removal", failBase: "owner.json"},
+		{name: "lock directory removal", failBase: ".audit.lock"},
+		{name: "joined protected error", failBase: "owner.json", operation: protectedErr},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			store := audit.NewStore(dir,
+				audit.WithEnsureHook(func(context.Context, audit.Event) error { return tc.operation }),
+				audit.WithRemoveFunc(func(path string) error {
+					if filepath.Base(path) == tc.failBase {
+						return cleanupErr
+					}
+					return os.Remove(path)
+				}),
+			)
+			err := store.EnsureTerminalOutcome(terminalReceipt())
+			if !errors.Is(err, cleanupErr) {
+				t.Fatalf("cleanup error = %v, want injected removal failure", err)
+			}
+			if tc.operation != nil && !errors.Is(err, protectedErr) {
+				t.Fatalf("joined error = %v, want protected operation failure", err)
+			}
+		})
 	}
 }

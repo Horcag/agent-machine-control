@@ -31,6 +31,7 @@ type Manager struct {
 	livenessChecker  LivenessChecker
 	identityProvider IdentityProvider
 	ownerPrefix      string
+	removeFn         func(string) error
 }
 
 // Option configures Manager behavior.
@@ -64,6 +65,11 @@ func WithOwnerPrefix(prefix string) Option {
 	}
 }
 
+// WithRemoveFunc injects transition-lock cleanup removal for deterministic failure tests.
+func WithRemoveFunc(fn func(string) error) Option {
+	return func(m *Manager) { m.removeFn = fn }
+}
+
 // NewManager creates a new lease Manager for the given leases directory.
 func NewManager(dir string, opts ...Option) *Manager {
 	m := &Manager{
@@ -72,6 +78,7 @@ func NewManager(dir string, opts ...Option) *Manager {
 		livenessChecker:  &DefaultLivenessChecker{},
 		identityProvider: &DefaultIdentityProvider{},
 		ownerPrefix:      "direct",
+		removeFn:         os.Remove,
 	}
 	for _, opt := range opts {
 		opt(m)

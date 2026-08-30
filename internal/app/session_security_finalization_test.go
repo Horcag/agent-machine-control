@@ -2,11 +2,9 @@ package app_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"os"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -61,78 +59,6 @@ func (s *expiringAdmissionSafety) ResolveSafety(ctx context.Context, target doma
 		return app.SafetyResolution{Classification: domain.ClassDestructivePrivileged}, nil
 	}
 	return diagnosticReversibleSafety{}.ResolveSafety(ctx, target)
-}
-
-func assertFinalizedAbortedReservation(t *testing.T, mutationsDir string, receiptID domain.ReceiptID) {
-	t.Helper()
-	entries, err := os.ReadDir(mutationsDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 1 {
-		t.Fatalf("mutation reservation files = %d, want 1", len(entries))
-	}
-	data, err := os.ReadFile(filepath.Join(mutationsDir, entries[0].Name()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var reservation sessions.MutationReservation
-	if err := json.Unmarshal(data, &reservation); err != nil {
-		t.Fatal(err)
-	}
-	if reservation.State != sessions.MutationReservationFinalized || reservation.ReceiptID != receiptID {
-		t.Fatalf("reservation = %+v, want finalized receipt %s", reservation, receiptID)
-	}
-}
-
-func assertExpiredAdmission(t *testing.T, svc *app.SessionService, transport *trackingTransport, params app.SessionOpenParams) *domain.Receipt {
-	t.Helper()
-	obs, rcpt, err := svc.OpenSession(context.Background(), params)
-	if obs != nil || !errors.Is(err, context.DeadlineExceeded) || rcpt == nil || rcpt.Outcome.Status != domain.OutcomeAborted {
-		t.Fatalf("expired admission = obs %+v receipt %+v err %v", obs, rcpt, err)
-	}
-	if got := atomic.LoadInt32(&transport.dialCalls); got != 0 {
-		t.Fatalf("transport dial calls after expired admission = %d, want 0", got)
-	}
-	return rcpt
-}
-
-func assertAbortedAdmissionEvidence(t *testing.T, sd *statedir.StateDir, receiptStore *receipt.Store, auditStore *audit.Store, rcpt *domain.Receipt) {
-	t.Helper()
-	stored, err := receiptStore.Get(string(rcpt.ReceiptID))
-	if err != nil || stored.Outcome.Status != domain.OutcomeAborted {
-		t.Fatalf("stored receipt = %+v err %v", stored, err)
-	}
-	events, err := auditStore.Tail(10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(events) != 2 || events[0].EventType != audit.EventAdmissionIntent || events[1].EventType != audit.EventTerminalOutcome || events[1].OutcomeStatus != domain.OutcomeAborted {
-		t.Fatalf("audit events = %+v, want admission plus aborted terminal outcome", events)
-	}
-	assertFinalizedAbortedReservation(t, filepath.Join(sd.SessionsDir(), "mutations"), rcpt.ReceiptID)
-}
-
-func assertExpiredAdmissionRetry(t *testing.T, svc *app.SessionService, transport *trackingTransport, params app.SessionOpenParams, firstReceipt *domain.Receipt) {
-	t.Helper()
-	obs, rcpt, err := svc.OpenSession(context.Background(), params)
-	if obs != nil || !errors.Is(err, context.DeadlineExceeded) || rcpt == nil || rcpt.ReceiptID != firstReceipt.ReceiptID {
-		t.Fatalf("exact retry = obs %+v receipt %+v err %v", obs, rcpt, err)
-	}
-	if got := atomic.LoadInt32(&transport.dialCalls); got != 0 {
-		t.Fatalf("transport dial calls after exact retry = %d, want 0", got)
-	}
-}
-
-func assertFreshAdmission(t *testing.T, svc *app.SessionService, transport *trackingTransport, params app.SessionOpenParams) {
-	t.Helper()
-	obs, rcpt, err := svc.OpenSession(context.Background(), params)
-	if err != nil || obs == nil || rcpt == nil || rcpt.Outcome.Status != domain.OutcomeSuccess {
-		t.Fatalf("fresh-key attempt = obs %+v receipt %+v err %v", obs, rcpt, err)
-	}
-	if got := atomic.LoadInt32(&transport.dialCalls); got != 1 {
-		t.Fatalf("transport dial calls after fresh-key attempt = %d, want 1", got)
-	}
 }
 
 type diagnosticCloseErrorTransport struct {
@@ -264,7 +190,7 @@ func TestDiagnosticMutationTimeoutBoundsTransportWithoutCallerDeadline(t *testin
 		t.Fatal(err)
 	}
 
-	transport.writeDelay = 200 * time.Millisecond
+	transport.writeDelay = 2 * time.Second
 	started := time.Now()
 	_, rcpt, err := svc.WriteSession(context.Background(), app.SessionWriteParams{
 		SessionID:      obs.ID,
@@ -272,14 +198,14 @@ func TestDiagnosticMutationTimeoutBoundsTransportWithoutCallerDeadline(t *testin
 		Data:           "slow write\r\n",
 		Reason:         "diagnose timeout",
 		IdempotencyKey: "idem-diagnostic-timeout-write",
-		Timeout:        20 * time.Millisecond,
+		Timeout:        500 * time.Millisecond,
 	})
 	if !errors.Is(err, context.DeadlineExceeded) || rcpt == nil || rcpt.Outcome.Status != domain.OutcomeAborted {
 		t.Fatalf("timeout must abort transport and persist an aborted receipt: elapsed=%s err=%v receipt=%v", time.Since(started), err, rcpt)
 	}
 }
 
-func TestAdmissionDeadlineExpiresBeforeEffectFinalizesAbortedRetry(t *testing.T) {
+func TestAdmissionDeadlineAfterLeaseLeavesNoDurableMutationState(t *testing.T) {
 	sd, err := statedir.Resolve(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -303,16 +229,40 @@ func TestAdmissionDeadlineExpiresBeforeEffectFinalizesAbortedRetry(t *testing.T)
 		Target: "c4a523d4-6b99-4d62-a5e2-4752c0f20001", Caller: actor,
 		Reason: "expire during admission", IdempotencyKey: "admission-expired", Timeout: 10 * time.Millisecond,
 	}
-
-	firstReceipt := assertExpiredAdmission(t, svc, transport, params)
-	assertAbortedAdmissionEvidence(t, sd, receiptStore, auditStore, firstReceipt)
-	assertExpiredAdmissionRetry(t, svc, transport, params, firstReceipt)
-
-	params.IdempotencyKey = "admission-fresh-key"
-	params.Timeout = time.Second
-	assertFreshAdmission(t, svc, transport, params)
+	assertAdmissionDeadlineLeavesNoState(t, svc, transport, auditStore, sd, params)
+	assertAdmissionRetrySucceeds(t, svc, transport, params)
 	if err := mgr.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func assertAdmissionDeadlineLeavesNoState(t *testing.T, svc *app.SessionService, transport *trackingTransport, auditStore *audit.Store, sd *statedir.StateDir, params app.SessionOpenParams) {
+	t.Helper()
+	obs, rcpt, err := svc.OpenSession(context.Background(), params)
+	if obs != nil || rcpt != nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expired admission = obs %+v receipt %+v err %v", obs, rcpt, err)
+	}
+	if got := atomic.LoadInt32(&transport.dialCalls); got != 0 {
+		t.Fatalf("transport dial calls after expired admission = %d, want 0", got)
+	}
+	assertLookupDeadlineLeftNoDurableState(t, sd)
+	if events, err := auditStore.Tail(10); err != nil || len(events) != 0 {
+		t.Fatalf("audit after expired admission = %v err %v", events, err)
+	}
+	if entries, err := os.ReadDir(sd.ApprovalsDir()); err != nil || len(entries) != 0 {
+		t.Fatalf("approval state after expired admission = %v err %v", entries, err)
+	}
+}
+
+func assertAdmissionRetrySucceeds(t *testing.T, svc *app.SessionService, transport *trackingTransport, params app.SessionOpenParams) {
+	t.Helper()
+	params.Timeout = time.Second
+	opened, retryReceipt, err := svc.OpenSession(context.Background(), params)
+	if err != nil || opened == nil || retryReceipt == nil {
+		t.Fatalf("retry after pre-reservation deadline = session %+v receipt %+v err %v", opened, retryReceipt, err)
+	}
+	if got := atomic.LoadInt32(&transport.dialCalls); got != 1 {
+		t.Fatalf("retry transport dials = %d, want 1", got)
 	}
 }
 

@@ -49,10 +49,10 @@ func (s *SessionService) reconcileMutationReservation(ctx context.Context, recor
 	if record.Receipt == nil {
 		return changed, s.verifyLegacyFinalization(ctx, *record)
 	}
-	if err := s.receiptStore.Ensure(*record.Receipt); err != nil {
+	if err := s.receiptStore.EnsureContext(ctx, *record.Receipt); err != nil {
 		return changed, fmt.Errorf("app: reconcile mutation receipt: %w", err)
 	}
-	if err := s.auditStore.EnsureTerminalOutcome(*record.Receipt); err != nil {
+	if err := s.auditStore.EnsureTerminalOutcomeContext(ctx, *record.Receipt); err != nil {
 		return changed, fmt.Errorf("app: reconcile mutation audit: %w", err)
 	}
 	if record.State != sessions.MutationReservationFinalizing {

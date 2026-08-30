@@ -18,7 +18,9 @@ func (s *Store) VerifyTerminalOutcomeContext(ctx context.Context, receipt domain
 		return fmt.Errorf("%w: audit store is unavailable", ErrTerminalEvidenceInvalid)
 	}
 
-	s.mu.Lock()
+	if err := lockAuditStoreContext(ctx, &s.mu); err != nil {
+		return err
+	}
 	defer s.mu.Unlock()
 	events, err := s.readEventsLockedContext(ctx)
 	if err != nil {

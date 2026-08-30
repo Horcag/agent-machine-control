@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -48,6 +49,43 @@ func TestManager_CanceledAcquireCreatesNoLockOrLeaseState(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("canceled acquire created state: %v", entries)
+	}
+}
+
+func TestManager_TransitionLockCleanupFailuresAreReturnedAndJoined(t *testing.T) {
+	cleanupErr := errors.New("synthetic lease cleanup failure")
+	protectedMachine := "c4a523d4-6b99-4d62-a5e2-4752c0f20009"
+	for _, tc := range []struct {
+		name      string
+		failBase  string
+		protected bool
+	}{
+		{name: "owner removal", failBase: "owner.json"},
+		{name: "lock directory removal", failBase: protectedMachine + ".lock"},
+		{name: "joined protected error", failBase: "owner.json", protected: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			machineID := protectedMachine
+			if tc.protected {
+				if err := os.WriteFile(filepath.Join(dir, machineID+".gen.json"), []byte("corrupt"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			mgr := lease.NewManager(dir, lease.WithRemoveFunc(func(path string) error {
+				if filepath.Base(path) == tc.failBase {
+					return cleanupErr
+				}
+				return os.Remove(path)
+			}))
+			_, err := mgr.Acquire(context.Background(), machineID, "session.write", "sha256:test", time.Minute)
+			if !errors.Is(err, cleanupErr) {
+				t.Fatalf("cleanup error = %v, want injected removal failure", err)
+			}
+			if tc.protected && !errors.Is(err, lease.ErrInvalidLeaseData) {
+				t.Fatalf("joined error = %v, want protected operation failure", err)
+			}
+		})
 	}
 }
 

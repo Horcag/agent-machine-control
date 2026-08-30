@@ -1,11 +1,10 @@
 package audit
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -67,6 +66,16 @@ func WithAppendHook(fn func(Event) error) Option {
 	return func(s *Store) { s.appendHook = fn }
 }
 
+// WithEnsureHook injects a context-aware pre-append boundary for deterministic deadline tests.
+func WithEnsureHook(fn func(context.Context, Event) error) Option {
+	return func(s *Store) { s.ensureHook = fn }
+}
+
+// WithRemoveFunc injects lock cleanup removal for deterministic failure tests.
+func WithRemoveFunc(fn func(string) error) Option {
+	return func(s *Store) { s.removeFn = fn }
+}
+
 // Store manages append-only persistence of audit events.
 type Store struct {
 	dir              string
@@ -77,6 +86,8 @@ type Store struct {
 	identityProvider lease.IdentityProvider
 	lockTimeout      time.Duration
 	appendHook       func(Event) error
+	ensureHook       func(context.Context, Event) error
+	removeFn         func(string) error
 }
 
 // NewStore creates a new audit Store for the given directory.
@@ -88,6 +99,7 @@ func NewStore(dir string, opts ...Option) *Store {
 		livenessChecker:  &lease.DefaultLivenessChecker{},
 		identityProvider: &lease.DefaultIdentityProvider{},
 		lockTimeout:      5 * time.Second,
+		removeFn:         os.Remove,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -207,6 +219,11 @@ func terminalOutcomeEvent(r domain.Receipt) Event {
 
 // EnsureTerminalOutcome idempotently appends the exact terminal event or rejects a collision.
 func (s *Store) EnsureTerminalOutcome(r domain.Receipt) error {
+	return s.EnsureTerminalOutcomeContext(context.Background(), r)
+}
+
+// EnsureTerminalOutcomeContext ensures exact terminal evidence within the caller's deadline.
+func (s *Store) EnsureTerminalOutcomeContext(ctx context.Context, r domain.Receipt) error {
 	if s == nil {
 		return ErrAuditUnavailable
 	}
@@ -214,27 +231,38 @@ func (s *Store) EnsureTerminalOutcome(r domain.Receipt) error {
 		return fmt.Errorf("audit: invalid terminal receipt: %w", err)
 	}
 	event := terminalOutcomeEvent(r)
-	s.mu.Lock()
+	if err := lockAuditStoreContext(ctx, &s.mu); err != nil {
+		return err
+	}
 	defer s.mu.Unlock()
-	return s.withLock(func() error {
-		events, err := s.readEventsLocked()
-		if err != nil {
-			return err
-		}
-		found, err := findExactTerminalOutcome(events, r)
-		if err != nil {
-			return err
-		}
-		if found {
-			return nil
-		}
-		if s.appendHook != nil {
-			if err := s.appendHook(event); err != nil {
-				return err
-			}
-		}
-		return s.writeEvent(event)
+	return s.withLockContext(ctx, func() error {
+		return s.ensureTerminalOutcomeLocked(ctx, r, event)
 	})
+}
+
+func (s *Store) ensureTerminalOutcomeLocked(ctx context.Context, receipt domain.Receipt, event Event) error {
+	events, err := s.readEventsLockedContext(ctx)
+	if err != nil {
+		return err
+	}
+	found, err := findExactTerminalOutcome(events, receipt)
+	if err != nil || found {
+		return err
+	}
+	if s.ensureHook != nil {
+		if err := s.ensureHook(ctx, event); err != nil {
+			return err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.appendHook != nil {
+		if err := s.appendHook(event); err != nil {
+			return err
+		}
+	}
+	return s.writeEventContext(ctx, event)
 }
 
 func findExactTerminalOutcome(events []Event, receipt domain.Receipt) (bool, error) {
@@ -270,6 +298,13 @@ func (s *Store) appendEvent(event Event) error {
 }
 
 func (s *Store) writeEvent(event Event) error {
+	return s.writeEventContext(context.Background(), event)
+}
+
+func (s *Store) writeEventContext(ctx context.Context, event Event) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	data, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("audit: failed to marshal event: %w", err)
@@ -282,6 +317,9 @@ func (s *Store) writeEvent(event Event) error {
 	defer f.Close()
 	if _, err := f.Write(data); err != nil {
 		return fmt.Errorf("%w: %v", ErrAuditUnavailable, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if err := f.Sync(); err != nil {
 		return fmt.Errorf("%w: %v", ErrAuditUnavailable, err)
@@ -296,121 +334,5 @@ func (s *Store) writeEvent(event Event) error {
 	if err := syncFn(s.dir); err != nil {
 		return fmt.Errorf("%w: failed to sync audit directory %q: %v", ErrAuditUnavailable, s.dir, err)
 	}
-	return nil
-}
-
-func (s *Store) withLock(fn func() error) error {
-	lockDir := filepath.Join(s.dir, ".audit.lock")
-	ownerPath := filepath.Join(lockDir, "owner.json")
-	runtimeID, pid, startTime := s.identityProvider.CurrentIdentity()
-	now := s.now()
-
-	timeout := s.lockTimeout
-	if timeout <= 0 {
-		timeout = 5 * time.Second
-	}
-	deadline := time.Now().Add(timeout)
-	for {
-		err := os.Mkdir(lockDir, 0700)
-		if err == nil {
-			if recErr := s.recordLockOwner(ownerPath, runtimeID, pid, startTime, now); recErr != nil {
-				_ = os.Remove(ownerPath)
-				_ = os.Remove(lockDir)
-				return fmt.Errorf("%w: %v", ErrAuditUnavailable, recErr)
-			}
-			defer s.releaseLock(ownerPath, lockDir, runtimeID, pid, startTime, now)
-			return fn()
-		}
-		if !os.IsExist(err) {
-			return fmt.Errorf("%w: failed to create audit lock: %v", ErrAuditUnavailable, err)
-		}
-
-		if s.tryReclaimDeadLock(ownerPath, lockDir, runtimeID) {
-			continue
-		}
-
-		if time.Now().After(deadline) {
-			return fmt.Errorf("%w: timeout acquiring audit lock", ErrAuditUnavailable)
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-}
-
-func (s *Store) recordLockOwner(ownerPath, runtimeID string, pid int, startTime string, now time.Time) error {
-	ownerRec := lease.LockOwnerRecord{
-		SchemaVersion:    SchemaVersion,
-		RuntimeID:        runtimeID,
-		PID:              pid,
-		ProcessStartTime: startTime,
-		AcquiredAt:       now,
-	}
-	data, err := json.MarshalIndent(ownerRec, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal audit lock owner: %w", err)
-	}
-	f, err := os.OpenFile(ownerPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil {
-		return fmt.Errorf("failed to open audit lock owner file: %w", err)
-	}
-	defer f.Close()
-
-	if _, err := f.Write(data); err != nil {
-		return fmt.Errorf("failed to write audit lock owner file: %w", err)
-	}
-	if err := f.Sync(); err != nil {
-		return fmt.Errorf("failed to sync audit lock owner file: %w", err)
-	}
-	return f.Close()
-}
-
-func (s *Store) tryReclaimDeadLock(ownerPath, lockDir, runtimeID string) bool {
-	ownerData, err := os.ReadFile(ownerPath)
-	if err != nil {
-		return false
-	}
-	var ownerRec lease.LockOwnerRecord
-	dec := json.NewDecoder(bytes.NewReader(ownerData))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&ownerRec); err != nil {
-		return false
-	}
-	var trailing any
-	if err := dec.Decode(&trailing); err != io.EOF {
-		return false
-	}
-	if ownerRec.SchemaVersion != SchemaVersion || ownerRec.RuntimeID != runtimeID || ownerRec.PID <= 0 {
-		return false
-	}
-	alive, checkErr := s.livenessChecker.IsAlive(ownerRec.PID, ownerRec.ProcessStartTime)
-	if checkErr != nil || alive {
-		return false
-	}
-	_ = os.Remove(ownerPath)
-	_ = os.Remove(lockDir)
-	return true
-}
-
-func (s *Store) releaseLock(ownerPath, lockDir, runtimeID string, pid int, startTime string, acquiredAt time.Time) {
-	ownerData, err := os.ReadFile(ownerPath)
-	if err != nil {
-		return
-	}
-	var ownerRec lease.LockOwnerRecord
-	dec := json.NewDecoder(bytes.NewReader(ownerData))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&ownerRec); err != nil {
-		return
-	}
-	var trailing any
-	if err := dec.Decode(&trailing); err != io.EOF {
-		return
-	}
-	if ownerRec.SchemaVersion == SchemaVersion &&
-		ownerRec.RuntimeID == runtimeID &&
-		ownerRec.PID == pid &&
-		ownerRec.ProcessStartTime == startTime &&
-		ownerRec.AcquiredAt.Equal(acquiredAt) {
-		_ = os.Remove(ownerPath)
-		_ = os.Remove(lockDir)
-	}
+	return ctx.Err()
 }

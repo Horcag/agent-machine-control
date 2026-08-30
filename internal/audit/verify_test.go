@@ -1,6 +1,7 @@
 package audit_test
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -47,6 +48,25 @@ func TestEnsureTerminalOutcomeIsExactAndIdempotent(t *testing.T) {
 	conflicting.Outcome.ExitCode = 1
 	if err := store.EnsureTerminalOutcome(conflicting); !errors.Is(err, audit.ErrTerminalEvidenceInvalid) {
 		t.Fatalf("conflicting ensure error = %v", err)
+	}
+}
+
+func TestEnsureTerminalOutcomeContextHonorsDeadline(t *testing.T) {
+	entered := make(chan struct{})
+	store := audit.NewStore(t.TempDir(), audit.WithEnsureHook(func(ctx context.Context, _ audit.Event) error {
+		close(entered)
+		<-ctx.Done()
+		return ctx.Err()
+	}))
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	if err := store.EnsureTerminalOutcomeContext(ctx, terminalReceipt()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("ensure context error = %v, want deadline", err)
+	}
+	select {
+	case <-entered:
+	default:
+		t.Fatal("context-aware audit ensure hook was not entered")
 	}
 }
 

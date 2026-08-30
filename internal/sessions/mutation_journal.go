@@ -93,14 +93,20 @@ func WithMutationJournalHook(hook MutationJournalHook) MutationJournalOption {
 
 // MutationJournal stores session-scoped mutation reservations beside durable session state.
 type MutationJournal struct {
-	dir        string
-	hook       MutationJournalHook
-	lookupHook func(context.Context) error
+	dir         string
+	hook        MutationJournalHook
+	contextHook func(context.Context, string) error
+	lookupHook  func(context.Context) error
 }
 
 // WithMutationJournalLookupHook injects a context-aware lookup boundary for deadline tests.
 func WithMutationJournalLookupHook(hook func(context.Context) error) MutationJournalOption {
 	return func(j *MutationJournal) { j.lookupHook = hook }
+}
+
+// WithMutationJournalContextHook injects a context-aware storage boundary for deadline tests.
+func WithMutationJournalContextHook(hook func(context.Context, string) error) MutationJournalOption {
+	return func(j *MutationJournal) { j.contextHook = hook }
 }
 
 // NewMutationJournal creates a durable session mutation journal.
@@ -191,6 +197,21 @@ func (j *MutationJournal) callHook(action string) error {
 	return j.hook(action)
 }
 
+func (j *MutationJournal) callHookContext(ctx context.Context, action string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := j.callHook(action); err != nil {
+		return err
+	}
+	if j.contextHook != nil {
+		if err := j.contextHook(ctx, action); err != nil {
+			return err
+		}
+	}
+	return ctx.Err()
+}
+
 // Lookup finds an exact reservation or returns a collision without disclosing its contents.
 func (j *MutationJournal) Lookup(op domain.Operation) (*MutationReservation, error) {
 	return j.LookupContext(context.Background(), op)
@@ -255,7 +276,7 @@ func (j *MutationJournal) ReserveContext(ctx context.Context, op domain.Operatio
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if err := j.callHook("reserve"); err != nil {
+	if err := j.callHookContext(ctx, "reserve"); err != nil {
 		return nil, err
 	}
 	if err := j.ensureDir(); err != nil {
@@ -274,17 +295,31 @@ func (j *MutationJournal) ReserveContext(ctx context.Context, op domain.Operatio
 	if err != nil {
 		return nil, err
 	}
-	err = writeReservationExclusive(ctx, j.pathFor(op.IdempotencyKey), data)
+	path := j.pathFor(op.IdempotencyKey)
+	err = writeReservationExclusive(ctx, path, data)
 	if os.IsExist(err) {
 		return nil, ErrMutationFinalizationPending
 	}
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, errors.Join(err, j.removeCanceledReservation(path))
+		}
 		return nil, err
 	}
 	if err := statedir.SyncDir(j.dir); err != nil {
 		return nil, err
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, errors.Join(err, j.removeCanceledReservation(path))
+	}
 	return &record, nil
+}
+
+func (j *MutationJournal) removeCanceledReservation(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return statedir.SyncDir(j.dir)
 }
 
 func writeReservationExclusive(ctx context.Context, path string, data []byte) error {

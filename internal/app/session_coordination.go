@@ -240,7 +240,7 @@ func (s *SessionService) executeMutation(
 		persistErr = s.mutationJournal.RecordFinalizationIntentContext(finalizationCtx, op, rcpt, durableResult, completedAt)
 	}
 	if persistErr == nil {
-		persistErr = s.persistTerminalOutcome(rcpt)
+		persistErr = s.persistTerminalOutcomeContext(finalizationCtx, rcpt)
 	}
 	if persistErr == nil {
 		persistErr = s.mutationJournal.MarkFinalizedContext(finalizationCtx, op, completedAt)
@@ -279,8 +279,7 @@ func (s *SessionService) admitSessionMutation(
 	op.Classification = safety.Classification
 	fp, idFp, err := s.validateAndFingerprint(op)
 	if err != nil {
-		_ = releaseLease()
-		return nil, nil, err
+		return nil, nil, errors.Join(err, releaseLease())
 	}
 	if ctx.Err() != nil {
 		return &admittedSessionMutation{
@@ -292,8 +291,7 @@ func (s *SessionService) admitSessionMutation(
 	}
 	decision, denialReceipt, err := s.evaluateAndAdmit(op, safety, approval, now, fp, idFp)
 	if err != nil {
-		_ = releaseLease()
-		return nil, denialReceipt, err
+		return nil, denialReceipt, errors.Join(err, releaseLease())
 	}
 	return &admittedSessionMutation{
 		op: op, fp: fp, idFp: idFp, decision: decision, safety: safety, releaseLease: releaseLease,
@@ -302,20 +300,17 @@ func (s *SessionService) admitSessionMutation(
 
 func (s *SessionService) reserveAndPrepareMutation(ctx context.Context, admitted *admittedSessionMutation, approval *domain.Approval) error {
 	if s.mutationJournal == nil {
-		_ = admitted.releaseLease()
-		return errors.New("app: session mutation journal is unavailable")
+		return errors.Join(errors.New("app: session mutation journal is unavailable"), admitted.releaseLease())
 	}
 	now := s.now()
-	if _, err := s.mutationJournal.Reserve(admitted.op, now); err != nil {
-		_ = admitted.releaseLease()
-		return err
+	if _, err := s.mutationJournal.ReserveContext(ctx, admitted.op, now); err != nil {
+		return errors.Join(err, admitted.releaseLease())
 	}
 	if err := s.prepareAuditAndApproval(admitted.decision, admitted.op, approval, now); err != nil {
 		cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		cancelErr := s.mutationJournal.CancelContext(cancelCtx, admitted.op)
 		cancel()
-		_ = admitted.releaseLease()
-		return errors.Join(err, cancelErr)
+		return errors.Join(err, cancelErr, admitted.releaseLease())
 	}
 	return nil
 }

@@ -203,6 +203,77 @@ func TestSessionMutationJournal_PreventsReplayAfterReceiptAuditAndFinalizeFailur
 	}
 }
 
+func TestFinalizingExactRetryHonorsReceiptAndAuditEnsureDeadlines(t *testing.T) {
+	tests := []struct {
+		name     string
+		buildCut finalizationCutBuilder
+		blocked  func(*finalizationHarness, chan struct{}) (*receipt.Store, *audit.Store)
+	}{
+		{name: "receipt ensure", buildCut: buildReceiptCut, blocked: blockedReceiptEnsureStores},
+		{name: "audit ensure", buildCut: buildAuditCut, blocked: blockedAuditEnsureStores},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			runFinalizingEnsureDeadlineCase(t, tc.name, tc.buildCut, tc.blocked)
+		})
+	}
+}
+
+func blockedReceiptEnsureStores(h *finalizationHarness, entered chan struct{}) (*receipt.Store, *audit.Store) {
+	receipts := receipt.NewStore(h.sd.ReceiptsDir(), receipt.WithEnsureHook(func(ctx context.Context, r domain.Receipt) error {
+		if r.OperationKind != "session.write" {
+			return nil
+		}
+		close(entered)
+		<-ctx.Done()
+		return ctx.Err()
+	}))
+	return receipts, audit.NewStore(h.sd.AuditDir())
+}
+
+func blockedAuditEnsureStores(h *finalizationHarness, entered chan struct{}) (*receipt.Store, *audit.Store) {
+	audits := audit.NewStore(h.sd.AuditDir(), audit.WithEnsureHook(func(ctx context.Context, event audit.Event) error {
+		if event.EventType != audit.EventTerminalOutcome || event.OperationKind != "session.write" {
+			return nil
+		}
+		close(entered)
+		<-ctx.Done()
+		return ctx.Err()
+	}))
+	return receipt.NewStore(h.sd.ReceiptsDir()), audits
+}
+
+func runFinalizingEnsureDeadlineCase(t *testing.T, name string, buildCut finalizationCutBuilder, blocked func(*finalizationHarness, chan struct{}) (*receipt.Store, *audit.Store)) {
+	t.Helper()
+	h := newFinalizationHarness(t)
+	params := h.writeParams("idem-deadline-" + strings.ReplaceAll(name, " ", "-"))
+	receipts, audits, journal := buildCut(h)
+	if _, rcpt, err := h.service(receipts, audits, journal).WriteSession(context.Background(), params); err == nil || rcpt == nil {
+		t.Fatalf("failed to seed finalizing record: receipt=%v err=%v", rcpt, err)
+	}
+	before := atomic.LoadInt32(&h.transport.writeCalls)
+	entered := make(chan struct{})
+	blockedReceipts, blockedAudits := blocked(h, entered)
+	params.Timeout = 50 * time.Millisecond
+	started := time.Now()
+	_, rcpt, err := h.service(blockedReceipts, blockedAudits, nil).WriteSession(context.Background(), params)
+	if !errors.Is(err, context.DeadlineExceeded) || rcpt != nil {
+		t.Fatalf("blocked retry = receipt %v err %v", rcpt, err)
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("blocked retry exceeded deadline bound: %s", elapsed)
+	}
+	select {
+	case <-entered:
+	default:
+		t.Fatal("context-aware ensure hook was not entered")
+	}
+	if got := atomic.LoadInt32(&h.transport.writeCalls); got != before {
+		t.Fatalf("blocked retry replayed transport: writes=%d before=%d", got, before)
+	}
+}
+
 func runFinalizationCut(t *testing.T, name string, build finalizationCutBuilder) {
 	t.Helper()
 	h := newFinalizationHarness(t)
@@ -284,6 +355,128 @@ func TestSessionMutationJournal_ReserveAndCancelFailuresFailClosedBeforeEffect(t
 		t.Fatalf("cancel failure allowed effect: writes=%d err=%v", h.transport.writeCalls, err)
 	}
 	assertInterruptedPendingBecomesUnknownWithoutEffect(t, h, params)
+}
+
+func TestSessionMutationJournal_ReserveCancellationLeavesNoEffectsOrLease(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		cancelHook bool
+	}{
+		{name: "deadline"},
+		{name: "cancel", cancelHook: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runReserveCancellationCase(t, tc.name, tc.cancelHook)
+		})
+	}
+}
+
+type reserveCancellationHook struct {
+	cancelParent context.CancelFunc
+	cancel       bool
+	entered      chan struct{}
+}
+
+func (h reserveCancellationHook) run(ctx context.Context, action string) error {
+	if action != "reserve" {
+		return nil
+	}
+	close(h.entered)
+	if h.cancel {
+		h.cancelParent()
+	} else {
+		<-ctx.Done()
+	}
+	return ctx.Err()
+}
+
+type reserveSideEffectSnapshot struct {
+	auditEvents int
+	receipts    int
+	approvals   int
+	mutations   int
+	writes      int32
+}
+
+func runReserveCancellationCase(t *testing.T, name string, cancelHook bool) {
+	t.Helper()
+	h := newFinalizationHarness(t)
+	params := h.writeParams("idem-reserve-context-" + name)
+	params.Timeout = 500 * time.Millisecond
+	if cancelHook {
+		params.Timeout = time.Second
+	}
+	parentCtx, cancelParent := context.WithCancel(context.Background())
+	defer cancelParent()
+	entered := make(chan struct{})
+	hook := reserveCancellationHook{cancelParent: cancelParent, cancel: cancelHook, entered: entered}
+	journal := sessions.NewMutationJournal(filepath.Join(h.sd.SessionsDir(), "mutations"), sessions.WithMutationJournalContextHook(hook.run))
+	audits := audit.NewStore(h.sd.AuditDir())
+	svc := app.NewSessionService(h.manager, h.safety, lease.NewManager(h.sd.LeasesDir()), audits,
+		receipt.NewStore(h.sd.ReceiptsDir()), approval.NewStore(h.sd.ApprovalsDir()), app.WithSessionMutationJournal(journal))
+	baseline := captureReserveSideEffects(t, h, audits)
+
+	_, rcpt, err := svc.WriteSession(parentCtx, params)
+	if rcpt != nil || (!errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)) {
+		t.Fatalf("reserve context result = receipt %v err %v", rcpt, err)
+	}
+	assertReserveHookEntered(t, entered)
+	assertReserveSideEffectsUnchanged(t, h, audits, baseline)
+	assertNoRetainedLease(t, h.sd.LeasesDir())
+}
+
+func captureReserveSideEffects(t *testing.T, h *finalizationHarness, audits *audit.Store) reserveSideEffectSnapshot {
+	t.Helper()
+	events, err := audits.Tail(100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return reserveSideEffectSnapshot{
+		auditEvents: len(events),
+		receipts:    countDirectoryEntries(t, h.sd.ReceiptsDir()),
+		approvals:   countDirectoryEntries(t, h.sd.ApprovalsDir()),
+		mutations:   countDirectoryEntries(t, filepath.Join(h.sd.SessionsDir(), "mutations")),
+		writes:      atomic.LoadInt32(&h.transport.writeCalls),
+	}
+}
+
+func assertReserveSideEffectsUnchanged(t *testing.T, h *finalizationHarness, audits *audit.Store, want reserveSideEffectSnapshot) {
+	t.Helper()
+	got := captureReserveSideEffects(t, h, audits)
+	if got != want {
+		t.Fatalf("reserve cancellation changed durable or transport state: got=%+v want=%+v", got, want)
+	}
+}
+
+func countDirectoryEntries(t *testing.T, dir string) int {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(entries)
+}
+
+func assertReserveHookEntered(t *testing.T, entered chan struct{}) {
+	t.Helper()
+	select {
+	case <-entered:
+	default:
+		t.Fatal("reserve context hook was not entered")
+	}
+}
+
+func assertNoRetainedLease(t *testing.T, leasesDir string) {
+	t.Helper()
+	entries, err := os.ReadDir(leasesDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".lease.json") || strings.HasSuffix(entry.Name(), ".lock") {
+			t.Fatalf("reserve cancellation retained lease state: %s", entry.Name())
+		}
+	}
 }
 
 func TestSessionMutationJournal_OpenAndCloseRetriesUseImmutableResultsWithoutReadScope(t *testing.T) {

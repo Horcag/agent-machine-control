@@ -80,16 +80,20 @@ func (s *SessionService) buildOutcomeReceipt(
 }
 
 func (s *SessionService) persistTerminalOutcome(rcpt domain.Receipt) error {
+	return s.persistTerminalOutcomeContext(context.Background(), rcpt)
+}
+
+func (s *SessionService) persistTerminalOutcomeContext(ctx context.Context, rcpt domain.Receipt) error {
 	if s.receiptStore == nil {
 		return errors.New("receipt store: unavailable")
 	}
-	if err := s.receiptStore.Ensure(rcpt); err != nil {
+	if err := s.receiptStore.EnsureContext(ctx, rcpt); err != nil {
 		return fmt.Errorf("receipt store: %w", err)
 	}
 	if s.auditStore == nil {
 		return errors.New("audit store: unavailable")
 	}
-	if err := s.auditStore.EnsureTerminalOutcome(rcpt); err != nil {
+	if err := s.auditStore.EnsureTerminalOutcomeContext(ctx, rcpt); err != nil {
 		return fmt.Errorf("audit store: %w", err)
 	}
 	return nil
