@@ -280,8 +280,14 @@ func (s *Store) ensureTerminalOutcomeLocked(ctx context.Context, receipt domain.
 		return err
 	}
 	found, err := findExactTerminalOutcome(events, receipt)
-	if err != nil || found {
+	if err != nil {
 		return err
+	}
+	if found {
+		if err := s.syncDirectory(); err != nil {
+			return fmt.Errorf("%w: exact terminal event found but failed to sync directory %q: %w", ErrAuditUnavailable, s.dir, err)
+		}
+		return nil
 	}
 	if s.ensureHook != nil {
 		if err := s.ensureHook(ctx, event); err != nil {
@@ -368,12 +374,16 @@ func (s *Store) writeEventContext(ctx context.Context, event Event) error {
 	if closeErr := closeFn(f); closeErr != nil {
 		return fmt.Errorf("%w: audit event appended but file close failed: %w", ErrAuditUnavailable, closeErr)
 	}
+	if err := s.syncDirectory(); err != nil {
+		return fmt.Errorf("%w: audit event appended but failed to sync directory %q: %v", ErrAuditUnavailable, s.dir, err)
+	}
+	return nil
+}
+
+func (s *Store) syncDirectory() error {
 	syncFn := s.syncDirFn
 	if syncFn == nil {
 		syncFn = statedir.SyncDir
 	}
-	if err := syncFn(s.dir); err != nil {
-		return fmt.Errorf("%w: audit event appended but failed to sync directory %q: %v", ErrAuditUnavailable, s.dir, err)
-	}
-	return nil
+	return syncFn(s.dir)
 }

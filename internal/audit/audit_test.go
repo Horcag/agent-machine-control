@@ -33,6 +33,17 @@ func testTerminalReceipt() domain.Receipt {
 	}
 }
 
+func requireAuditEventCount(t *testing.T, dir string, want int) {
+	t.Helper()
+	content, err := os.ReadFile(filepath.Join(dir, AuditFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := bytes.Count(content, []byte{'\n'}); got != want {
+		t.Fatalf("audit event count = %d, want %d", got, want)
+	}
+}
+
 func TestStore_AdmissionAndTerminalOutcome(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
@@ -116,13 +127,17 @@ func TestEnsureTerminalOutcomeCancellationAfterAppendFinishesDurability(t *testi
 	}
 }
 
-func TestEnsureTerminalOutcomeCloseFailurePreservesCommittedEvidence(t *testing.T) {
+func TestEnsureTerminalOutcomeCloseFailureRepairsDirectoryDurabilityOnRetry(t *testing.T) {
 	dir := t.TempDir()
 	closeErr := errors.New("synthetic audit close failure")
+	syncErr := errors.New("synthetic audit directory sync failure")
 	dirSyncCalls := 0
 	closeCalls := 0
 	store := NewStore(dir, WithSyncDir(func(string) error {
 		dirSyncCalls++
+		if dirSyncCalls == 1 {
+			return syncErr
+		}
 		return nil
 	}))
 	store.closeFn = func(f *os.File) error {
@@ -144,25 +159,25 @@ func TestEnsureTerminalOutcomeCloseFailurePreservesCommittedEvidence(t *testing.
 	if dirSyncCalls != 0 {
 		t.Fatalf("directory sync calls = %d, want none after failed close", dirSyncCalls)
 	}
-	content, err := os.ReadFile(filepath.Join(dir, AuditFileName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if lines := bytes.Count(content, []byte{'\n'}); lines != 1 {
-		t.Fatalf("audit event count after close failure = %d, want exactly one", lines)
-	}
+	requireAuditEventCount(t, dir, 1)
 
 	store.closeFn = (*os.File).Close
+	err = store.EnsureTerminalOutcome(want)
+	if !errors.Is(err, ErrAuditUnavailable) || !errors.Is(err, syncErr) {
+		t.Fatalf("first exact retry = %v, want ErrAuditUnavailable and injected sync cause", err)
+	}
+	if dirSyncCalls != 1 {
+		t.Fatalf("directory sync calls after failed retry = %d, want exactly one", dirSyncCalls)
+	}
+	requireAuditEventCount(t, dir, 1)
+
 	if err := store.EnsureTerminalOutcome(want); err != nil {
 		t.Fatalf("exact recovery after close failure failed: %v", err)
 	}
-	content, err = os.ReadFile(filepath.Join(dir, AuditFileName))
-	if err != nil {
-		t.Fatal(err)
+	if dirSyncCalls != 2 {
+		t.Fatalf("directory sync calls after successful retry = %d, want exactly two", dirSyncCalls)
 	}
-	if lines := bytes.Count(content, []byte{'\n'}); lines != 1 {
-		t.Fatalf("audit event count after exact recovery = %d, want exactly one", lines)
-	}
+	requireAuditEventCount(t, dir, 1)
 }
 
 func TestStore_Unwritable_FailsClosed(t *testing.T) {
