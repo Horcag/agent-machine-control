@@ -318,63 +318,6 @@ func (i *TrustedInventory) applyHostStatus(hostID domain.HostID, status MachineI
 	return nil
 }
 
-// SetMachineAliases assigns exact server-owned aliases to a canonical machine.
-func (i *TrustedInventory) SetMachineAliases(locator domain.MachineLocator, aliases []string) error {
-	if err := locator.Validate(); err != nil {
-		return err
-	}
-	normalized := make([]string, 0, len(aliases))
-	seen := make(map[string]struct{}, len(aliases))
-	for _, alias := range aliases {
-		value, err := domain.NormalizeExactAlias(alias)
-		if err != nil {
-			return err
-		}
-		if _, exists := seen[value]; exists {
-			return fmt.Errorf("%w: duplicate machine alias %q", domain.ErrInvalidAlias, value)
-		}
-		seen[value] = struct{}{}
-		normalized = append(normalized, value)
-	}
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	entry, exists := i.machines[locator.String()]
-	if !exists {
-		return domain.ErrMachineReferenceMiss
-	}
-	if err := rejectCanonicalAliasCollisions(i.machines, seen); err != nil {
-		return err
-	}
-	for key, candidate := range i.machines {
-		if key == locator.String() {
-			continue
-		}
-		if _, collision := seen[candidate.DisplayName]; collision {
-			return fmt.Errorf("%w: machine alias %q collides", domain.ErrMachineReferenceAmbig, candidate.DisplayName)
-		}
-		for _, alias := range candidate.Aliases {
-			if _, collision := seen[alias]; collision {
-				return fmt.Errorf("%w: machine alias %q collides", domain.ErrMachineReferenceAmbig, alias)
-			}
-		}
-	}
-	entry.Aliases = normalized
-	i.machines[locator.String()] = entry
-	return nil
-}
-
-func rejectCanonicalAliasCollisions(entries map[string]MachineIndexEntry, aliases map[string]struct{}) error {
-	for key, entry := range entries {
-		if _, collision := aliases[key]; collision {
-			return fmt.Errorf("%w: alias %q collides with canonical locator", domain.ErrMachineReferenceAmbig, key)
-		}
-		if _, collision := aliases[entry.Locator.VMID]; collision {
-			return fmt.Errorf("%w: alias %q collides with canonical VM GUID", domain.ErrMachineReferenceAmbig, entry.Locator.VMID)
-		}
-	}
-	return nil
-}
-
 // ResolveMachine resolves a canonical locator, GUID, exact display name, or exact alias.
 func (i *TrustedInventory) ResolveMachine(reference string) (MachineIndexEntry, error) {
 	ref := strings.TrimSpace(reference)

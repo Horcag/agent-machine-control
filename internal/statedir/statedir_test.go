@@ -337,6 +337,9 @@ func TestStateDir_NewSubdirs(t *testing.T) {
 	if sd.MachinesDir() != filepath.Join(tempDir, statedir.SubdirMachines) {
 		t.Errorf("unexpected MachinesDir: %s", sd.MachinesDir())
 	}
+	if sd.TargetsDir() != filepath.Join(tempDir, statedir.SubdirTargets) {
+		t.Errorf("unexpected TargetsDir: %s", sd.TargetsDir())
+	}
 
 	if err := sd.EnsureDirs(); err != nil {
 		t.Fatalf("EnsureDirs failed: %v", err)

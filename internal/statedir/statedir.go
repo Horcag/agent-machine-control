@@ -45,6 +45,9 @@ const (
 
 	// SubdirMachines is the subdirectory name for per-machine connection and host-key configurations.
 	SubdirMachines = "machines"
+
+	// SubdirTargets is the subdirectory name for protected target-selection authority.
+	SubdirTargets = "targets"
 )
 
 var (
@@ -101,6 +104,7 @@ func (s *StateDir) EnsureDirs() error {
 		s.SessionsDir(),
 		s.KeysDir(),
 		s.MachinesDir(),
+		s.TargetsDir(),
 	}
 
 	for _, dir := range subdirs {
@@ -252,6 +256,11 @@ func (s *StateDir) KeysDir() string {
 // MachinesDir returns the path to the machines subdirectory.
 func (s *StateDir) MachinesDir() string {
 	return filepath.Join(s.root, SubdirMachines)
+}
+
+// TargetsDir returns the path to the protected target-selection subdirectory.
+func (s *StateDir) TargetsDir() string {
+	return filepath.Join(s.root, SubdirTargets)
 }
 
 func defaultStateDir() (string, error) {
