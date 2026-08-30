@@ -3,11 +3,9 @@
 package sessions
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -23,27 +21,14 @@ func openSessionStateFileContext(ctx context.Context, sessionsDir, filename stri
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	path, err := windows.UTF16PtrFromString(filepath.Join(sessionsDir, filename))
-	if err != nil {
-		return nil, err
-	}
 	deadline := time.Now().Add(250 * time.Millisecond)
 	if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(deadline) {
 		deadline = contextDeadline
 	}
-	var handle windows.Handle
 	for {
-		handle, err = windows.CreateFile(
-			path,
-			windows.GENERIC_READ,
-			windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
-			nil,
-			windows.OPEN_EXISTING,
-			windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT,
-			0,
-		)
+		file, err := openSessionStateFileOnce(sessionsDir, filename)
 		if err == nil || !retryableSessionStateOpenError(err) || !time.Now().Before(deadline) {
-			break
+			return file, err
 		}
 		timer := time.NewTimer(5 * time.Millisecond)
 		select {
@@ -53,6 +38,22 @@ func openSessionStateFileContext(ctx context.Context, sessionsDir, filename stri
 		case <-timer.C:
 		}
 	}
+}
+
+func openSessionStateFileOnce(sessionsDir, filename string) (*os.File, error) {
+	path, err := windows.UTF16PtrFromString(filepath.Join(sessionsDir, filename))
+	if err != nil {
+		return nil, err
+	}
+	handle, err := windows.CreateFile(
+		path,
+		windows.GENERIC_READ,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT,
+		0,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -71,28 +72,6 @@ func openSessionStateFileContext(ctx context.Context, sessionsDir, filename stri
 		return nil, fmt.Errorf("sessions: failed to adopt canonical session handle")
 	}
 	return file, nil
-}
-
-func verifySessionFilePublication(ctx context.Context, filePath string, expected []byte) error {
-	file, err := openSessionStateFileContext(ctx, filepath.Dir(filePath), filepath.Base(filePath))
-	if err != nil {
-		return err
-	}
-	data, readErr := io.ReadAll(io.LimitReader(file, maxSessionStateBytes+1))
-	closeErr := file.Close()
-	if readErr != nil {
-		return readErr
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	if len(data) > maxSessionStateBytes {
-		return fmt.Errorf("sessions: published canonical session exceeds %d bytes", maxSessionStateBytes)
-	}
-	if !bytes.Equal(data, expected) {
-		return errors.New("sessions: published canonical session payload does not match replacement")
-	}
-	return nil
 }
 
 func retryableSessionStateOpenError(err error) bool {

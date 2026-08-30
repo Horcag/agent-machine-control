@@ -1,7 +1,9 @@
 package sessions
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -116,5 +118,56 @@ func TestReplaceSessionFileCleansTempAfterRenameFailure(t *testing.T) {
 		if strings.HasPrefix(entry.Name(), ".session-") {
 			t.Fatalf("failed replacement left temporary file %s", entry.Name())
 		}
+	}
+}
+
+func TestReplaceSessionFileCancellationBeforeCommitHasNoEffect(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.json")
+	ctx, cancel := context.WithCancel(t.Context())
+	commits := 0
+	prepare := func(_, _ string) (atomicReplacement, error) {
+		cancel()
+		return func(context.Context) error {
+			commits++
+			return nil
+		}, nil
+	}
+
+	err := replaceSessionFileContextWithPreparer(ctx, path, []byte("{}"), prepare)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("replace error = %v, want context cancellation", err)
+	}
+	if commits != 0 {
+		t.Fatalf("replacement commits = %d, want 0", commits)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("canonical target exists after pre-commit cancellation: %v", err)
+	}
+}
+
+func TestReplaceSessionFileCancellationAfterCommitPreservesSuccess(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.json")
+	ctx, cancel := context.WithCancel(t.Context())
+	prepare := func(oldPath, newPath string) (atomicReplacement, error) {
+		return func(context.Context) error {
+			if err := os.Rename(oldPath, newPath); err != nil {
+				return err
+			}
+			cancel()
+			return nil
+		}, nil
+	}
+
+	if err := replaceSessionFileContextWithPreparer(ctx, path, []byte("{}"), prepare); err != nil {
+		t.Fatalf("successful committed replacement was reclassified: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "{}" {
+		t.Fatalf("canonical data = %q, want %q", data, "{}")
 	}
 }

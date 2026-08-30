@@ -161,6 +161,9 @@ func TestManagerExpiredContextsNeverReachSessionEffects(t *testing.T) {
 	}
 }
 
+// setupTestManager accepts options for Windows-only publication regressions.
+//
+//nolint:unparam // Linux-only lint cannot see the Windows call site.
 func setupTestManager(t *testing.T, opts ...sessions.ManagerOption) (*sessions.Manager, *fakeserver.FakeSSHServer, domain.ActorContext, domain.ActorContext, string) {
 	tempDir := t.TempDir()
 	sd, _ := statedir.Resolve(tempDir)

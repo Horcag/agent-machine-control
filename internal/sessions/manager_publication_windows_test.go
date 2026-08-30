@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -124,20 +123,7 @@ func windowsSessionPublicationDiagnostic(sessionsDir, basename string) string {
 }
 
 func publicationErrorDiagnostic(err error) string {
-	method := "unknown"
-	switch {
-	case strings.Contains(err.Error(), "FileRenameInfoEx"):
-		method = "FileRenameInfoEx"
-	case strings.Contains(err.Error(), "MoveFileEx"):
-		method = "MoveFileEx"
-	}
-	return fmt.Sprintf(
-		"type=%T method=%s canonical_verification=%t win32={%s}",
-		err,
-		method,
-		strings.Contains(err.Error(), "canonical publication"),
-		windowsErrorDiagnostic(err),
-	)
+	return fmt.Sprintf("type=%T error=%q win32={%s}", err, err, windowsErrorDiagnostic(err))
 }
 
 func windowsErrorDiagnostic(err error) string {

@@ -5,6 +5,7 @@ package sessions
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -30,6 +31,48 @@ func TestFileRenameInformationExLayoutAndFlags(t *testing.T) {
 	wantFlags := uint32(windows.FILE_RENAME_REPLACE_IF_EXISTS | windows.FILE_RENAME_POSIX_SEMANTICS)
 	if fileRenameInfoExFlags != wantFlags {
 		t.Fatalf("FileRenameInfoEx flags = %#x, want %#x", fileRenameInfoExFlags, wantFlags)
+	}
+	wantMoveFlags := uint32(windows.MOVEFILE_REPLACE_EXISTING | windows.MOVEFILE_WRITE_THROUGH)
+	if moveFileExFlags != wantMoveFlags {
+		t.Fatalf("MoveFileEx flags = %#x, want %#x", moveFileExFlags, wantMoveFlags)
+	}
+}
+
+func TestPrepareAtomicReplaceSelectsOneCommitPathWithoutFallback(t *testing.T) {
+	commitErr := errors.New("injected commit failure")
+	for _, test := range []struct {
+		name         string
+		targetExists bool
+		wantMove     int
+		wantRename   int
+	}{
+		{name: "absent target", targetExists: false, wantMove: 1},
+		{name: "existing target", targetExists: true, wantRename: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			moveCalls := 0
+			renameCalls := 0
+			replace, err := prepareAtomicReplaceWith("source", "target", windowsReplaceOperations{
+				targetExists: func(string) (bool, error) { return test.targetExists, nil },
+				moveAbsent: func(context.Context, string, string) error {
+					moveCalls++
+					return commitErr
+				},
+				replaceExisting: func(context.Context, string, string) error {
+					renameCalls++
+					return commitErr
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := replace(t.Context()); !errors.Is(err, commitErr) {
+				t.Fatalf("replacement error = %v, want injected failure", err)
+			}
+			if moveCalls != test.wantMove || renameCalls != test.wantRename {
+				t.Fatalf("commit calls = MoveFileEx:%d FileRenameInfoEx:%d, want %d and %d", moveCalls, renameCalls, test.wantMove, test.wantRename)
+			}
+		})
 	}
 }
 

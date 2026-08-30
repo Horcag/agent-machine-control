@@ -6,17 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/Horcag/agent-machine-control/internal/statedir"
 )
 
-type atomicReplaceMethod string
+type atomicReplacement func(context.Context) error
 
-const (
-	atomicReplaceMethodRename           atomicReplaceMethod = "rename"
-	atomicReplaceMethodFileRenameInfoEx atomicReplaceMethod = "FileRenameInfoEx"
-	atomicReplaceMethodMoveFileEx       atomicReplaceMethod = "MoveFileEx"
-)
+type atomicReplacePreparer func(oldPath, newPath string) (atomicReplacement, error)
 
 func (m *Manager) persistSession(s *Session) error {
 	if m.sessionsDir == "" {
@@ -52,6 +46,15 @@ func replaceSessionFile(filePath string, data []byte) error {
 }
 
 func replaceSessionFileContext(ctx context.Context, filePath string, data []byte) error {
+	return replaceSessionFileContextWithPreparer(ctx, filePath, data, prepareAtomicReplace)
+}
+
+func replaceSessionFileContextWithPreparer(
+	ctx context.Context,
+	filePath string,
+	data []byte,
+	prepare atomicReplacePreparer,
+) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -81,15 +84,18 @@ func replaceSessionFileContext(ctx context.Context, filePath string, data []byte
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	method, err := atomicReplace(tmpPath, filePath)
+	replace, err := prepare(tmpPath, filePath)
 	if err != nil {
 		return err
 	}
-	if err := statedir.SyncDir(dir); err != nil {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := verifySessionFilePublication(ctx, filePath, data); err != nil {
-		return fmt.Errorf("sessions: canonical publication after %s failed: %w", method, err)
+	if err := replace(ctx); err != nil {
+		return err
+	}
+	if err := syncSessionDirectory(dir); err != nil {
+		return err
 	}
 	return nil
 }
