@@ -29,6 +29,9 @@ func (m *Manager) persistSession(s *Session) error {
 	if err != nil {
 		return fmt.Errorf("sessions: failed to resolve session %s state path: %w", obs.ID, err)
 	}
+	if err := sessionStateExistsSafely(m.sessionsDir, obs.ID); err != nil {
+		return err
+	}
 	if err := replaceSessionFile(filePath, data); err != nil {
 		return fmt.Errorf("sessions: failed to persist session %s: %w", obs.ID, err)
 	}

@@ -104,6 +104,14 @@ func runSessionOpen(ctx context.Context, cl *client.Client, args []string, stdou
 		return ExitUsage
 	}
 	target := positionals[0]
+	if cols < uint(domain.MinCols) || cols > uint(domain.MaxCols) || rows < uint(domain.MinRows) || rows > uint(domain.MaxRows) {
+		fmt.Fprintf(stderr, "amc session open: terminal dimensions must be cols [%d,%d] and rows [%d,%d]\n", domain.MinCols, domain.MaxCols, domain.MinRows, domain.MaxRows)
+		return ExitUsage
+	}
+	if err := domain.ValidateTerminalType(term); err != nil {
+		fmt.Fprintf(stderr, "amc session open: invalid --term: %v\n", err)
+		return ExitUsage
+	}
 
 	var appObj *domain.Approval
 	if approvalFile != "" {

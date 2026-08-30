@@ -8,7 +8,7 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/domain"
 )
 
-func buildOpenOperation(params SessionOpenParams, now time.Time, timeout time.Duration) (domain.Operation, uint16, uint16, string) {
+func buildOpenOperation(params SessionOpenParams, deadline time.Time) (domain.Operation, uint16, uint16, string) {
 	cols := params.Cols
 	if cols == 0 {
 		cols = domain.DefaultCols
@@ -33,7 +33,7 @@ func buildOpenOperation(params SessionOpenParams, now time.Time, timeout time.Du
 		Target:              domain.MachineRef(params.Target),
 		Actor:               params.Caller,
 		Reason:              params.Reason,
-		Deadline:            now.Add(timeout),
+		Deadline:            deadline,
 		IdempotencyKey:      params.IdempotencyKey,
 		RequiredCapability:  domain.CapabilitySessionOpen,
 		RequiredScopes:      []string{domain.ScopeSessionOpen},
@@ -46,11 +46,9 @@ func buildOpenOperation(params SessionOpenParams, now time.Time, timeout time.Du
 
 // OpenSession coordinates policy, audit, and receipt for session.open.
 func (s *SessionService) OpenSession(ctx context.Context, params SessionOpenParams) (*domain.SessionObservation, *domain.Receipt, error) {
-	timeout := params.Timeout
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
-	op, cols, rows, term := buildOpenOperation(params, s.now(), timeout)
+	ctx, cancel, deadline, timeout := s.beginSessionMutation(ctx, params.Timeout)
+	defer cancel()
+	op, cols, rows, term := buildOpenOperation(params, deadline)
 	flightKey := fmt.Sprintf("%s:%s:%s", params.Caller.EffectiveActor, params.Target, params.IdempotencyKey)
 
 	_, obs, rcpt, err := s.coordinateSessionMutation(ctx, op, flightKey, params.Approval, timeout, func(execCtx context.Context) (int, *domain.SessionObservation, int, error) {

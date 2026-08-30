@@ -139,6 +139,20 @@ func (s *SessionService) now() time.Time {
 	return time.Now().UTC()
 }
 
+func (s *SessionService) beginSessionMutation(parent context.Context, requested time.Duration) (context.Context, context.CancelFunc, time.Time, time.Duration) {
+	if requested <= 0 {
+		requested = 30 * time.Second
+	}
+	budget := requested
+	if callerDeadline, ok := parent.Deadline(); ok {
+		if remaining := time.Until(callerDeadline); remaining < budget {
+			budget = remaining
+		}
+	}
+	ctx, cancel := context.WithTimeout(parent, budget)
+	return ctx, cancel, s.now().Add(budget), budget
+}
+
 func (s *SessionService) hasSensitiveEvidenceScope(caller domain.ActorContext) bool {
 	return caller.HasScope("evidence:sensitive") ||
 		caller.HasScope("evidence:sensitive:capture") ||

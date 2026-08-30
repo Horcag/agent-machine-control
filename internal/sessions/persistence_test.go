@@ -15,9 +15,12 @@ import (
 func TestPersistSessionConcurrentReadersSeeAtomicMonotonicJSON(t *testing.T) {
 	dir := t.TempDir()
 	mgr := NewManager(dir, nil, time.Now)
+	createdAt := time.Now().UTC()
 	s := &Session{obs: domain.SessionObservation{
-		ID: "sess-00000000000000000000000000000001", State: domain.SessionStateActive,
-		CreatedAt: time.Now().UTC(), LastActivityAt: time.Now().UTC(),
+		ID: "sess-00000000000000000000000000000001", Target: "c4a523d4-6b99-4d62-a5e2-4752c0f20001",
+		OwnerActor: "agent:persistence-test", State: domain.SessionStateActive,
+		CreatedAt: createdAt, LastActivityAt: createdAt, Cols: 80, Rows: 24,
+		TermType: "xterm-256color", ObservationType: domain.ObservationObserved,
 	}}
 	if err := mgr.persistSession(s); err != nil {
 		t.Fatal(err)

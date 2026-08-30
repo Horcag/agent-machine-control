@@ -19,6 +19,20 @@ var (
 	tokenPattern      = regexp.MustCompile(`(?i)(token\s*[:=]\s*)([^\s\r\n]+)`)
 )
 
+const (
+	maxSanitizerPendingBytes = 64 * 1024
+	sanitizerOverflowMarker  = "[REDACTED TRUNCATED]"
+)
+
+type sanitizerDropMode uint8
+
+const (
+	dropNone sanitizerDropMode = iota
+	dropUntilLine
+	dropUntilOSC
+	dropUntilFlush
+)
+
 // RedactionPattern is a configured bounded regex matcher. MaxMatchBytes is the
 // explicit stream-boundary width contract for the expression.
 type RedactionPattern struct {
@@ -38,6 +52,7 @@ type StreamSanitizer struct {
 	pending  []byte
 	secrets  [][]byte
 	patterns []RedactionPattern
+	dropping sanitizerDropMode
 }
 
 // NewStreamSanitizer creates an isolated stateful sanitizer. Secret bytes are copied.
@@ -59,6 +74,13 @@ func (s *StreamSanitizer) Push(raw []byte) string {
 	if len(raw) == 0 {
 		return ""
 	}
+	if s.dropping != dropNone {
+		rest := s.consumeDropped(raw)
+		if len(rest) == 0 {
+			return ""
+		}
+		raw = rest
+	}
 	data := append(append([]byte(nil), s.pending...), raw...)
 	s.pending = nil
 	complete, utf8Tail := splitIncompleteUTF8(data)
@@ -66,7 +88,20 @@ func (s *StreamSanitizer) Push(raw []byte) string {
 	cut := s.safeCut(text)
 	s.pending = append(s.pending, []byte(text[cut:])...)
 	s.pending = append(s.pending, utf8Tail...)
-	return s.redactComplete(text[:cut])
+	output := s.redactComplete(text[:cut])
+	if len(s.pending) > maxSanitizerPendingBytes {
+		s.dropping = dropModeForTail(text[cut:])
+		s.pending = nil
+		output += sanitizerOverflowMarker
+	}
+	return output
+}
+
+// RetainedBytes reports the bounded undecidable state held across chunks.
+func (s *StreamSanitizer) RetainedBytes() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.pending)
 }
 
 // Flush emits sanitized terminal suffix data and clears all secret-bearing state.
@@ -75,10 +110,44 @@ func (s *StreamSanitizer) Flush() string {
 	defer s.mu.Unlock()
 	text := strings.ToValidUTF8(string(s.pending), "\uFFFD")
 	s.pending = nil
+	s.dropping = dropNone
 	text = redactIncompleteStructures(text)
 	result := s.redactComplete(text)
 	s.zeroSecrets()
 	return result
+}
+
+func dropModeForTail(tail string) sanitizerDropMode {
+	lower := strings.ToLower(tail)
+	if strings.HasPrefix(tail, "\x1b]") {
+		return dropUntilOSC
+	}
+	if strings.HasPrefix(lower, "-----begin ") && strings.Contains(lower, "private key-----") {
+		return dropUntilFlush
+	}
+	return dropUntilLine
+}
+
+func (s *StreamSanitizer) consumeDropped(raw []byte) []byte {
+	switch s.dropping {
+	case dropUntilLine:
+		if i := bytes.IndexAny(raw, "\r\n"); i >= 0 {
+			s.dropping = dropNone
+			return raw[i+1:]
+		}
+	case dropUntilOSC:
+		if _, rest, found := bytes.Cut(raw, []byte{'\a'}); found {
+			s.dropping = dropNone
+			return rest
+		}
+		if i := bytes.Index(raw, []byte{'\x1b', '\\'}); i >= 0 {
+			s.dropping = dropNone
+			return raw[i+2:]
+		}
+	case dropUntilFlush:
+		return nil
+	}
+	return nil
 }
 
 func (s *StreamSanitizer) zeroSecrets() {
@@ -119,7 +188,8 @@ func cutForLiteralPrefixes(text string, cut int) int {
 
 func (s *StreamSanitizer) cutForSecretPrefixes(text string, cut int) int {
 	for _, secret := range s.secrets {
-		for n := 1; n < len(secret) && n <= len(text); n++ {
+		maxPrefix := min(min(len(secret)-1, len(text)), maxSanitizerPendingBytes+1)
+		for n := 1; n <= maxPrefix; n++ {
 			if bytes.Equal([]byte(text[len(text)-n:]), secret[:n]) {
 				cut = minCut(cut, len(text)-n)
 			}
@@ -133,7 +203,7 @@ func (s *StreamSanitizer) cutForConfiguredTail(text string, cut int) int {
 		if configured.Pattern == nil || configured.MaxMatchBytes <= 1 {
 			continue
 		}
-		hold := min(configured.MaxMatchBytes-1, len(text))
+		hold := min(min(configured.MaxMatchBytes-1, maxSanitizerPendingBytes+1), len(text))
 		cut = minCut(cut, len(text)-hold)
 	}
 	return cut

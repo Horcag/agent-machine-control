@@ -38,6 +38,7 @@ type Manager struct {
 	sessions        map[domain.SessionID]*Session
 	idempotency     map[string]domain.SessionID // key: actor:target:idempotencyKey -> SessionID
 	sanitizerConfig guestssh.SanitizerConfig
+	closed          bool
 }
 
 // ManagerOption configures a session manager.
@@ -107,6 +108,45 @@ func (m *Manager) dialSessionChannel(ctx context.Context, op domain.Operation, c
 	return channel, nil
 }
 
+func (m *Manager) findIdempotentOpen(idemKey, paramsFp string) (*domain.SessionObservation, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return nil, false, domain.ErrSessionManagerClosed
+	}
+	existingID, exists := m.idempotency[idemKey]
+	if !exists {
+		return nil, false, nil
+	}
+	existing, exists := m.sessions[existingID]
+	if !exists {
+		return nil, false, nil
+	}
+	if existing.openParamsFp != paramsFp {
+		return nil, false, domain.ErrSessionConflict
+	}
+	existing.mu.RLock()
+	obs := existing.obs
+	existing.mu.RUnlock()
+	return &obs, true, nil
+}
+
+func (m *Manager) publishOpenSession(session *Session, idemKey string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return domain.ErrSessionManagerClosed
+	}
+	if err := m.persistSession(session); err != nil {
+		return err
+	}
+	m.sessions[session.obs.ID] = session
+	if idemKey != "" {
+		m.idempotency[idemKey] = session.obs.ID
+	}
+	return nil
+}
+
 // Open establishes a new persistent SSH terminal session or returns an existing idempotent session.
 func (m *Manager) Open(ctx context.Context, op domain.Operation, cols, rows uint16, term string) (*domain.SessionObservation, error) {
 	if !op.Actor.HasScope(domain.ScopeSessionOpen) && !op.Actor.HasScope(domain.ScopeSessionWrite) {
@@ -124,24 +164,16 @@ func (m *Manager) Open(ctx context.Context, op domain.Operation, cols, rows uint
 	if err := domain.ValidateTerminalDimensions(cols, rows); err != nil {
 		return nil, err
 	}
+	if err := domain.ValidateTerminalType(term); err != nil {
+		return nil, err
+	}
 
 	paramsFp := fmt.Sprintf("%d:%d:%s", cols, rows, term)
 	idemKey := fmt.Sprintf("%s:%s:%s", op.Actor.EffectiveActor, op.Target, op.IdempotencyKey)
 
-	m.mu.Lock()
-	if existingID, exists := m.idempotency[idemKey]; exists {
-		if existingSess, ok := m.sessions[existingID]; ok {
-			m.mu.Unlock()
-			if existingSess.openParamsFp != paramsFp {
-				return nil, domain.ErrSessionConflict
-			}
-			existingSess.mu.RLock()
-			obs := existingSess.obs
-			existingSess.mu.RUnlock()
-			return &obs, nil
-		}
+	if existing, found, err := m.findIdempotentOpen(idemKey, paramsFp); err != nil || found {
+		return existing, err
 	}
-	m.mu.Unlock()
 
 	channel, err := m.dialSessionChannel(ctx, op, cols, rows, term)
 	if err != nil {
@@ -179,17 +211,14 @@ func (m *Manager) Open(ctx context.Context, op domain.Operation, cols, rows uint
 		openParamsFp: paramsFp,
 	}
 
-	if err := m.persistSession(session); err != nil {
+	publishKey := ""
+	if op.IdempotencyKey != "" {
+		publishKey = idemKey
+	}
+	if err := m.publishOpenSession(session, publishKey); err != nil {
 		_ = channel.Close(context.Background())
 		return nil, err
 	}
-
-	m.mu.Lock()
-	m.sessions[sessID] = session
-	if op.IdempotencyKey != "" {
-		m.idempotency[idemKey] = sessID
-	}
-	m.mu.Unlock()
 
 	// Start reader goroutine
 	go m.pumpChannelOutput(session)
@@ -292,11 +321,7 @@ func (m *Manager) Write(ctx context.Context, id domain.SessionID, caller domain.
 	}
 	defer func() { <-s.writeSem }()
 
-	n, err := s.channel.Write(ctx, []byte(data))
-	if err != nil {
-		return n, err
-	}
-
+	n, writeErr := s.channel.Write(ctx, []byte(data))
 	s.mu.Lock()
 	if n > 0 {
 		s.obs.BytesWritten += uint64(n)
@@ -305,9 +330,9 @@ func (m *Manager) Write(ctx context.Context, id domain.SessionID, caller domain.
 	s.mu.Unlock()
 
 	if pErr := m.persistSession(s); pErr != nil {
-		return n, pErr
+		return n, errors.Join(writeErr, pErr)
 	}
-	return n, nil
+	return n, writeErr
 }
 
 // Control sends a whitelisted terminal control key or escape sequence.
@@ -374,6 +399,7 @@ func (m *Manager) Close(ctx context.Context, id domain.SessionID, caller domain.
 // Shutdown cleanly terminates all active sessions.
 func (m *Manager) Shutdown(ctx context.Context) error {
 	m.mu.Lock()
+	m.closed = true
 	sessions := make([]*Session, 0, len(m.sessions))
 	for _, s := range m.sessions {
 		sessions = append(sessions, s)

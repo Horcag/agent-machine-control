@@ -5,24 +5,20 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/domain"
 )
 
 // WriteSession coordinates policy, audit, and receipt for session.write.
 func (s *SessionService) WriteSession(ctx context.Context, params SessionWriteParams) (int, *domain.Receipt, error) {
+	ctx, cancel, deadline, timeout := s.beginSessionMutation(ctx, params.Timeout)
+	defer cancel()
 	if err := domain.ValidateSessionID(string(params.SessionID)); err != nil {
 		return 0, nil, err
 	}
 	target, err := s.sessionMgr.MutationTarget(params.SessionID, params.Caller)
 	if err != nil {
 		return 0, nil, err
-	}
-
-	timeout := params.Timeout
-	if timeout <= 0 {
-		timeout = 30 * time.Second
 	}
 
 	dataSum := sha256.Sum256([]byte(params.Data))
@@ -33,7 +29,7 @@ func (s *SessionService) WriteSession(ctx context.Context, params SessionWritePa
 		Target:              target,
 		Actor:               params.Caller,
 		Reason:              params.Reason,
-		Deadline:            s.now().Add(timeout),
+		Deadline:            deadline,
 		IdempotencyKey:      params.IdempotencyKey,
 		RequiredCapability:  domain.CapabilitySessionWrite,
 		RequiredScopes:      []string{domain.ScopeSessionWrite},
@@ -56,6 +52,8 @@ func (s *SessionService) WriteSession(ctx context.Context, params SessionWritePa
 
 // ControlSession coordinates policy, audit, and receipt for session.control.
 func (s *SessionService) ControlSession(ctx context.Context, params SessionControlParams) (*domain.Receipt, error) {
+	ctx, cancel, deadline, timeout := s.beginSessionMutation(ctx, params.Timeout)
+	defer cancel()
 	if err := domain.ValidateSessionID(string(params.SessionID)); err != nil {
 		return nil, err
 	}
@@ -64,17 +62,12 @@ func (s *SessionService) ControlSession(ctx context.Context, params SessionContr
 		return nil, err
 	}
 
-	timeout := params.Timeout
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
-
 	op := domain.Operation{
 		Kind:                "session.control",
 		Target:              target,
 		Actor:               params.Caller,
 		Reason:              params.Reason,
-		Deadline:            s.now().Add(timeout),
+		Deadline:            deadline,
 		IdempotencyKey:      params.IdempotencyKey,
 		RequiredCapability:  domain.CapabilitySessionControl,
 		RequiredScopes:      []string{domain.ScopeSessionWrite},
@@ -96,6 +89,8 @@ func (s *SessionService) ControlSession(ctx context.Context, params SessionContr
 
 // CloseSession coordinates policy, audit, and receipt for session.close.
 func (s *SessionService) CloseSession(ctx context.Context, params SessionCloseParams) (*domain.SessionObservation, *domain.Receipt, error) {
+	ctx, cancel, deadline, timeout := s.beginSessionMutation(ctx, params.Timeout)
+	defer cancel()
 	if err := domain.ValidateSessionID(string(params.SessionID)); err != nil {
 		return nil, nil, err
 	}
@@ -104,17 +99,12 @@ func (s *SessionService) CloseSession(ctx context.Context, params SessionClosePa
 		return nil, nil, err
 	}
 
-	timeout := params.Timeout
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
-
 	op := domain.Operation{
 		Kind:                "session.close",
 		Target:              target,
 		Actor:               params.Caller,
 		Reason:              params.Reason,
-		Deadline:            s.now().Add(timeout),
+		Deadline:            deadline,
 		IdempotencyKey:      params.IdempotencyKey,
 		RequiredCapability:  domain.CapabilitySessionClose,
 		RequiredScopes:      []string{domain.ScopeSessionClose},

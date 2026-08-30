@@ -164,6 +164,19 @@ func TestTerminalDimensions(t *testing.T) {
 	}
 }
 
+func TestTerminalTypeValidation(t *testing.T) {
+	for _, term := range []string{"xterm", "xterm-256color", "screen.xterm_256+color"} {
+		if err := domain.ValidateTerminalType(term); err != nil {
+			t.Fatalf("valid terminal %q: %v", term, err)
+		}
+	}
+	for _, term := range []string{"", " xterm", "xterm 256", "xterm;rm", "xterm\x1b[31m", string([]byte{0xff})} {
+		if err := domain.ValidateTerminalType(term); err == nil {
+			t.Fatalf("invalid terminal %q accepted", term)
+		}
+	}
+}
+
 func TestSessionObservation(t *testing.T) {
 	now := time.Now().UTC()
 	obs := domain.SessionObservation{
@@ -179,8 +192,8 @@ func TestSessionObservation(t *testing.T) {
 		ObservationType: domain.ObservationObserved,
 	}
 
-	if obs.ID.Validate() != nil {
-		t.Errorf("obs ID invalid: %v", obs.ID)
+	if err := obs.Validate(); err != nil {
+		t.Errorf("observation invalid: %v", err)
 	}
 }
 

@@ -213,6 +213,26 @@ func TestCLISessionPositionalFirstFlagsReachDaemon(t *testing.T) {
 	assertCapturedWaitListShowAndClose(t, captured, machineID)
 }
 
+func TestCLISessionOpenRejectsNonCanonicalTerminalInputsBeforeRequest(t *testing.T) {
+	var captured capturedSessionRequests
+	statePath, _ := setupCapturedSessionCLI(t, &captured)
+	application := cli.NewApp(nil, cli.WithStateDir(statePath))
+	machineID := "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
+	for _, args := range [][]string{
+		{"session", "open", machineID, "--cols", "65536"},
+		{"session", "open", "--rows", "65536", machineID},
+		{"session", "open", machineID, "--term", "xterm 256"},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := application.Run(args, &stdout, &stderr); code != cli.ExitUsage {
+			t.Fatalf("args %v exit = %d, want usage; stderr=%s", args, code, stderr.String())
+		}
+	}
+	if captured.open.Target != "" {
+		t.Fatalf("invalid terminal request reached daemon: %+v", captured.open)
+	}
+}
+
 func assertCapturedOpenAndRead(t *testing.T, captured capturedSessionRequests, machineID string) {
 	t.Helper()
 	if captured.open.Target != machineID || captured.open.Reason != "positional open" || captured.open.IdempotencyKey != "open-positional-1" {

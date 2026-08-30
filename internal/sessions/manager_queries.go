@@ -2,7 +2,7 @@ package sessions
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"os"
 	"time"
 
@@ -49,47 +49,42 @@ func (m *Manager) loadDiskSession(id domain.SessionID, caller domain.ActorContex
 	if m.sessionsDir == "" {
 		return nil, false, nil
 	}
-	filePath, err := sessionStatePath(m.sessionsDir, id)
+	obs, err := readSessionState(m.sessionsDir, id)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, false, nil
+		}
 		return nil, false, err
-	}
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return nil, false, nil
-	}
-	var obs domain.SessionObservation
-	if err := json.Unmarshal(data, &obs); err != nil {
-		return nil, false, nil
 	}
 	if string(caller.EffectiveActor) != string(obs.OwnerActor) && !caller.HasScope(domain.ScopeSessionAdmin) {
 		return nil, false, nil
 	}
-	return &obs, true, nil
+	return obs, true, nil
 }
 
-func (m *Manager) loadDiskSessions(target domain.MachineRef, caller domain.ActorContext, seen map[domain.SessionID]bool) []domain.SessionObservation {
+func (m *Manager) loadDiskSessions(target domain.MachineRef, caller domain.ActorContext, seen map[domain.SessionID]bool) ([]domain.SessionObservation, error) {
 	if m.sessionsDir == "" {
-		return nil
+		return nil, nil
 	}
 	entries, err := os.ReadDir(m.sessionsDir)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
 	var results []domain.SessionObservation
 	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
 		id, valid := sessionIDFromStateFilename(entry.Name())
 		if !valid {
 			continue
 		}
-		if seen[id] {
+		obs, ok, err := m.loadDiskSession(id, caller)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
 			continue
 		}
-		obs, ok, err := m.loadDiskSession(id, caller)
-		if err != nil || !ok {
+		if seen[id] {
 			continue
 		}
 		if target != "" && obs.Target != target {
@@ -98,7 +93,7 @@ func (m *Manager) loadDiskSessions(target domain.MachineRef, caller domain.Actor
 		seen[id] = true
 		results = append(results, *obs)
 	}
-	return results
+	return results, nil
 }
 
 // List returns observations of all accessible sessions for the caller.
@@ -125,7 +120,10 @@ func (m *Manager) List(_ context.Context, caller domain.ActorContext, target dom
 	}
 	m.mu.RUnlock()
 
-	diskSessions := m.loadDiskSessions(target, caller, seen)
+	diskSessions, err := m.loadDiskSessions(target, caller, seen)
+	if err != nil {
+		return nil, err
+	}
 	result = append(result, diskSessions...)
 
 	return result, nil

@@ -24,7 +24,7 @@ func validateOpenString(k string, v any) error {
 	if !ok || len(s) == 0 {
 		return fmt.Errorf("%w: invalid %s %v", ErrNonCanonicalParameter, k, v)
 	}
-	if k == "term" && len(s) > 64 {
+	if k == "term" && ValidateTerminalType(s) != nil {
 		return fmt.Errorf("%w: invalid term %v", ErrNonCanonicalParameter, v)
 	}
 	return nil

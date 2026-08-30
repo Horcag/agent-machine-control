@@ -94,11 +94,13 @@ func (s *SessionService) acquireMutationLease(
 	}, nil
 }
 
-func classifyRunError(runErr error) (domain.OutcomeStatus, int, string, string) {
+func classifyRunError(runErr error, effectOccurred bool) (domain.OutcomeStatus, int, string, string) {
 	var deniedErr *PolicyDeniedError
 	switch {
 	case errors.As(runErr, &deniedErr):
 		return domain.OutcomeDenied, 7, string(deniedErr.Reason), deniedErr.Message
+	case effectOccurred:
+		return domain.OutcomeFailed, 1, "", ""
 	case errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runErr, domain.ErrMissingDeadline):
 		return domain.OutcomeAborted, 1, "", ""
 	case errors.Is(runErr, context.Canceled):
@@ -117,14 +119,17 @@ func (s *SessionService) persistOutcome(
 	rollbackRef string,
 	evidenceRefs []string,
 	exitCode int,
+	effectOccurred bool,
 ) (domain.Receipt, error) {
 	outcomeStatus := domain.OutcomeSuccess
 	effectiveRollback := rollbackRef
 	var errCategory, errMsg string
 
 	if runErr != nil {
-		effectiveRollback = ""
-		outcomeStatus, exitCode, errCategory, errMsg = classifyRunError(runErr)
+		if !effectOccurred {
+			effectiveRollback = ""
+		}
+		outcomeStatus, exitCode, errCategory, errMsg = classifyRunError(runErr, effectOccurred)
 	}
 
 	rcptID, err := domain.GenerateReceiptID()
@@ -233,6 +238,9 @@ func extractEvidenceRefs(op domain.Operation, obs *domain.SessionObservation) []
 			return []string{sID}
 		}
 	}
+	if sID, ok := op.Parameters["session_id"].(string); ok {
+		return []string{sID}
+	}
 	return nil
 }
 
@@ -254,13 +262,13 @@ func (s *SessionService) evaluateAndAdmit(
 ) (policy.Decision, *domain.Receipt, error) {
 	decision, pErr := s.evaluatePolicy(op, safetyRes.RollbackState, approval, now)
 	if pErr != nil {
-		rcpt, persistErr := s.persistOutcome(op, fp, idFp, decision, now, now, pErr, "", nil, 7)
+		rcpt, persistErr := s.persistOutcome(op, fp, idFp, decision, now, now, pErr, "", nil, 7, false)
 		return decision, &rcpt, errors.Join(pErr, persistErr)
 	}
 
 	if decision.EffectiveClass.RequiresApproval() {
 		if aErr := s.checkDestructiveApproval(approval); aErr != nil {
-			rcpt, persistErr := s.persistOutcome(op, fp, idFp, decision, now, now, aErr, "", nil, 7)
+			rcpt, persistErr := s.persistOutcome(op, fp, idFp, decision, now, now, aErr, "", nil, 7, false)
 			return decision, &rcpt, errors.Join(aErr, persistErr)
 		}
 	}
@@ -288,12 +296,12 @@ func (s *SessionService) executeMutation(
 	}
 
 	rollbackRef := ""
-	if runErr == nil && op.Classification == domain.ClassReversibleMutation {
+	if (runErr == nil || n > 0) && op.Classification == domain.ClassReversibleMutation {
 		rollbackRef = safetyRes.RollbackRef
 	}
 
 	evidenceRefs := extractEvidenceRefs(op, obs)
-	rcpt, persistErr := s.persistOutcome(op, fp, idFp, decision, startedAt, completedAt, runErr, rollbackRef, evidenceRefs, exitCode)
+	rcpt, persistErr := s.persistOutcome(op, fp, idFp, decision, startedAt, completedAt, runErr, rollbackRef, evidenceRefs, exitCode, n > 0)
 	if persistErr == nil {
 		if s.mutationJournal == nil {
 			persistErr = errors.New("app: session mutation journal is unavailable")
@@ -400,12 +408,9 @@ func (s *SessionService) coordinateSessionMutation(
 			Message: "raw approval objects require an authenticated session administrator",
 		}
 		decision := policy.Decision{Type: policy.DecisionDeny, EffectiveClass: op.Classification}
-		rcpt, persistErr := s.persistOutcome(op, initialFP, idFp, decision, now, now, denial, "", nil, 7)
+		rcpt, persistErr := s.persistOutcome(op, initialFP, idFp, decision, now, now, denial, "", nil, 7, false)
 		return 0, nil, &rcpt, errors.Join(denial, persistErr)
 	}
-
-	execCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
 
 	entry, isWaiting, err := s.acquireFlight(flightKey, idFp)
 	if err != nil {
@@ -416,7 +421,7 @@ func (s *SessionService) coordinateSessionMutation(
 	}
 	defer s.releaseFlight(flightKey, entry)
 
-	admitted, denialRcpt, err := s.admitSessionMutation(execCtx, op, approval, timeout, initialFP)
+	admitted, denialRcpt, err := s.admitSessionMutation(ctx, op, approval, timeout, initialFP)
 	if err != nil {
 		entry.err = err
 		if denialRcpt != nil {
@@ -429,7 +434,7 @@ func (s *SessionService) coordinateSessionMutation(
 		return 0, nil, nil, err
 	}
 
-	n, obs, rcpt, mutErr := s.executeMutation(execCtx, admitted.op, admitted.fp, admitted.idFp, admitted.decision, admitted.safety, execute)
+	n, obs, rcpt, mutErr := s.executeMutation(ctx, admitted.op, admitted.fp, admitted.idFp, admitted.decision, admitted.safety, execute)
 	releaseErr := admitted.releaseLease()
 
 	entry.n = n

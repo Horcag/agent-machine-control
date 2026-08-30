@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/app"
@@ -55,6 +56,7 @@ type Server struct {
 	startTime        string
 	shutdownChan     chan struct{}
 	shutdownOnce     sync.Once
+	admissionClosed  atomic.Bool
 	semaphore        chan struct{}
 	identityProvider lease.IdentityProvider
 
@@ -215,6 +217,10 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "invalid bearer token")
 			return
 		}
+		if s.admissionClosed.Load() && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+			writeError(w, http.StatusServiceUnavailable, "shutting_down", "mutation admission is closed")
+			return
+		}
 
 		// Concurrency limit
 		select {
@@ -369,7 +375,7 @@ func (s *Server) Start() error {
 	}
 
 	go func() {
-		if err := s.httpServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := s.httpServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
 			s.serveErrMu.Lock()
 			s.serveErr = err
 			s.serveErrMu.Unlock()
@@ -393,6 +399,7 @@ func (s *Server) PID() int {
 // TriggerShutdown initiates an asynchronous server shutdown.
 func (s *Server) TriggerShutdown() {
 	s.shutdownOnce.Do(func() {
+		s.admissionClosed.Store(true)
 		close(s.shutdownChan)
 	})
 }
@@ -402,7 +409,12 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	s.TriggerShutdown()
 
 	var errs []error
+	if err := s.closeAdmissionListener(); err != nil {
+		errs = append(errs, err)
+	}
 
+	// Admission is closed and the listener is stopped before owned managers drain.
+	// Accepted handlers remain live so manager cancellation can unblock them.
 	// 1. Drain & shutdown operations manager (cancels active operations, publishes terminal events, cleans leases)
 	if s.opMgr != nil {
 		if err := s.opMgr.Shutdown(ctx); err != nil {

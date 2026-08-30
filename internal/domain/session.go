@@ -210,3 +210,35 @@ type SessionObservation struct {
 	ErrorMessage    string          `json:"error_message,omitempty"`
 	ObservationType ObservationType `json:"observation_type"`
 }
+
+// Validate checks the complete durable session observation contract.
+func (o SessionObservation) Validate() error {
+	if err := o.ID.Validate(); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidSessionObservation, err)
+	}
+	if err := ValidateMachineGUID(string(o.Target)); err != nil {
+		return fmt.Errorf("%w: invalid target", ErrInvalidSessionObservation)
+	}
+	if err := o.OwnerActor.Validate(); err != nil {
+		return fmt.Errorf("%w: invalid owner", ErrInvalidSessionObservation)
+	}
+	if !o.State.IsValid() || o.CreatedAt.IsZero() || o.LastActivityAt.IsZero() || o.LastActivityAt.Before(o.CreatedAt) {
+		return fmt.Errorf("%w: invalid lifecycle state or timestamps", ErrInvalidSessionObservation)
+	}
+	if o.State.IsTerminal() != (o.ClosedAt != nil) {
+		return fmt.Errorf("%w: closed timestamp does not match state", ErrInvalidSessionObservation)
+	}
+	if o.ClosedAt != nil && o.ClosedAt.Before(o.CreatedAt) {
+		return fmt.Errorf("%w: closed timestamp precedes creation", ErrInvalidSessionObservation)
+	}
+	if err := ValidateTerminalDimensions(o.Cols, o.Rows); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidSessionObservation, err)
+	}
+	if err := ValidateTerminalType(o.TermType); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidSessionObservation, err)
+	}
+	if o.ObservationType != ObservationObserved {
+		return fmt.Errorf("%w: invalid observation type", ErrInvalidSessionObservation)
+	}
+	return nil
+}

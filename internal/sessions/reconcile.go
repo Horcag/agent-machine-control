@@ -10,15 +10,10 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/domain"
 )
 
-func reconcileSessionFile(filePath string, now time.Time) (*domain.SessionID, error) {
-	data, err := os.ReadFile(filePath)
+func reconcileSessionFile(sessionsDir string, id domain.SessionID, now time.Time) (*domain.SessionID, error) {
+	obs, err := readSessionState(sessionsDir, id)
 	if err != nil {
-		return nil, fmt.Errorf("sessions: failed to read session file %s: %w", filePath, err)
-	}
-
-	var obs domain.SessionObservation
-	if err := json.Unmarshal(data, &obs); err != nil {
-		return nil, fmt.Errorf("sessions: malformed session file %s: %w", filePath, err)
+		return nil, err
 	}
 
 	if obs.State.IsTerminal() {
@@ -32,6 +27,10 @@ func reconcileSessionFile(filePath string, now time.Time) (*domain.SessionID, er
 	updatedData, err := json.MarshalIndent(obs, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("sessions: failed to marshal session %s: %w", obs.ID, err)
+	}
+	filePath, err := sessionStatePath(sessionsDir, id)
+	if err != nil {
+		return nil, err
 	}
 	if err := replaceSessionFile(filePath, updatedData); err != nil {
 		return nil, fmt.Errorf("sessions: failed to write session file %s: %w", filePath, err)
@@ -60,18 +59,11 @@ func ReconcileCrashedSessions(_ context.Context, sessionsDir string, now time.Ti
 	var reconciled []domain.SessionID
 
 	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
 		candidateID, valid := sessionIDFromStateFilename(entry.Name())
 		if !valid {
 			continue
 		}
-		filePath, err := sessionStatePath(sessionsDir, candidateID)
-		if err != nil {
-			return reconciled, err
-		}
-		id, err := reconcileSessionFile(filePath, now)
+		id, err := reconcileSessionFile(sessionsDir, candidateID, now)
 		if err != nil {
 			return reconciled, err
 		}

@@ -69,6 +69,37 @@ func TestStreamSanitizer_PreservesSplitCSIAndFlushesIncompleteSensitiveForms(t *
 	}
 }
 
+func TestStreamSanitizer_AdversarialStreamsRetainBoundedState(t *testing.T) {
+	tests := []struct {
+		name   string
+		prefix string
+		cfg    ssh.SanitizerConfig
+	}{
+		{name: "unterminated bearer", prefix: "Bearer "},
+		{name: "unterminated OSC", prefix: "\x1b]52;c;"},
+		{name: "configured matcher", prefix: "CFG-", cfg: ssh.SanitizerConfig{Patterns: []ssh.RedactionPattern{{Pattern: regexp.MustCompile(`CFG-[A]+`), MaxMatchBytes: 4 << 20}}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sanitizer := ssh.NewStreamSanitizer(tt.cfg)
+			output := sanitizer.Push([]byte(tt.prefix))
+			for range 512 {
+				output += sanitizer.Push([]byte(strings.Repeat("A", 4096)))
+				if retained := sanitizer.RetainedBytes(); retained > 64*1024 {
+					t.Fatalf("retained bytes = %d, want <= 65536", retained)
+				}
+			}
+			output += sanitizer.Flush()
+			if strings.Contains(output, strings.Repeat("A", 4096)) {
+				t.Fatal("attacker-controlled sensitive run was emitted")
+			}
+			if strings.Count(output, "[REDACTED TRUNCATED]") != 1 {
+				t.Fatalf("overflow markers = %d, want 1", strings.Count(output, "[REDACTED TRUNCATED]"))
+			}
+		})
+	}
+}
+
 func TestSanitizeTerminalOutput_OSC52(t *testing.T) {
 	// Adversarial input: OSC 52 clipboard injection
 	raw := []byte("\x1b]52;c;c2VjcmV0\x07Hello World")

@@ -229,6 +229,27 @@ func ValidateTerminalDimensions(cols, rows uint16) error {
 	return nil
 }
 
+// ValidateTerminalType accepts only canonical ASCII SSH PTY identifiers.
+func ValidateTerminalType(term string) error {
+	if len(term) == 0 || len(term) > 64 || !utf8.ValidString(term) {
+		return ErrInvalidTerminalType
+	}
+	for i := 0; i < len(term); i++ {
+		c := term[i]
+		if validTerminalTypeByte(c, i > 0) {
+			continue
+		}
+		return fmt.Errorf("%w: unsupported byte %q", ErrInvalidTerminalType, c)
+	}
+	return nil
+}
+
+func validTerminalTypeByte(c byte, allowPunctuation bool) bool {
+	alphanumeric := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+	punctuation := c == '-' || c == '_' || c == '.' || c == '+'
+	return alphanumeric || (allowPunctuation && punctuation)
+}
+
 func validateStartParams(params map[string]any) error {
 	if len(params) > 0 {
 		return fmt.Errorf("%w: machine.start does not accept parameters", ErrNonCanonicalParameter)

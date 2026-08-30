@@ -26,13 +26,14 @@ import (
 
 // trackingTransport records every transport call and allows simulating failure or redial panic.
 type trackingTransport struct {
-	dialCalls    int32
-	writeCalls   int32
-	controlCalls int32
-	closeCalls   int32
-	panicOnDial  bool
-	failWrite    bool
-	writeDelay   time.Duration
+	dialCalls     int32
+	writeCalls    int32
+	controlCalls  int32
+	closeCalls    int32
+	panicOnDial   bool
+	failWrite     bool
+	writeDelay    time.Duration
+	cancelOnWrite context.CancelFunc
 }
 
 func (t *trackingTransport) Dial(_ context.Context, _ domain.MachineRef, _, _ uint16, _ string) (guestssh.Channel, error) {
@@ -67,6 +68,11 @@ func (c *trackingChannel) Read(p []byte) (int, error) {
 
 func (c *trackingChannel) Write(ctx context.Context, p []byte) (int, error) {
 	atomic.AddInt32(&c.parent.writeCalls, 1)
+	if c.parent.cancelOnWrite != nil {
+		c.parent.cancelOnWrite()
+		<-ctx.Done()
+		return len(p), ctx.Err()
+	}
 	if c.parent.writeDelay > 0 {
 		select {
 		case <-time.After(c.parent.writeDelay):

@@ -126,7 +126,7 @@ func TestReconcileCrashedSessionsMalformedCanonicalRecordFailsClosed(t *testing.
 
 func testSessionObservation(id domain.SessionID, state domain.SessionState) domain.SessionObservation {
 	createdAt := time.Date(2026, time.August, 30, 11, 0, 0, 0, time.UTC)
-	return domain.SessionObservation{
+	obs := domain.SessionObservation{
 		ID:              id,
 		Target:          "c4a523d4-6b99-4d62-a5e2-4752c0f20001",
 		OwnerActor:      "agent:reconcile-test",
@@ -138,6 +138,11 @@ func testSessionObservation(id domain.SessionID, state domain.SessionState) doma
 		TermType:        "xterm-256color",
 		ObservationType: domain.ObservationObserved,
 	}
+	if state.IsTerminal() {
+		closedAt := createdAt.Add(time.Minute)
+		obs.ClosedAt = &closedAt
+	}
+	return obs
 }
 
 func writeSessionObservation(t *testing.T, dir string, obs domain.SessionObservation) string {

@@ -94,6 +94,9 @@ func (t *NativeTransport) resolveDialConfig(ctx context.Context, target domain.M
 	if err := domain.ValidateTerminalDimensions(cols, rows); err != nil {
 		return nil, err
 	}
+	if err := domain.ValidateTerminalType(term); err != nil {
+		return nil, err
+	}
 
 	config := &gossh.ClientConfig{
 		User:            guestUser,
@@ -293,7 +296,10 @@ func (c *sshChannel) Write(ctx context.Context, p []byte) (int, error) {
 
 	n, err := c.stdin.Write(p)
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		return 0, ctxErr
+		if n > 0 {
+			return n, errors.Join(err, ctxErr)
+		}
+		return 0, errors.Join(err, ctxErr)
 	}
 	return n, err
 }
