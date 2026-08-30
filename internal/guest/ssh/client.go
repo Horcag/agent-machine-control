@@ -211,11 +211,13 @@ func openSessionPTY(conn net.Conn, client *gossh.Client, cols, rows uint16, term
 	}()
 
 	return &sshChannel{
-		conn:    conn,
-		client:  client,
-		session: session,
-		stdin:   stdin,
-		reader:  pr,
+		conn:      conn,
+		client:    client,
+		session:   session,
+		stdin:     stdin,
+		reader:    pr,
+		writeLane: make(chan struct{}, 1),
+		closeLane: make(chan struct{}, 1),
 	}, nil
 }
 
@@ -226,12 +228,14 @@ type sshChannel struct {
 	stdin   io.WriteCloser
 	reader  io.Reader
 
-	mu       sync.Mutex
-	writeMu  sync.Mutex
-	closed   bool
-	waitOnce sync.Once
-	exitCode int
-	waitErr  error
+	mu            sync.Mutex
+	writeLane     chan struct{}
+	closeLane     chan struct{}
+	closed        bool
+	closeComplete bool
+	waitOnce      sync.Once
+	exitCode      int
+	waitErr       error
 }
 
 func (c *sshChannel) Read(p []byte) (int, error) {
@@ -249,8 +253,10 @@ func (c *sshChannel) Write(ctx context.Context, p []byte) (int, error) {
 	}
 	c.mu.Unlock()
 
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
+	if err := acquireContextLane(ctx, c.writeLane); err != nil {
+		return 0, err
+	}
+	defer releaseContextLane(c.writeLane)
 
 	c.mu.Lock()
 	if c.closed {
@@ -303,40 +309,74 @@ func (c *sshChannel) Resize(cols, rows uint16) error {
 }
 
 func (c *sshChannel) Close(ctx context.Context) error {
-	if !c.markClosed() {
+	if err := acquireContextLane(ctx, c.closeLane); err != nil {
+		return err
+	}
+	defer releaseContextLane(c.closeLane)
+
+	if !c.startClose() {
 		return nil
 	}
-
-	var errs []error
-	if err := c.closeInput(); err != nil {
-		errs = append(errs, err)
+	if err := acquireContextLane(ctx, c.writeLane); err != nil {
+		return err
 	}
+	defer releaseContextLane(c.writeLane)
+
 	cancelDeadline := c.bindCloseDeadline(ctx)
 	defer cancelDeadline()
+	var errs []error
+	if err := c.closeInputLocked(); err != nil {
+		errs = append(errs, err)
+	}
 	errs = append(errs, c.closeTransportResources()...)
+	c.finishClose()
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		errs = append(errs, ctxErr)
 	}
 	return errors.Join(errs...)
 }
 
-func (c *sshChannel) markClosed() bool {
+func (c *sshChannel) startClose() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed {
+	if c.closeComplete {
 		return false
 	}
 	c.closed = true
 	return true
 }
 
-func (c *sshChannel) closeInput() error {
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
+func (c *sshChannel) finishClose() {
+	c.mu.Lock()
+	c.closeComplete = true
+	c.mu.Unlock()
+}
+
+func (c *sshChannel) closeInputLocked() error {
 	if c.stdin != nil {
 		return c.stdin.Close()
 	}
 	return nil
+}
+
+func acquireContextLane(ctx context.Context, lane chan struct{}) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case lane <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			<-lane
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func releaseContextLane(lane chan struct{}) {
+	<-lane
 }
 
 func (c *sshChannel) bindCloseDeadline(ctx context.Context) func() {
