@@ -76,6 +76,16 @@ func TestMutationFinalizationIntentRejectsAmbiguousOrConflictingTruth(t *testing
 	}
 	applied := true
 	result := sessions.MutationResult{BytesWritten: 1, EffectApplied: &applied}
+	untrusted := receipt
+	untrusted.Outcome = domain.ExecutionOutcome{
+		Status:        domain.OutcomeFailed,
+		ExitCode:      1,
+		ErrorCategory: domain.FailureCategoryDeadlineExceeded,
+		ErrorMessage:  "backend-controlled timeout text",
+	}
+	if err := journal.RecordFinalizationIntentForRecordContext(context.Background(), *record, untrusted, result, now); err == nil {
+		t.Fatal("mutation journal accepted unallowlisted failed receipt provenance")
+	}
 	if err := journal.RecordFinalizationIntentForRecordContext(context.Background(), *record, receipt, result, now); err != nil {
 		t.Fatal(err)
 	}

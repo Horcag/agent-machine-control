@@ -16,14 +16,53 @@ func classifyRunError(runErr error, effectOccurred bool) (domain.OutcomeStatus, 
 	case errors.As(runErr, &deniedErr):
 		return domain.OutcomeDenied, 7, string(deniedErr.Reason), deniedErr.Message
 	case effectOccurred:
+		if category, message, ok := canonicalSessionFailure(runErr); ok {
+			return domain.OutcomeFailed, 1, category, message
+		}
 		return domain.OutcomeFailed, 1, "", ""
-	case errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runErr, domain.ErrMissingDeadline):
-		return domain.OutcomeAborted, 1, "deadline_exceeded", "operation deadline exceeded"
+	case errors.Is(runErr, context.DeadlineExceeded):
+		message, _ := domain.CanonicalFailureMessage(domain.FailureCategoryDeadlineExceeded)
+		return domain.OutcomeAborted, 1, domain.FailureCategoryDeadlineExceeded, message
 	case errors.Is(runErr, context.Canceled):
-		return domain.OutcomeAborted, 1, "caller_canceled", "operation canceled by caller"
+		message, _ := domain.CanonicalFailureMessage(domain.FailureCategoryCallerCanceled)
+		return domain.OutcomeAborted, 1, domain.FailureCategoryCallerCanceled, message
 	default:
+		if category, message, ok := canonicalSessionFailure(runErr); ok {
+			return domain.OutcomeFailed, 1, category, message
+		}
 		return domain.OutcomeFailed, 1, "", ""
 	}
+}
+
+func canonicalSessionFailure(runErr error) (string, string, bool) {
+	for _, failure := range canonicalSessionFailures {
+		if errors.Is(runErr, failure.err) {
+			message, _ := domain.CanonicalFailureMessage(failure.category)
+			return failure.category, message, true
+		}
+	}
+	return "", "", false
+}
+
+var canonicalSessionFailures = []struct {
+	category string
+	err      error
+}{
+	{domain.FailureCategoryCallerCanceled, context.Canceled},
+	{domain.FailureCategoryDeadlineExceeded, context.DeadlineExceeded},
+	{domain.FailureCategorySessionNotFound, domain.ErrSessionNotFound},
+	{domain.FailureCategorySessionAccessDenied, domain.ErrSessionAccessDenied},
+	{domain.FailureCategorySessionClosed, domain.ErrSessionClosed},
+	{domain.FailureCategorySessionConflict, domain.ErrSessionConflict},
+	{domain.FailureCategorySessionWaitTimeout, domain.ErrSessionWaitTimeout},
+	{domain.FailureCategoryHostKeyMismatch, domain.ErrHostKeyMismatch},
+	{domain.FailureCategoryMissingHostKeyPin, domain.ErrMissingHostKeyPin},
+	{domain.FailureCategoryNonCanonicalParameter, domain.ErrNonCanonicalParameter},
+	{domain.FailureCategoryInvalidControlKey, domain.ErrInvalidControlKey},
+	{domain.FailureCategoryInvalidTerminalDimensions, domain.ErrInvalidTerminalDimensions},
+	{domain.FailureCategoryInvalidTerminalType, domain.ErrInvalidTerminalType},
+	{domain.FailureCategoryInvalidApprovalRecord, domain.ErrInvalidApprovalRecord},
+	{domain.FailureCategoryMissingDeadline, domain.ErrMissingDeadline},
 }
 
 func (s *SessionService) persistOutcome(

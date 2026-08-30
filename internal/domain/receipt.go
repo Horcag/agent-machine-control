@@ -165,26 +165,49 @@ func (r Receipt) validateHeader() error {
 func (r Receipt) validateOutcomeFields() error {
 	switch r.Outcome.Status {
 	case OutcomeDenied:
-		if err := ValidateBoundedString(r.Outcome.ErrorCategory, 1, 256, ErrInvalidReceiptID); err != nil {
-			return fmt.Errorf("invalid error category: %w", err)
-		}
-		if err := ValidateBoundedString(r.Outcome.ErrorMessage, 1, 1024, ErrInvalidReceiptID); err != nil {
-			return fmt.Errorf("invalid error message: %w", err)
-		}
+		return validateDeniedOutcome(r.Outcome)
 	case OutcomeAborted:
-		if r.Outcome.ErrorCategory == "" && r.Outcome.ErrorMessage == "" {
-			return nil
-		}
-		if r.Outcome.ErrorCategory != "caller_canceled" && r.Outcome.ErrorCategory != "deadline_exceeded" {
-			return fmt.Errorf("%w: aborted outcome requires canonical cancellation provenance", ErrInvalidReceiptID)
-		}
-		if err := ValidateBoundedString(r.Outcome.ErrorMessage, 1, 1024, ErrInvalidReceiptID); err != nil {
-			return fmt.Errorf("invalid aborted outcome message: %w", err)
-		}
+		return validateAbortedOutcome(r.Outcome)
+	case OutcomeFailed:
+		return validateFailedOutcome(r.Outcome)
 	default:
 		if r.Outcome.ErrorCategory != "" || r.Outcome.ErrorMessage != "" {
 			return fmt.Errorf("%w: error category and message must be empty for non-denied outcomes", ErrInvalidReceiptID)
 		}
+	}
+	return nil
+}
+
+func validateDeniedOutcome(outcome ExecutionOutcome) error {
+	if err := ValidateBoundedString(outcome.ErrorCategory, 1, 256, ErrInvalidReceiptID); err != nil {
+		return fmt.Errorf("invalid error category: %w", err)
+	}
+	if err := ValidateBoundedString(outcome.ErrorMessage, 1, 1024, ErrInvalidReceiptID); err != nil {
+		return fmt.Errorf("invalid error message: %w", err)
+	}
+	return nil
+}
+
+func validateAbortedOutcome(outcome ExecutionOutcome) error {
+	if outcome.ErrorCategory == "" && outcome.ErrorMessage == "" {
+		return nil
+	}
+	if outcome.ErrorCategory != FailureCategoryCallerCanceled && outcome.ErrorCategory != FailureCategoryDeadlineExceeded {
+		return fmt.Errorf("%w: aborted outcome requires canonical cancellation provenance", ErrInvalidReceiptID)
+	}
+	if err := ValidateBoundedString(outcome.ErrorMessage, 1, 1024, ErrInvalidReceiptID); err != nil {
+		return fmt.Errorf("invalid aborted outcome message: %w", err)
+	}
+	return nil
+}
+
+func validateFailedOutcome(outcome ExecutionOutcome) error {
+	if outcome.ErrorCategory == "" && outcome.ErrorMessage == "" {
+		return nil
+	}
+	message, ok := CanonicalFailureMessage(outcome.ErrorCategory)
+	if !ok || outcome.ErrorMessage != message {
+		return fmt.Errorf("%w: failed outcome requires canonical failure provenance", ErrInvalidReceiptID)
 	}
 	return nil
 }

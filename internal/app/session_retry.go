@@ -154,10 +154,23 @@ func replayMutationResult(reservation *sessions.MutationReservation, rcpt *domai
 		}
 		return result.BytesWritten, result.Observation, rcpt, context.DeadlineExceeded
 	case domain.OutcomeFailed:
-		return result.BytesWritten, result.Observation, rcpt, errors.New("session mutation failed")
+		return result.BytesWritten, result.Observation, rcpt, replayFailedSessionError(rcpt.Outcome)
 	default:
 		return result.BytesWritten, result.Observation, rcpt, nil
 	}
+}
+
+func replayFailedSessionError(outcome domain.ExecutionOutcome) error {
+	message, ok := domain.CanonicalFailureMessage(outcome.ErrorCategory)
+	if !ok || outcome.ErrorMessage != message {
+		return errors.New("session mutation failed")
+	}
+	for _, failure := range canonicalSessionFailures {
+		if outcome.ErrorCategory == failure.category {
+			return failure.err
+		}
+	}
+	return errors.New("session mutation failed")
 }
 
 func verifyReservedReceipt(op domain.Operation, reservation *sessions.MutationReservation, rcpt *domain.Receipt, idFp domain.Fingerprint) error {

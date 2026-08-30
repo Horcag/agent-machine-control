@@ -147,6 +147,9 @@ func TestCloseSessionPartialEffectIsDurableExactRetryDoesNotDuplicateAndNewKeyRe
 	}
 	retryObs, retryReceipt, retryErr := h.svc.CloseSession(context.Background(), firstParams)
 	assertPartiallyAppliedClose(t, retryObs, retryReceipt, retryErr, h.opened.ID)
+	if !errors.Is(retryErr, context.DeadlineExceeded) {
+		t.Fatalf("exact retry error = %v, want transport deadline", retryErr)
+	}
 	if retryReceipt.ReceiptID != firstReceipt.ReceiptID {
 		t.Fatalf("exact retry = obs %+v receipt %+v err %v", retryObs, retryReceipt, retryErr)
 	}
@@ -254,6 +257,9 @@ func TestApprovedPartialCloseKeepsApprovalConsumedAndExactRetryDoesNotDuplicateE
 
 	retryObservation, retryReceipt, retryErr := h.service.CloseSession(context.Background(), h.params)
 	assertPartiallyAppliedClose(t, retryObservation, retryReceipt, retryErr, h.opened.ID)
+	if !errors.Is(retryErr, context.DeadlineExceeded) {
+		t.Fatalf("approved exact retry error = %v, want transport deadline", retryErr)
+	}
 	if retryReceipt.ReceiptID != firstReceipt.ReceiptID {
 		t.Fatalf("exact retry receipt = %s, want %s", retryReceipt.ReceiptID, firstReceipt.ReceiptID)
 	}

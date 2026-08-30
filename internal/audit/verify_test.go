@@ -51,6 +51,19 @@ func TestEnsureTerminalOutcomeIsExactAndIdempotent(t *testing.T) {
 	}
 }
 
+func TestEnsureTerminalOutcomeRejectsUnallowlistedFailureProvenance(t *testing.T) {
+	receipt := terminalReceipt()
+	receipt.Outcome = domain.ExecutionOutcome{
+		Status:        domain.OutcomeFailed,
+		ExitCode:      1,
+		ErrorCategory: domain.FailureCategoryDeadlineExceeded,
+		ErrorMessage:  "backend-controlled timeout text",
+	}
+	if err := audit.NewStore(t.TempDir()).EnsureTerminalOutcome(receipt); err == nil {
+		t.Fatal("audit accepted unallowlisted failed receipt provenance")
+	}
+}
+
 func TestEnsureTerminalOutcomeContextHonorsDeadline(t *testing.T) {
 	entered := make(chan struct{})
 	store := audit.NewStore(t.TempDir(), audit.WithEnsureHook(func(ctx context.Context, _ audit.Event) error {
