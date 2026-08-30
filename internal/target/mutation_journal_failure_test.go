@@ -22,6 +22,14 @@ func (s *mutationJournalTestSecurity) ValidateDir(context.Context, string) error
 	return s.dirErr
 }
 
+func (s *mutationJournalTestSecurity) ProtectDir(context.Context, string) error {
+	return s.protectErr
+}
+
+func (s *mutationJournalTestSecurity) ValidateInheritedFile(context.Context, string) error {
+	return s.fileErr
+}
+
 func (s *mutationJournalTestSecurity) ValidateFile(context.Context, string) error {
 	return s.fileErr
 }

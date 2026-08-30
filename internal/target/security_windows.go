@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Horcag/agent-machine-control/internal/winacl"
 	"golang.org/x/sys/windows"
 )
 
@@ -25,23 +24,38 @@ func (*platformSecurity) ValidateDir(ctx context.Context, path string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := validateWindowsComponents(path); err != nil {
+	return validateTargetWindowsACL(path, PathDirectory)
+}
+
+func (*platformSecurity) ProtectDir(ctx context.Context, path string) error {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	info, err := os.Lstat(path)
-	if err != nil {
+	return protectTargetWindowsACL(path, PathDirectory)
+}
+
+func (*platformSecurity) ValidateInheritedFile(ctx context.Context, path string) error {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if !info.IsDir() {
-		return fmt.Errorf("target: protected directory has unexpected type")
-	}
-	return winacl.ValidatePrivateFile(path)
+	return validateTargetWindowsACL(path, PathInheritedFile)
 }
 
 func (*platformSecurity) ValidateFile(ctx context.Context, path string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	return validateTargetWindowsACL(path, PathFile)
+}
+
+func (*platformSecurity) ProtectFile(ctx context.Context, path string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return protectTargetWindowsACL(path, PathFile)
+}
+
+func validateTargetWindowsObject(path string, kind PathKind) error {
 	if err := validateWindowsComponents(path); err != nil {
 		return err
 	}
@@ -49,17 +63,11 @@ func (*platformSecurity) ValidateFile(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("target: protected file has unexpected type")
+	wantDirectory := kind == PathDirectory
+	if wantDirectory != info.IsDir() || !wantDirectory && !info.Mode().IsRegular() {
+		return fmt.Errorf("target: protected %s has unexpected type", kind)
 	}
-	return winacl.ValidatePrivateFile(path)
-}
-
-func (*platformSecurity) ProtectFile(ctx context.Context, path string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return winacl.ProtectPrivateFile(path)
+	return nil
 }
 
 func validateWindowsComponents(path string) error {

@@ -27,30 +27,52 @@ while ($null -ne $cursor) {
   $cursor = $cursor.Parent
 }
 if ($kind -eq 'directory' -and -not $item.PSIsContainer) { throw 'directory required' }
-if ($kind -eq 'file' -and $item.PSIsContainer) { throw 'regular file required' }
+if (($kind -eq 'file' -or $kind -eq 'inherited_file') -and $item.PSIsContainer) { throw 'regular file required' }
+if ($kind -ne 'directory' -and $kind -ne 'file' -and $kind -ne 'inherited_file') { throw 'unsupported path kind' }
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $allowed = @($identity.User.Value, 'S-1-5-18', 'S-1-5-32-544')
+$initialAcl = Get-Acl -LiteralPath $path
+$initialOwner = (New-Object Security.Principal.NTAccount($initialAcl.Owner)).Translate([Security.Principal.SecurityIdentifier]).Value
 if ($action -eq 'protect') {
-  $acl = New-Object Security.AccessControl.FileSecurity
+  if ($initialOwner -ne $identity.User.Value) { throw 'refusing to protect foreign owner' }
+  if ($kind -eq 'inherited_file') { throw 'cannot protect inherited-file proof' }
+  if ($kind -eq 'directory') {
+    $acl = New-Object Security.AccessControl.DirectorySecurity
+    $inheritance = [Security.AccessControl.InheritanceFlags]([int][Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [int][Security.AccessControl.InheritanceFlags]::ObjectInherit)
+  } else {
+    $acl = New-Object Security.AccessControl.FileSecurity
+    $inheritance = [Security.AccessControl.InheritanceFlags]::None
+  }
   $acl.SetOwner($identity.User)
   $acl.SetAccessRuleProtection($true, $false)
   foreach ($sidText in $allowed) {
     $sid = New-Object Security.Principal.SecurityIdentifier($sidText)
-    $rule = New-Object Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', 'Allow')
+    $rule = New-Object Security.AccessControl.FileSystemAccessRule($sid, [Security.AccessControl.FileSystemRights]::FullControl, $inheritance, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)
     [void]$acl.AddAccessRule($rule)
   }
   Set-Acl -LiteralPath $path -AclObject $acl
+} elseif ($action -ne 'validate') {
+  throw 'unsupported guard action'
 }
 $acl = Get-Acl -LiteralPath $path
 $owner = (New-Object Security.Principal.NTAccount($acl.Owner)).Translate([Security.Principal.SecurityIdentifier]).Value
-if ($owner -ne $identity.User.Value) { throw 'owner mismatch' }
-if (-not $acl.AreAccessRulesProtected) { throw 'DACL inheritance is enabled' }
-foreach ($rule in $acl.Access) {
-  if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow) { continue }
-  $sid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
-  if ($allowed -notcontains $sid) { throw 'unexpected DACL principal' }
-}
-@{ ok = $true } | ConvertTo-Json -Compress
+$entries = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | ForEach-Object {
+  $flags = [int]$_.InheritanceFlags -bor [int]$_.PropagationFlags
+  if ($_.IsInherited) { $flags = $flags -bor 0x10 }
+  @{
+    type = [byte][int]$_.AccessControlType
+    flags = [byte]$flags
+    mask = [uint32]([int64]$_.FileSystemRights -band 0xffffffffL)
+    sid = $_.IdentityReference.Value
+  }
+})
+@{
+  owner = $owner
+  current_user = $identity.User.Value
+  protected = [bool]$acl.AreAccessRulesProtected
+  kind = $kind
+  entries = $entries
+} | ConvertTo-Json -Compress -Depth 4
 `
 
 const maxGuardOutputBytes = 4096
@@ -63,8 +85,8 @@ func (powerShellWindowsGuard) Validate(ctx context.Context, path string, kind Pa
 	return runWindowsGuard(ctx, path, kind, "validate")
 }
 
-func (powerShellWindowsGuard) ProtectFile(ctx context.Context, path string) error {
-	return runWindowsGuard(ctx, path, PathFile, "protect")
+func (powerShellWindowsGuard) Protect(ctx context.Context, path string, kind PathKind) error {
+	return runWindowsGuard(ctx, path, kind, "protect")
 }
 
 func runWindowsGuard(ctx context.Context, path string, kind PathKind, action string) error {
@@ -84,11 +106,15 @@ func runWindowsGuard(ctx context.Context, path string, kind PathKind, action str
 	if err != nil {
 		return fmt.Errorf("PowerShell security guard failed: %w", err)
 	}
-	var result struct {
-		OK bool `json:"ok"`
-	}
-	if err := json.Unmarshal(output, &result); err != nil || !result.OK {
+	var proof windowsACLProof
+	if err := json.Unmarshal(output, &proof); err != nil {
 		return errors.New("PowerShell security guard returned invalid proof")
+	}
+	if proof.Kind != kind {
+		return fmt.Errorf("PowerShell security guard proved %q, want %q", proof.Kind, kind)
+	}
+	if err := validateWindowsACLProof(proof); err != nil {
+		return fmt.Errorf("PowerShell security guard rejected ACL: %w", err)
 	}
 	return nil
 }

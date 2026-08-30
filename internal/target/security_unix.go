@@ -47,6 +47,43 @@ func (s *platformSecurity) ValidateDir(ctx context.Context, path string) error {
 	return validatePOSIX(path, true, 0700)
 }
 
+func (s *platformSecurity) ProtectDir(ctx context.Context, path string) error {
+	if err := validateNoSymlinkComponents(path); err != nil {
+		return err
+	}
+	hostBacked, err := s.isHostBacked(path)
+	if err != nil {
+		return err
+	}
+	if hostBacked {
+		if s.windowsGuard == nil {
+			return ErrHostSecurityUnproven
+		}
+		return s.windowsGuard.Protect(ctx, path, PathDirectory)
+	}
+	if err := validatePOSIXOwnerAndType(path, true); err != nil {
+		return err
+	}
+	if err := os.Chmod(path, 0700); err != nil {
+		return err
+	}
+	return validatePOSIX(path, true, 0700)
+}
+
+func (s *platformSecurity) ValidateInheritedFile(ctx context.Context, path string) error {
+	if err := validateNoSymlinkComponents(path); err != nil {
+		return err
+	}
+	hostBacked, err := s.isHostBacked(path)
+	if err != nil {
+		return err
+	}
+	if hostBacked {
+		return s.validateHostPath(ctx, path, PathInheritedFile)
+	}
+	return validatePOSIX(path, false, 0600)
+}
+
 func (s *platformSecurity) ValidateFile(ctx context.Context, path string) error {
 	if err := validateNoSymlinkComponents(path); err != nil {
 		return err
@@ -72,7 +109,7 @@ func (s *platformSecurity) ProtectFile(ctx context.Context, path string) error {
 	if s.windowsGuard == nil {
 		return ErrHostSecurityUnproven
 	}
-	return s.windowsGuard.ProtectFile(ctx, path)
+	return s.windowsGuard.Protect(ctx, path, PathFile)
 }
 
 func (s *platformSecurity) isHostBacked(path string) (bool, error) {
@@ -93,15 +130,26 @@ func (s *platformSecurity) validateHostPath(ctx context.Context, path string, ki
 }
 
 func validatePOSIX(path string, wantDir bool, mode os.FileMode) error {
+	if err := validatePOSIXOwnerAndType(path, wantDir); err != nil {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if info.Mode().Perm() != mode {
+		return fmt.Errorf("protected path %q mode is %04o, want %04o", path, info.Mode().Perm(), mode)
+	}
+	return nil
+}
+
+func validatePOSIXOwnerAndType(path string, wantDir bool) error {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return err
 	}
 	if info.Mode()&os.ModeSymlink != 0 || wantDir != info.IsDir() || !wantDir && !info.Mode().IsRegular() {
 		return fmt.Errorf("protected path %q has unexpected type", path)
-	}
-	if info.Mode().Perm() != mode {
-		return fmt.Errorf("protected path %q mode is %04o, want %04o", path, info.Mode().Perm(), mode)
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	effectiveUID, parseErr := strconv.ParseUint(strconv.Itoa(os.Geteuid()), 10, 32)

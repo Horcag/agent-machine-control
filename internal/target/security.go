@@ -6,14 +6,15 @@ import "context"
 type PathKind string
 
 const (
-	PathDirectory PathKind = "directory"
-	PathFile      PathKind = "file"
+	PathDirectory     PathKind = "directory"
+	PathFile          PathKind = "file"
+	PathInheritedFile PathKind = "inherited_file"
 )
 
 // WindowsPathGuard proves Windows owner, DACL, and reparse invariants for host-backed paths.
 type WindowsPathGuard interface {
 	Validate(context.Context, string, PathKind) error
-	ProtectFile(context.Context, string) error
+	Protect(context.Context, string, PathKind) error
 }
 
 // HostPathDetector distinguishes native POSIX state from Windows-host-backed state.
@@ -22,6 +23,8 @@ type HostPathDetector func(string) (bool, error)
 // Security validates the protected directory and canonical or temporary files.
 type Security interface {
 	ValidateDir(context.Context, string) error
+	ProtectDir(context.Context, string) error
+	ValidateInheritedFile(context.Context, string) error
 	ValidateFile(context.Context, string) error
 	ProtectFile(context.Context, string) error
 }

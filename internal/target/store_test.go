@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -60,6 +61,109 @@ func requireDurablePublication(t *testing.T, action string, publication Publicat
 	}
 	if !publication.Committed || !publication.Durable {
 		t.Fatalf("%s publication = %+v", action, publication)
+	}
+}
+
+type recordingSecurity struct {
+	mu                sync.Mutex
+	events            []string
+	protectDirErr     error
+	validateDirErr    error
+	inheritedWasEmpty bool
+}
+
+func (s *recordingSecurity) record(event string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, event)
+}
+
+func (s *recordingSecurity) ValidateDir(context.Context, string) error {
+	s.record("validate-dir")
+	return s.validateDirErr
+}
+
+func (s *recordingSecurity) ProtectDir(context.Context, string) error {
+	s.record("protect-dir")
+	return s.protectDirErr
+}
+
+func (s *recordingSecurity) ValidateInheritedFile(_ context.Context, path string) error {
+	s.record("validate-inherited-file")
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.inheritedWasEmpty = info.Size() == 0
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *recordingSecurity) ValidateFile(context.Context, string) error {
+	s.record("validate-file")
+	return nil
+}
+
+func (s *recordingSecurity) ProtectFile(context.Context, string) error {
+	s.record("protect-file")
+	return nil
+}
+
+func (s *recordingSecurity) snapshot() ([]string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.events...), s.inheritedWasEmpty
+}
+
+func TestStoreSaveProtectsDirectoryBeforeCreatingTemporaryState(t *testing.T) {
+	dir := testDirectory(t)
+	security := &recordingSecurity{}
+	store := testStore(t, dir, WithSecurity(security))
+	publication, err := store.Save(context.Background(), testDefault(t, vmA))
+	requireDurablePublication(t, "Save", publication, err)
+
+	events, inheritedWasEmpty := security.snapshot()
+	protectIndex := slices.Index(events, "protect-dir")
+	inheritedIndex := slices.Index(events, "validate-inherited-file")
+	fileProtectIndex := slices.Index(events, "protect-file")
+	if protectIndex < 0 || inheritedIndex <= protectIndex || fileProtectIndex <= inheritedIndex {
+		t.Fatalf("security events = %v, want directory protection before inherited and final file proofs", events)
+	}
+	if !inheritedWasEmpty {
+		t.Fatal("temporary file contained payload bytes before inherited authority was validated")
+	}
+}
+
+func TestStoreSaveRejectsDirectoryProtectionFailureBeforeWritingState(t *testing.T) {
+	dir := testDirectory(t)
+	security := &recordingSecurity{protectDirErr: errors.New("foreign owner")}
+	store := testStore(t, dir, WithSecurity(security))
+	publication, err := store.Save(context.Background(), testDefault(t, vmA))
+	if err == nil || publication.Committed {
+		t.Fatalf("Save = %+v, %v, want pre-commit protection failure", publication, err)
+	}
+	entries, readErr := os.ReadDir(dir)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("directory entries after rejected protection = %v, want none", entries)
+	}
+}
+
+func TestStoreLoadAndClearNeverRepairDirectorySecurity(t *testing.T) {
+	dir := testDirectory(t)
+	security := &recordingSecurity{protectDirErr: errors.New("must not be called")}
+	store := testStore(t, dir, WithSecurity(security))
+	if _, err := store.Load(context.Background()); !errors.Is(err, ErrNoDefault) {
+		t.Fatalf("Load error = %v, want ErrNoDefault", err)
+	}
+	publication, err := store.Clear(context.Background())
+	requireDurablePublication(t, "Clear", publication, err)
+	events, _ := security.snapshot()
+	if slices.Contains(events, "protect-dir") {
+		t.Fatalf("validation-only operations repaired directory security: %v", events)
 	}
 }
 
@@ -182,10 +286,15 @@ func TestStorePreCommitFailurePreservesAcceptedState(t *testing.T) {
 
 func TestStorePostCommitFailureRequiresExactRepair(t *testing.T) {
 	dir := testDirectory(t)
-	var syncCalls atomic.Int32
+	var namespaceCommitted atomic.Bool
 	store := testStore(t, dir, WithOperations(Operations{
+		Replace: func(ctx context.Context, oldPath, newPath string) CommitResult {
+			result := atomicReplace(ctx, oldPath, newPath)
+			namespaceCommitted.Store(result.Committed)
+			return result
+		},
 		SyncDir: func(path string) error {
-			if syncCalls.Add(1) == 1 {
+			if namespaceCommitted.Swap(false) {
 				return errors.New("injected post-commit sync failure")
 			}
 			return statedir.SyncDir(path)
@@ -206,6 +315,153 @@ func TestStorePostCommitFailureRequiresExactRepair(t *testing.T) {
 	got, err := store.Load(context.Background())
 	if err != nil || !got.equal(committed) {
 		t.Fatalf("Load after repair = %+v, %v", got, err)
+	}
+}
+
+func TestStorePendingSaveSecurityFailurePreservesPriorCommitTruth(t *testing.T) {
+	dir := testDirectory(t)
+	var namespaceCommitted atomic.Bool
+	store := testStore(t, dir, WithOperations(Operations{
+		Replace: func(ctx context.Context, oldPath, newPath string) CommitResult {
+			result := atomicReplace(ctx, oldPath, newPath)
+			namespaceCommitted.Store(result.Committed)
+			return result
+		},
+		SyncDir: func(path string) error {
+			if namespaceCommitted.Swap(false) {
+				return errors.New("injected post-commit sync failure")
+			}
+			return statedir.SyncDir(path)
+		},
+	}))
+	want := testDefault(t, vmA)
+	publication, err := store.Save(context.Background(), want)
+	if !errors.Is(err, ErrCommittedNotDurable) || !publication.Committed {
+		t.Fatalf("first Save = %+v, %v", publication, err)
+	}
+	store.security = &recordingSecurity{protectDirErr: errors.New("injected directory drift")}
+	publication, err = store.Save(context.Background(), want)
+	if !errors.Is(err, ErrCommittedNotDurable) || !publication.Committed || publication.Durable {
+		t.Fatalf("exact retry = %+v, %v, want prior commit truth", publication, err)
+	}
+}
+
+func TestStorePendingClearSecurityFailurePreservesPriorCommitTruth(t *testing.T) {
+	dir := testDirectory(t)
+	store := testStore(t, dir)
+	publication, err := store.Save(context.Background(), testDefault(t, vmA))
+	requireDurablePublication(t, "initial Save", publication, err)
+	store.operations.Remove = func(path string) CommitResult {
+		if err := os.Remove(path); err != nil {
+			return CommitResult{Err: err}
+		}
+		return CommitResult{Committed: true, Err: errors.New("injected post-remove failure")}
+	}
+	publication, err = store.Clear(context.Background())
+	if !errors.Is(err, ErrCommittedNotDurable) || !publication.Committed {
+		t.Fatalf("first Clear = %+v, %v", publication, err)
+	}
+	store.security = &recordingSecurity{validateDirErr: errors.New("injected directory drift")}
+	publication, err = store.Clear(context.Background())
+	if !errors.Is(err, ErrCommittedNotDurable) || !publication.Committed || publication.Durable {
+		t.Fatalf("exact retry = %+v, %v, want prior commit truth", publication, err)
+	}
+}
+
+func TestStoreRestartRepairsCommittedSaveWithoutSecondReplace(t *testing.T) {
+	dir := testDirectory(t)
+	var replaceCalls atomic.Int32
+	var failPostCommit atomic.Bool
+	failPostCommit.Store(true)
+	operations := Operations{
+		Replace: func(ctx context.Context, oldPath, newPath string) CommitResult {
+			replaceCalls.Add(1)
+			return atomicReplace(ctx, oldPath, newPath)
+		},
+		SyncDir: func(path string) error {
+			if replaceCalls.Load() > 0 && failPostCommit.Swap(false) {
+				return errors.New("injected post-commit sync failure")
+			}
+			return statedir.SyncDir(path)
+		},
+	}
+	want := testDefault(t, vmA, "primary")
+	publication, err := testStore(t, dir, WithOperations(operations)).Save(context.Background(), want)
+	if !errors.Is(err, ErrCommittedNotDurable) || !publication.Committed || publication.Durable {
+		t.Fatalf("first Save = %+v, %v", publication, err)
+	}
+
+	publication, err = testStore(t, dir, WithOperations(operations)).Save(context.Background(), want)
+	requireDurablePublication(t, "restart repair", publication, err)
+	if replaceCalls.Load() != 1 {
+		t.Fatalf("replace calls = %d, want exactly one namespace commit", replaceCalls.Load())
+	}
+}
+
+func TestStoreRestartRepairsCommittedClearWithoutSecondRemove(t *testing.T) {
+	dir := testDirectory(t)
+	want := testDefault(t, vmA)
+	store := testStore(t, dir)
+	publication, err := store.Save(context.Background(), want)
+	requireDurablePublication(t, "initial Save", publication, err)
+
+	var removeCalls atomic.Int32
+	var failPostCommit atomic.Bool
+	failPostCommit.Store(true)
+	operations := Operations{
+		Remove: func(path string) CommitResult {
+			removeCalls.Add(1)
+			if err := os.Remove(path); err != nil {
+				return CommitResult{Err: err}
+			}
+			return CommitResult{Committed: true}
+		},
+		SyncDir: func(path string) error {
+			if removeCalls.Load() > 0 && failPostCommit.Swap(false) {
+				return errors.New("injected post-commit sync failure")
+			}
+			return statedir.SyncDir(path)
+		},
+	}
+	publication, err = testStore(t, dir, WithOperations(operations)).Clear(context.Background())
+	if !errors.Is(err, ErrCommittedNotDurable) || !publication.Committed || publication.Durable {
+		t.Fatalf("first Clear = %+v, %v", publication, err)
+	}
+
+	publication, err = testStore(t, dir, WithOperations(operations)).Clear(context.Background())
+	requireDurablePublication(t, "restart clear repair", publication, err)
+	if removeCalls.Load() != 1 {
+		t.Fatalf("remove calls = %d, want exactly one namespace effect", removeCalls.Load())
+	}
+}
+
+func TestStoreRestartRepairSyncFailureFailsClosed(t *testing.T) {
+	dir := testDirectory(t)
+	want := testDefault(t, vmA)
+	var replaceCalls atomic.Int32
+	var failPostCommit atomic.Bool
+	failPostCommit.Store(true)
+	publication, err := testStore(t, dir, WithOperations(Operations{
+		Replace: func(ctx context.Context, oldPath, newPath string) CommitResult {
+			replaceCalls.Add(1)
+			return atomicReplace(ctx, oldPath, newPath)
+		},
+		SyncDir: func(path string) error {
+			if replaceCalls.Load() > 0 && failPostCommit.Swap(false) {
+				return errors.New("injected post-commit sync failure")
+			}
+			return statedir.SyncDir(path)
+		},
+	})).Save(context.Background(), want)
+	if !errors.Is(err, ErrCommittedNotDurable) || !publication.Committed || publication.Durable {
+		t.Fatalf("first Save = %+v, %v", publication, err)
+	}
+
+	store := testStore(t, dir, WithOperations(Operations{
+		SyncDir: func(string) error { return errors.New("injected restart sync failure") },
+	}))
+	if got, err := store.Load(context.Background()); err == nil || !got.equal(Default{}) {
+		t.Fatalf("Load = %+v, %v, want fail-closed sync error", got, err)
 	}
 }
 
@@ -302,9 +558,17 @@ func TestStoreCanceledAfterCommitRepairsExactly(t *testing.T) {
 func TestStoreClearDurabilityFailuresRepairOnLoad(t *testing.T) {
 	dir := testDirectory(t)
 	var failSync atomic.Bool
+	var clearCommitted atomic.Bool
 	store := testStore(t, dir, WithOperations(Operations{
+		Remove: func(path string) CommitResult {
+			if err := os.Remove(path); err != nil {
+				return CommitResult{Err: err}
+			}
+			clearCommitted.Store(true)
+			return CommitResult{Committed: true}
+		},
 		SyncDir: func(path string) error {
-			if failSync.Swap(false) {
+			if clearCommitted.Load() && failSync.Swap(false) {
 				return errors.New("injected clear sync failure")
 			}
 			return statedir.SyncDir(path)

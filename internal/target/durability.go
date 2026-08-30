@@ -12,6 +12,9 @@ func (s *Store) repairPending(ctx context.Context) error {
 	if s.pending == nil {
 		return nil
 	}
+	if err := s.validateDirectory(ctx); err != nil {
+		return err
+	}
 	var err error
 	if s.pending.kind == pendingClear {
 		_, err = s.repairCleared(ctx)

@@ -119,7 +119,7 @@ func (s *Store) Load(ctx context.Context) (Default, error) {
 	if err := s.repairPending(ctx); err != nil {
 		return Default{}, err
 	}
-	return s.loadUnlocked(ctx)
+	return s.loadDurably(ctx)
 }
 
 // Save atomically publishes one canonical target authority.
@@ -139,15 +139,18 @@ func (s *Store) Save(ctx context.Context, value Default) (Publication, error) {
 		if s.pending.kind != pendingSave || !s.pending.value.equal(canonical) {
 			return Publication{}, ErrDurabilityPending
 		}
+		if err := s.prepareDirectory(ctx); err != nil {
+			return Publication{Committed: true}, errors.Join(ErrCommittedNotDurable, err)
+		}
 		return s.repairSaved(ctx, canonical, payload)
 	}
-	if err := s.validateDirectory(ctx); err != nil {
+	if err := s.prepareDirectory(ctx); err != nil {
 		return Publication{}, err
 	}
-	existing, err := s.loadUnlocked(ctx)
+	existing, err := s.loadDurably(ctx)
 	switch {
 	case err == nil && existing.equal(canonical):
-		return s.repairSaved(ctx, canonical, payload)
+		return Publication{Committed: true, Durable: true}, nil
 	case err == nil:
 	case errors.Is(err, ErrNoDefault):
 	default:
@@ -164,13 +167,13 @@ func (s *Store) Clear(ctx context.Context) (Publication, error) {
 		if s.pending.kind != pendingClear {
 			return Publication{}, ErrDurabilityPending
 		}
+		if err := s.validateDirectory(ctx); err != nil {
+			return Publication{Committed: true}, errors.Join(ErrCommittedNotDurable, err)
+		}
 		return s.repairCleared(ctx)
 	}
-	if err := s.validateDirectory(ctx); err != nil {
-		return Publication{}, err
-	}
-	if _, err := s.loadUnlocked(ctx); errors.Is(err, ErrNoDefault) {
-		return s.repairCleared(ctx)
+	if _, err := s.loadDurably(ctx); errors.Is(err, ErrNoDefault) {
+		return Publication{Committed: true, Durable: true}, nil
 	} else if err != nil {
 		return Publication{}, err
 	}
@@ -227,6 +230,9 @@ func (s *Store) publish(ctx context.Context, value Default, payload []byte) (Pub
 }
 
 func (s *Store) prepareTemporary(ctx context.Context, file *os.File, path string, payload []byte) error {
+	if err := s.security.ValidateInheritedFile(ctx, path); err != nil {
+		return fmt.Errorf("%w: inherited temporary file: %w", ErrInsecureState, err)
+	}
 	if err := file.Chmod(0600); err != nil {
 		return fmt.Errorf("target: protect temporary state mode: %w", err)
 	}
@@ -248,8 +254,14 @@ func (s *Store) prepareTemporary(ctx context.Context, file *os.File, path string
 	return nil
 }
 
-func (s *Store) loadUnlocked(ctx context.Context) (Default, error) {
+func (s *Store) loadDurably(ctx context.Context) (Default, error) {
 	if err := s.validateDirectory(ctx); err != nil {
+		return Default{}, err
+	}
+	if err := s.operations.SyncDir(s.dir); err != nil {
+		return Default{}, fmt.Errorf("target: synchronize directory before read: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
 		return Default{}, err
 	}
 	payload, err := s.operations.ReadFile(ctx, s.path)
@@ -264,6 +276,16 @@ func (s *Store) loadUnlocked(ctx context.Context) (Default, error) {
 		return Default{}, err
 	}
 	return value, nil
+}
+
+func (s *Store) prepareDirectory(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := s.security.ProtectDir(ctx, s.dir); err != nil {
+		return fmt.Errorf("%w: protect directory: %w", ErrInsecureState, err)
+	}
+	return s.validateDirectory(ctx)
 }
 
 func (s *Store) validateDirectory(ctx context.Context) error {

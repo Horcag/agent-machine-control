@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -17,7 +18,7 @@ import (
 type recordingWindowsGuard struct {
 	mu       sync.Mutex
 	validate []PathKind
-	protect  int
+	protect  []PathKind
 	err      error
 }
 
@@ -28,10 +29,10 @@ func (g *recordingWindowsGuard) Validate(_ context.Context, _ string, kind PathK
 	return g.err
 }
 
-func (g *recordingWindowsGuard) ProtectFile(context.Context, string) error {
+func (g *recordingWindowsGuard) Protect(_ context.Context, _ string, kind PathKind) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.protect++
+	g.protect = append(g.protect, kind)
 	return g.err
 }
 
@@ -47,8 +48,9 @@ func TestHostBackedPathUsesInjectedWindowsGuard(t *testing.T) {
 	}
 	guard.mu.Lock()
 	defer guard.mu.Unlock()
-	if guard.protect == 0 || len(guard.validate) < 3 || guard.validate[0] != PathDirectory {
-		t.Fatalf("guard calls = validate %v protect %d", guard.validate, guard.protect)
+	if !slices.Contains(guard.protect, PathDirectory) || !slices.Contains(guard.protect, PathFile) ||
+		!slices.Contains(guard.validate, PathInheritedFile) || len(guard.validate) < 3 {
+		t.Fatalf("guard calls = validate %v protect %v", guard.validate, guard.protect)
 	}
 }
 
@@ -60,6 +62,54 @@ func TestHostBackedPathFailsClosedWithoutSecurityProof(t *testing.T) {
 	)
 	if _, err := store.Load(context.Background()); !errors.Is(err, ErrHostSecurityUnproven) {
 		t.Fatalf("Load error = %v, want ErrHostSecurityUnproven", err)
+	}
+}
+
+func TestHostBackedSaveFailsClosedWithoutDirectoryProtectionGuard(t *testing.T) {
+	dir := testDirectory(t)
+	store := testStore(t, dir,
+		WithHostPathDetector(func(string) (bool, error) { return true, nil }),
+		WithWindowsPathGuard(nil),
+	)
+	publication, err := store.Save(context.Background(), testDefault(t, vmA))
+	if !errors.Is(err, ErrHostSecurityUnproven) || publication.Committed {
+		t.Fatalf("Save = %+v, %v, want pre-commit host security failure", publication, err)
+	}
+	entries, readErr := os.ReadDir(dir)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("target entries = %v, want no state created", entries)
+	}
+}
+
+func TestHostBackedSaveRejectsSymlinkComponentBeforeCreatingTemporaryState(t *testing.T) {
+	realDir := testDirectory(t)
+	linkedDir := filepath.Join(t.TempDir(), "linked-targets")
+	if err := os.Symlink(realDir, linkedDir); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	guard := &recordingWindowsGuard{}
+	store := testStore(t, linkedDir,
+		WithHostPathDetector(func(string) (bool, error) { return true, nil }),
+		WithWindowsPathGuard(guard),
+	)
+	publication, err := store.Save(context.Background(), testDefault(t, vmA))
+	if err == nil || publication.Committed {
+		t.Fatalf("Save = %+v, %v, want pre-commit symlink rejection", publication, err)
+	}
+	entries, readErr := os.ReadDir(realDir)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("target entries = %v, want no temporary or canonical state", entries)
+	}
+	guard.mu.Lock()
+	defer guard.mu.Unlock()
+	if len(guard.protect) != 0 {
+		t.Fatalf("Windows guard mutated after local symlink rejection: %v", guard.protect)
 	}
 }
 
@@ -90,12 +140,19 @@ func TestPowerShellWindowsGuardCommandProofs(t *testing.T) {
 	guard := powerShellWindowsGuard{}
 
 	t.Run("valid proof", func(t *testing.T) {
-		writeGuardExecutable(t, commandDir, "powershell.exe", "#!/bin/sh\nprintf '{\"ok\":true}\\n'\n")
+		writeGuardExecutable(t, commandDir, "powershell.exe", `#!/bin/sh
+case "$AMC_TARGET_GUARD_KIND" in
+  directory) flags=3; protected=true ;;
+  file) flags=0; protected=true ;;
+  inherited_file) flags=16; protected=false ;;
+esac
+printf '{"owner":"S-1-5-21-1000","current_user":"S-1-5-21-1000","protected":%s,"kind":"%s","entries":[{"type":0,"flags":%s,"mask":2032127,"sid":"S-1-5-21-1000"},{"type":0,"flags":%s,"mask":2032127,"sid":"S-1-5-18"},{"type":0,"flags":%s,"mask":2032127,"sid":"S-1-5-32-544"}]}\n' "$protected" "$AMC_TARGET_GUARD_KIND" "$flags" "$flags" "$flags"
+`)
 		if err := guard.Validate(context.Background(), "/mnt/c/fake", PathDirectory); err != nil {
 			t.Fatalf("Validate: %v", err)
 		}
-		if err := guard.ProtectFile(context.Background(), "/mnt/c/fake"); err != nil {
-			t.Fatalf("ProtectFile: %v", err)
+		if err := guard.Protect(context.Background(), "/mnt/c/fake", PathFile); err != nil {
+			t.Fatalf("Protect: %v", err)
 		}
 	})
 

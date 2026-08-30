@@ -76,11 +76,11 @@ func TestStoreRejectsUnprovenCommitAndPendingCrossOperationRetry(t *testing.T) {
 	}
 
 	saveDir := testDirectory(t)
-	failSaveSync := true
+	saveSyncCalls := 0
 	pendingSave := testStore(t, saveDir, WithOperations(Operations{
 		SyncDir: func(path string) error {
-			if failSaveSync {
-				failSaveSync = false
+			saveSyncCalls++
+			if saveSyncCalls == 2 {
 				return synthetic
 			}
 			return statedir.SyncDir(path)
@@ -94,11 +94,12 @@ func TestStoreRejectsUnprovenCommitAndPendingCrossOperationRetry(t *testing.T) {
 	}
 
 	clearDir := testDirectory(t)
-	failClearSync := false
+	clearSyncCalls := 0
+	failClearSyncAt := 0
 	pendingClear := testStore(t, clearDir, WithOperations(Operations{
 		SyncDir: func(path string) error {
-			if failClearSync {
-				failClearSync = false
+			clearSyncCalls++
+			if clearSyncCalls == failClearSyncAt {
 				return synthetic
 			}
 			return statedir.SyncDir(path)
@@ -106,7 +107,7 @@ func TestStoreRejectsUnprovenCommitAndPendingCrossOperationRetry(t *testing.T) {
 	}))
 	publication, err = pendingClear.Save(context.Background(), want)
 	requireDurablePublication(t, "seed pending clear", publication, err)
-	failClearSync = true
+	failClearSyncAt = clearSyncCalls + 2
 	if publication, err := pendingClear.Clear(context.Background()); !publication.Committed || !errors.Is(err, ErrCommittedNotDurable) {
 		t.Fatalf("pending Clear = %+v, %v", publication, err)
 	}
