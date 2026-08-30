@@ -153,6 +153,8 @@ func (na NetworkAdapterSummary) Validate() error {
 
 // MachineObservation represents a verified, point-in-time observation of a virtual machine.
 type MachineObservation struct {
+	HostID              HostID
+	Locator             MachineLocator
 	ID                  string
 	Name                string
 	State               MachineLifecycleState
@@ -201,8 +203,25 @@ func (m MachineObservation) Validate() error {
 }
 
 func (m MachineObservation) validateIdentityAndState() error {
-	if err := ValidateMachineGUID(m.ID); err != nil {
+	normalizedID, err := NormalizeMachineGUID(m.ID)
+	if err != nil {
 		return err
+	}
+	if m.HostID != "" {
+		if err := m.HostID.Validate(); err != nil {
+			return err
+		}
+	}
+	if m.Locator != (MachineLocator{}) {
+		if err := m.Locator.Validate(); err != nil {
+			return err
+		}
+		if m.HostID != "" && m.Locator.HostID != m.HostID {
+			return fmt.Errorf("%w: locator host %s does not match observation host %s", ErrInvalidMachineLocator, m.Locator.HostID, m.HostID)
+		}
+		if m.Locator.VMID != normalizedID {
+			return fmt.Errorf("%w: locator VM %s does not match observation ID %s", ErrInvalidMachineLocator, m.Locator.VMID, normalizedID)
+		}
 	}
 	if err := ValidateBoundedString(m.Name, 1, 256, ErrInvalidMachineName); err != nil {
 		return err

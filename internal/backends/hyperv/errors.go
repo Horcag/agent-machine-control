@@ -44,4 +44,7 @@ var (
 
 	// ErrInvalidState indicates the machine is not in a valid state for the requested operation.
 	ErrInvalidState = errors.New("hyperv: machine is in an invalid state for operation")
+
+	// ErrRemoteRouteReadOnly indicates remote Hyper-V routes do not support privileged methods yet.
+	ErrRemoteRouteReadOnly = errors.New("hyperv: remote route is observe-only")
 )

@@ -1,5 +1,7 @@
 package hyperv
 
+import "strings"
+
 const (
 	scriptPrincipalCheck = `$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = [System.Security.Principal.WindowsPrincipal]::new($identity)
@@ -201,3 +203,29 @@ try {
     } | ConvertTo-Json -Compress
 }`
 )
+
+func remoteScript(script string) string {
+	// Remote routes must not run local Windows group preflight. Access is classified by
+	// the remote Hyper-V cmdlet result under the supplied ComputerName target.
+	remotePrefix := `$targetHost = $env:AMC_HYPERV_HOST_ADDRESS
+if ([string]::IsNullOrWhiteSpace($targetHost)) {
+    @{
+        schema_version = "1"
+        error_category = "host_unavailable"
+    } | ConvertTo-Json -Compress
+    exit 0
+}
+`
+	replacements := map[string]string{
+		"Get-VMHost -ErrorAction Stop":         "Get-VMHost -ComputerName $targetHost -ErrorAction Stop",
+		"Get-VM -ErrorAction Stop":             "Get-VM -ComputerName $targetHost -ErrorAction Stop",
+		"Get-VM -Id $vmGuid -ErrorAction Stop": "Get-VM -ComputerName $targetHost -Id $vmGuid -ErrorAction Stop",
+	}
+	remote := script
+	remote = strings.ReplaceAll(remote, scriptAccessPreflightDoctor, "")
+	remote = strings.ReplaceAll(remote, scriptAccessPreflightQuery, "")
+	for old, next := range replacements {
+		remote = strings.ReplaceAll(remote, old, next)
+	}
+	return remotePrefix + remote
+}
