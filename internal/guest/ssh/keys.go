@@ -52,17 +52,17 @@ func NewLocalKeyProvider(sd *statedir.StateDir) *LocalKeyProvider {
 
 func validateStrictFile(path string) ([]byte, error) {
 	cleaned := filepath.Clean(path)
-	parts := strings.Split(cleaned, string(filepath.Separator))
-	current := ""
-	if filepath.IsAbs(cleaned) {
-		current = string(filepath.Separator)
+	walkPaths, err := strictFileWalkPaths(
+		cleaned,
+		filepath.VolumeName(cleaned),
+		string(filepath.Separator),
+		filepath.IsAbs(cleaned),
+	)
+	if err != nil {
+		return nil, err
 	}
 
-	for _, part := range parts {
-		if part == "" {
-			continue
-		}
-		current = filepath.Join(current, part)
+	for _, current := range walkPaths {
 		fi, err := os.Lstat(current)
 		if err != nil {
 			return nil, err
@@ -84,6 +84,45 @@ func validateStrictFile(path string) ([]byte, error) {
 	}
 
 	return os.ReadFile(cleaned)
+}
+
+func strictFileWalkPaths(cleaned, volume, separator string, absolute bool) ([]string, error) {
+	if len(separator) != 1 || (volume != "" && !strings.HasPrefix(cleaned, volume)) {
+		return nil, errors.New("security: invalid strict file path root")
+	}
+
+	rest := strings.TrimPrefix(cleaned, volume)
+	if absolute {
+		if !strings.HasPrefix(rest, separator) {
+			return nil, errors.New("security: invalid strict file path root")
+		}
+	} else if volume != "" || strings.HasPrefix(rest, separator) {
+		return nil, errors.New("security: invalid strict file path root")
+	}
+
+	current := ""
+	paths := make([]string, 0, strings.Count(rest, separator)+1)
+	if absolute {
+		current = volume + separator
+		paths = append(paths, current)
+	}
+
+	for part := range strings.SplitSeq(rest, separator) {
+		if part == "" {
+			continue
+		}
+		if current == "" || strings.HasSuffix(current, separator) {
+			current += part
+		} else {
+			current += separator + part
+		}
+		paths = append(paths, current)
+	}
+
+	if len(paths) == 0 {
+		return nil, errors.New("security: invalid strict file path root")
+	}
+	return paths, nil
 }
 
 // GetMachineConfig loads the server-owned machine configuration.
