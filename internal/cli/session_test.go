@@ -276,7 +276,7 @@ func TestCLISession_HumanOutputAndFlags(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
-	code = app.RunWithContext(ctx, []string{"session", "read", sessID, "--after-seq", "1", "--limit-bytes", "512"}, &stdout, &stderr)
+	code = app.RunWithContext(ctx, []string{"session", "read", sessID, "--after-seq", "1", "--limit", "512"}, &stdout, &stderr)
 	if code != cli.ExitSuccess {
 		t.Fatalf("session read human failed: %d, stderr: %s", code, stderr.String())
 	}

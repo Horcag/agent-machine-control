@@ -16,6 +16,7 @@ import (
 )
 
 func runSessionWait(ctx context.Context, cl *client.Client, args []string, stdout, stderr io.Writer) int {
+	positionals, flagArgs := splitPositionalAndFlags(args)
 	fs := flag.NewFlagSet("session wait", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
@@ -31,16 +32,15 @@ func runSessionWait(ctx context.Context, cl *client.Client, args []string, stdou
 	fs.IntVar(&timeoutSec, "timeout", 30, "Wait timeout in seconds")
 	fs.BoolVar(&jsonOutput, "json", false, "Output JSON format")
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(flagArgs); err != nil {
 		return ExitUsage
 	}
 
-	pos := fs.Args()
-	if len(pos) < 1 {
+	if len(positionals) < 1 {
 		fmt.Fprintln(stderr, "amc: session ID is required")
 		return ExitUsage
 	}
-	sessID := pos[0]
+	sessID := positionals[0]
 
 	req := daemon.SessionWaitRequest{
 		SettleMs:       settleMs,
@@ -66,6 +66,7 @@ func runSessionWait(ctx context.Context, cl *client.Client, args []string, stdou
 }
 
 func runSessionList(ctx context.Context, cl *client.Client, args []string, stdout, stderr io.Writer) int {
+	_, flagArgs := splitPositionalAndFlags(args)
 	fs := flag.NewFlagSet("session list", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
@@ -75,7 +76,7 @@ func runSessionList(ctx context.Context, cl *client.Client, args []string, stdou
 	fs.StringVar(&machineRef, "machine", "", "Filter by machine GUID")
 	fs.BoolVar(&jsonOutput, "json", false, "Output JSON format")
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(flagArgs); err != nil {
 		return ExitUsage
 	}
 
@@ -102,22 +103,22 @@ func runSessionList(ctx context.Context, cl *client.Client, args []string, stdou
 }
 
 func runSessionShow(ctx context.Context, cl *client.Client, args []string, stdout, stderr io.Writer) int {
+	positionals, flagArgs := splitPositionalAndFlags(args)
 	fs := flag.NewFlagSet("session show", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
 	var jsonOutput bool
 	fs.BoolVar(&jsonOutput, "json", false, "Output JSON format")
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(flagArgs); err != nil {
 		return ExitUsage
 	}
 
-	pos := fs.Args()
-	if len(pos) < 1 {
+	if len(positionals) < 1 {
 		fmt.Fprintln(stderr, "amc: session ID is required")
 		return ExitUsage
 	}
-	sessID := pos[0]
+	sessID := positionals[0]
 
 	sess, err := cl.GetSession(ctx, sessID)
 	if err != nil {
@@ -143,6 +144,7 @@ func runSessionShow(ctx context.Context, cl *client.Client, args []string, stdou
 }
 
 func runSessionClose(ctx context.Context, cl *client.Client, args []string, stdout, stderr io.Writer) int {
+	positionals, flagArgs := splitPositionalAndFlags(args)
 	fs := flag.NewFlagSet("session close", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
@@ -155,16 +157,15 @@ func runSessionClose(ctx context.Context, cl *client.Client, args []string, stdo
 	fs.BoolVar(&force, "force", false, "Force terminate immediately")
 	fs.BoolVar(&jsonOutput, "json", false, "Output JSON format")
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(flagArgs); err != nil {
 		return ExitUsage
 	}
 
-	pos := fs.Args()
-	if len(pos) < 1 {
+	if len(positionals) < 1 {
 		fmt.Fprintln(stderr, "amc: session ID is required")
 		return ExitUsage
 	}
-	sessID := pos[0]
+	sessID := positionals[0]
 
 	var appObj *domain.Approval
 	if approvalFile != "" {

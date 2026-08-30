@@ -79,6 +79,7 @@ func printSessionUsage(w io.Writer) {
 }
 
 func runSessionOpen(ctx context.Context, cl *client.Client, args []string, stdout, stderr io.Writer) int {
+	positionals, flagArgs := splitPositionalAndFlags(args)
 	fs := flag.NewFlagSet("session open", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
@@ -94,16 +95,15 @@ func runSessionOpen(ctx context.Context, cl *client.Client, args []string, stdou
 	fs.UintVar(&rows, "rows", 24, "Terminal rows")
 	fs.BoolVar(&jsonOutput, "json", false, "Output JSON format")
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(flagArgs); err != nil {
 		return ExitUsage
 	}
 
-	pos := fs.Args()
-	if len(pos) < 1 {
+	if len(positionals) < 1 {
 		fmt.Fprintln(stderr, "amc: target machine GUID is required")
 		return ExitUsage
 	}
-	target := pos[0]
+	target := positionals[0]
 
 	var appObj *domain.Approval
 	if approvalFile != "" {
@@ -144,6 +144,7 @@ func runSessionOpen(ctx context.Context, cl *client.Client, args []string, stdou
 }
 
 func runSessionRead(ctx context.Context, cl *client.Client, args []string, stdout, stderr io.Writer) int {
+	positionals, flagArgs := splitPositionalAndFlags(args)
 	fs := flag.NewFlagSet("session read", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
@@ -155,16 +156,15 @@ func runSessionRead(ctx context.Context, cl *client.Client, args []string, stdou
 	fs.IntVar(&limitBytes, "limit", 64*1024, "Maximum bytes to read")
 	fs.BoolVar(&jsonOutput, "json", false, "Output JSON format")
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(flagArgs); err != nil {
 		return ExitUsage
 	}
 
-	pos := fs.Args()
-	if len(pos) < 1 {
+	if len(positionals) < 1 {
 		fmt.Fprintln(stderr, "amc: session ID is required")
 		return ExitUsage
 	}
-	sessID := pos[0]
+	sessID := positionals[0]
 
 	resp, err := cl.ReadSession(ctx, sessID, afterSeq, limitBytes, 10*time.Second)
 	if err != nil {
@@ -183,6 +183,7 @@ func runSessionRead(ctx context.Context, cl *client.Client, args []string, stdou
 }
 
 func runSessionWrite(ctx context.Context, cl *client.Client, args []string, stdout, stderr io.Writer) int {
+	positionals, flagArgs := splitPositionalAndFlags(args)
 	fs := flag.NewFlagSet("session write", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
@@ -195,19 +196,18 @@ func runSessionWrite(ctx context.Context, cl *client.Client, args []string, stdo
 	fs.StringVar(&approvalFile, "approval-file", "", "Path to operator approval JSON file")
 	fs.BoolVar(&jsonOutput, "json", false, "Output JSON format")
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(flagArgs); err != nil {
 		return ExitUsage
 	}
 
-	pos := fs.Args()
-	if len(pos) < 1 {
+	if len(positionals) < 1 {
 		fmt.Fprintln(stderr, "amc: session ID is required")
 		return ExitUsage
 	}
-	sessID := pos[0]
+	sessID := positionals[0]
 
-	if data == "" && len(pos) > 1 {
-		data = strings.Join(pos[1:], " ") + "\n"
+	if data == "" && len(positionals) > 1 {
+		data = strings.Join(positionals[1:], " ") + "\n"
 	}
 	if data == "" {
 		fmt.Fprintln(stderr, "amc: data to write is required")
@@ -242,6 +242,7 @@ func runSessionWrite(ctx context.Context, cl *client.Client, args []string, stdo
 }
 
 func runSessionControl(ctx context.Context, cl *client.Client, args []string, stdout, stderr io.Writer) int {
+	positionals, flagArgs := splitPositionalAndFlags(args)
 	fs := flag.NewFlagSet("session control", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
@@ -253,17 +254,16 @@ func runSessionControl(ctx context.Context, cl *client.Client, args []string, st
 	fs.StringVar(&approvalFile, "approval-file", "", "Path to operator approval JSON file")
 	fs.BoolVar(&jsonOutput, "json", false, "Output JSON format")
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(flagArgs); err != nil {
 		return ExitUsage
 	}
 
-	pos := fs.Args()
-	if len(pos) < 2 {
+	if len(positionals) < 2 {
 		fmt.Fprintln(stderr, "amc: session ID and control key are required (e.g. amc session control <id> ctrl-c)")
 		return ExitUsage
 	}
-	sessID := pos[0]
-	ctrlKey := domain.ControlKey(pos[1])
+	sessID := positionals[0]
+	ctrlKey := domain.ControlKey(positionals[1])
 
 	var appObj *domain.Approval
 	if approvalFile != "" {
