@@ -112,7 +112,7 @@ func (m *Manager) recordLockOwner(ownerPath, runtimeID string, pid int, startTim
 }
 
 func (m *Manager) tryReclaimDeadLock(ownerPath, lockDir, runtimeID string) (bool, error) {
-	ownerData, err := os.ReadFile(ownerPath)
+	ownerData, err := readTransitionLockOwner(ownerPath)
 	if err != nil {
 		return false, nil
 	}
@@ -143,7 +143,7 @@ func (m *Manager) tryReclaimDeadLock(ownerPath, lockDir, runtimeID string) (bool
 }
 
 func (m *Manager) releaseLock(ownerPath, lockDir, runtimeID string, pid int, startTime string, acquiredAt time.Time) error {
-	ownerData, err := os.ReadFile(ownerPath)
+	ownerData, err := readTransitionLockOwner(ownerPath)
 	if err != nil {
 		return fmt.Errorf("lease: failed to read lock owner during release: %w", err)
 	}
