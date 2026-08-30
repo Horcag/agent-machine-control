@@ -221,19 +221,20 @@ func TestMCPSessions_SubSecondTimeoutsReachClientAsMilliseconds(t *testing.T) {
 	adapter := &Adapter{client: client.New(server.URL, strings.Repeat("a", 64))}
 	ctx := context.Background()
 
-	if result, _, _ := adapter.SessionOpen(ctx, nil, SessionOpenInput{Target: machGUID, Reason: "open", IdempotencyKey: "open-key", Timeout: "250ms"}); result != nil {
+	approvalID := "app-mcp-session-reference"
+	if result, _, _ := adapter.SessionOpen(ctx, nil, SessionOpenInput{Target: machGUID, Reason: "open", IdempotencyKey: "open-key", Timeout: "250ms", ApprovalID: approvalID}); result != nil {
 		t.Fatalf("sub-second open failed: %v", result)
 	}
-	if result, _, _ := adapter.SessionWrite(ctx, nil, SessionWriteInput{SessionID: sessID, Data: "x", Reason: "write", IdempotencyKey: "write-key", Timeout: "250ms"}); result != nil {
+	if result, _, _ := adapter.SessionWrite(ctx, nil, SessionWriteInput{SessionID: sessID, Data: "x", Reason: "write", IdempotencyKey: "write-key", Timeout: "250ms", ApprovalID: approvalID}); result != nil {
 		t.Fatalf("sub-second write failed: %v", result)
 	}
-	if result, _, _ := adapter.SessionControl(ctx, nil, SessionControlInput{SessionID: sessID, Key: "ctrl-c", Reason: "control", IdempotencyKey: "control-key", Timeout: "250ms"}); result != nil {
+	if result, _, _ := adapter.SessionControl(ctx, nil, SessionControlInput{SessionID: sessID, Key: "ctrl-c", Reason: "control", IdempotencyKey: "control-key", Timeout: "250ms", ApprovalID: approvalID}); result != nil {
 		t.Fatalf("sub-second control failed: %v", result)
 	}
 	if result, _, _ := adapter.SessionWait(ctx, nil, SessionWaitInput{SessionID: sessID, Timeout: "250ms"}); result != nil {
 		t.Fatalf("sub-second wait failed: %v", result)
 	}
-	if result, _, _ := adapter.SessionClose(ctx, nil, SessionCloseInput{SessionID: sessID, Reason: "close", IdempotencyKey: "close-key", Timeout: "250ms"}); result != nil {
+	if result, _, _ := adapter.SessionClose(ctx, nil, SessionCloseInput{SessionID: sessID, Reason: "close", IdempotencyKey: "close-key", Timeout: "250ms", ApprovalID: approvalID}); result != nil {
 		t.Fatalf("sub-second close failed: %v", result)
 	}
 
@@ -244,9 +245,23 @@ func TestMCPSessions_SubSecondTimeoutsReachClientAsMilliseconds(t *testing.T) {
 		if _, exists := body["timeout_seconds"]; exists {
 			t.Errorf("%s sent conflicting timeout fields: %v", path, body)
 		}
+		if path != "/v1/sessions/"+sessID+"/wait" && body["approval_id"] != approvalID {
+			t.Errorf("%s approval_id = %v, want %q", path, body["approval_id"], approvalID)
+		}
 	}
 	if len(captured) != 5 {
 		t.Fatalf("captured %d timeout-bearing requests, want 5", len(captured))
+	}
+}
+
+func TestMCPSessions_RejectInvalidApprovalIDBeforeClientResolution(t *testing.T) {
+	adapter := NewAdapter(t.TempDir())
+	result, _, err := adapter.SessionOpen(context.Background(), nil, SessionOpenInput{
+		Target: "c4a523d4-6b99-4d62-a5e2-4752c0f20001", Reason: "reject unsafe reference",
+		IdempotencyKey: "invalid-approval-reference", Timeout: "30s", ApprovalID: "../outside",
+	})
+	if err != nil || result == nil || !result.IsError {
+		t.Fatalf("invalid approval ID result=%+v err=%v", result, err)
 	}
 }
 

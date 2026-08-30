@@ -43,7 +43,7 @@ func (s *SessionService) WriteSession(ctx context.Context, params SessionWritePa
 	}
 
 	flightKey := fmt.Sprintf("%s:%s:%s", params.Caller.EffectiveActor, target, params.IdempotencyKey)
-	result, rcpt, err := s.coordinateSessionMutation(ctx, op, flightKey, params.Approval, timeout, func(execCtx context.Context) (sessionMutationResult, error) {
+	result, rcpt, err := s.coordinateSessionMutation(ctx, op, flightKey, params.Approval, params.ApprovalID, timeout, func(execCtx context.Context) (sessionMutationResult, error) {
 		bytesWritten, err := s.sessionMgr.Write(execCtx, params.SessionID, params.Caller, params.Data, params.Reason, params.IdempotencyKey)
 		return sessionMutationResult{BytesWritten: bytesWritten, EffectApplied: bytesWritten > 0}, err
 	})
@@ -80,7 +80,7 @@ func (s *SessionService) ControlSession(ctx context.Context, params SessionContr
 	}
 
 	flightKey := fmt.Sprintf("%s:%s:%s", params.Caller.EffectiveActor, target, params.IdempotencyKey)
-	_, rcpt, err := s.coordinateSessionMutation(ctx, op, flightKey, params.Approval, timeout, func(execCtx context.Context) (sessionMutationResult, error) {
+	_, rcpt, err := s.coordinateSessionMutation(ctx, op, flightKey, params.Approval, params.ApprovalID, timeout, func(execCtx context.Context) (sessionMutationResult, error) {
 		controlResult, err := s.sessionMgr.Control(execCtx, params.SessionID, params.Caller, params.Key, params.Reason, params.IdempotencyKey)
 		return sessionMutationResult{BytesWritten: controlResult.AcceptedBytes, EffectApplied: controlResult.EffectApplied}, err
 	})
@@ -117,7 +117,7 @@ func (s *SessionService) CloseSession(ctx context.Context, params SessionClosePa
 	}
 
 	flightKey := fmt.Sprintf("%s:%s:%s", params.Caller.EffectiveActor, target, params.IdempotencyKey)
-	result, rcpt, err := s.coordinateSessionMutation(ctx, op, flightKey, params.Approval, timeout, func(execCtx context.Context) (sessionMutationResult, error) {
+	result, rcpt, err := s.coordinateSessionMutation(ctx, op, flightKey, params.Approval, params.ApprovalID, timeout, func(execCtx context.Context) (sessionMutationResult, error) {
 		closedObs, err := s.sessionMgr.Close(execCtx, params.SessionID, params.Caller, params.Reason, params.Force)
 		exitCode := 0
 		if closedObs != nil && closedObs.ExitCode != nil {

@@ -273,6 +273,42 @@ func TestStore_IssueAndValidateProvenance(t *testing.T) {
 	}
 }
 
+func TestStore_LoadIssuedContextUsesProtectedImmutableRecord(t *testing.T) {
+	dir := t.TempDir()
+	store := approval.NewStore(dir)
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	issued := domain.Approval{
+		ID: "app-load-issued", Actor: "agent:mcp-reference", Target: "a0b1c2d3-e4f5-6789-abcd-ef0123456789",
+		AuthorizedClass: domain.ClassDestructivePrivileged,
+		Fingerprint:     "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+		IdempotencyKey:  "load-issued-key", IssuedAt: now, ExpiresAt: now.Add(time.Hour),
+	}
+	if err := store.Issue(issued); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.LoadIssuedContext(context.Background(), string(issued.ID))
+	if err != nil || loaded == nil || *loaded != issued {
+		t.Fatalf("loaded = %+v err %v", loaded, err)
+	}
+	loaded.IdempotencyKey = "mutated-client-copy"
+	reloaded, err := store.LoadIssuedContext(context.Background(), string(issued.ID))
+	if err != nil || reloaded.IdempotencyKey != issued.IdempotencyKey {
+		t.Fatalf("immutable record changed: %+v err %v", reloaded, err)
+	}
+
+	if _, err := store.LoadIssuedContext(context.Background(), "../outside"); !errors.Is(err, domain.ErrInvalidApprovalRecord) {
+		t.Fatalf("unsafe ID error = %v", err)
+	}
+	if _, err := store.LoadIssuedContext(context.Background(), "app-load-missing"); !errors.Is(err, approval.ErrApprovalNotIssued) {
+		t.Fatalf("missing record error = %v", err)
+	}
+	corruptID := "app-load-corrupt"
+	writeApprovalFixture(t, filepath.Join(dir, corruptID+".issued.json"), []byte(`{"forged":true}`))
+	if _, err := store.LoadIssuedContext(context.Background(), corruptID); err == nil {
+		t.Fatal("corrupt issued record loaded")
+	}
+}
+
 func TestStore_ReleasesConsumedApprovalOnlyForMatchingUnexecutedAuthority(t *testing.T) {
 	store := approval.NewStore(t.TempDir())
 	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)

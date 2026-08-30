@@ -311,6 +311,50 @@ func TestClient_SubSecondTimeoutsUseMillisecondWireField(t *testing.T) {
 	}
 }
 
+func TestClient_ApprovalIDsReachAllSessionMutationRequests(t *testing.T) {
+	sessID := "sess-a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
+	approvalID := "app-client-session-reference"
+	var mu sync.Mutex
+	captured := make(map[string]map[string]any)
+	server := httptest.NewServer(captureSessionTimeouts(t, sessID, captured, &mu))
+	defer server.Close()
+
+	cl := client.New(server.URL, "test-token")
+	ctx := context.Background()
+	if _, err := cl.OpenSession(ctx, daemon.SessionOpenRequest{
+		Target: "c4a523d4-6b99-4d62-a5e2-4752c0f20001", Reason: "open", IdempotencyKey: "open-approval-id",
+		TimeoutSeconds: 30, ApprovalID: approvalID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cl.WriteSessionWithApprovalID(ctx, sessID, "x", "write", "write-approval-id", 30*time.Second, approvalID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cl.SendControlKeyWithApprovalID(ctx, sessID, domain.ControlKeyCtrlC, "control", "control-approval-id", 30*time.Second, approvalID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cl.CloseSessionWithApprovalID(ctx, sessID, "close", "close-approval-id", true, 30*time.Second, approvalID); err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	for _, path := range []string{
+		"/v1/sessions",
+		"/v1/sessions/" + sessID + "/write",
+		"/v1/sessions/" + sessID + "/control",
+		"/v1/sessions/" + sessID + "/close",
+	} {
+		body := captured[path]
+		if body["approval_id"] != approvalID {
+			t.Errorf("%s approval_id = %v", path, body["approval_id"])
+		}
+		if _, ok := body["approval"]; ok {
+			t.Errorf("%s leaked raw approval object: %v", path, body)
+		}
+	}
+}
+
 func TestClient_ReadSessionUsesExactSubSecondRequestContext(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done()

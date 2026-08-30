@@ -132,11 +132,12 @@ records and finalizes an aborted zero-effect result, releases the lease, and exa
 the effect. Transport cancellation uses connection deadlines and never leaves a detached goroutine able
 to perform a late guest write.
 
-Normal close reports success only after transport close succeeds. On transport failure, `force=false`
-leaves local state `closing` (indeterminate) and records a non-success outcome. `force=true` permits
-AMC to finalize local state as terminal `failed`, but it does not turn the transport failure into
-success and does not claim confirmed remote termination. Concurrent close calls serialize behind the
-same local close lane and do not issue a second transport close.
+Normal close reports success only after transport close succeeds. On incomplete transport cleanup,
+local state remains `closing` (indeterminate) and AMC retains cleanup ownership for a later retry or
+shutdown pass. `force=true` requests an immediate best-effort close, but it cannot abandon the
+channel, finalize incomplete cleanup as terminal `failed`, turn failure into success, or claim
+confirmed remote termination. Concurrent close calls serialize behind the same local close lane and
+do not issue a second transport close.
 
 ---
 
@@ -215,7 +216,19 @@ AMC exposes exactly 20 Model Context Protocol (MCP) tools for agent integration:
 5. `session_wait`: Wait for terminal output to settle or match a regular expression pattern.
 6. `session_list`: List active and durable persistent sessions.
 7. `session_show`: Show detailed observation metrics and metadata for a specific session.
-8. `session_close`: Close an active terminal session with a required execution timeout and truthful force semantics.
+8. `session_close`: Close an active terminal session with a required execution timeout; `force` requests immediate best-effort cleanup while incomplete cleanup remains `closing` and owned by AMC.
+
+The four mutating MCP tools (`session_open`, `session_write`, `session_control`, and
+`session_close`) accept an optional canonical `approval_id`. The daemon resolves that identifier
+only from its protected immutable approval store and validates the issued record against the exact
+effective actor, target, effective class, canonical operation fingerprint, idempotency key, active
+window, and consumption state. MCP schemas never accept raw approval objects or approval authority
+fields, and agents cannot self-issue approvals. Exact retry after successful consumption returns the
+prior durable result without a second session effect.
+
+AMC does not yet expose a session-specific operator CLI or UI flow that issues an `approval_id` for
+an MCP agent. The reference path is intentionally consumption-only; operators must not treat an
+agent-provided identifier, prompt confirmation, or copied approval JSON as authority.
 
 ---
 

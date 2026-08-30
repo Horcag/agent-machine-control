@@ -1906,8 +1906,12 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "approval_id": {
+          "description": "Server-issued approval reference for destructive or privileged execution",
+          "type": "string"
+        },
         "force": {
-          "description": "Force close immediately",
+          "description": "Request immediate best-effort close; incomplete cleanup remains closing",
           "type": "boolean"
         },
         "idempotency_key": {
@@ -2128,6 +2132,10 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "approval_id": {
+          "description": "Server-issued approval reference for destructive or privileged execution",
+          "type": "string"
+        },
         "idempotency_key": {
           "description": "Idempotency key",
           "type": "string"
@@ -2387,6 +2395,10 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "approval_id": {
+          "description": "Server-issued approval reference for destructive or privileged execution",
+          "type": "string"
+        },
         "cols": {
           "description": "Terminal columns (20-500, default 80)",
           "maximum": 65535,
@@ -2938,6 +2950,10 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "approval_id": {
+          "description": "Server-issued approval reference for destructive or privileged execution",
+          "type": "string"
+        },
         "data": {
           "description": "Character data or command to write",
           "type": "string"

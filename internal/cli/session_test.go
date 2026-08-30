@@ -172,6 +172,12 @@ func TestCLISession_HelpAndUsage(t *testing.T) {
 		t.Errorf("expected help usage output")
 	}
 
+	stderr.Reset()
+	code = app.Run([]string{"session", "close", "--help"}, &stdout, &stderr)
+	if code != cli.ExitUsage || !strings.Contains(stderr.String(), "incomplete cleanup remains closing") {
+		t.Errorf("close help does not describe bounded force semantics: code=%d stderr=%q", code, stderr.String())
+	}
+
 	// session unknown
 	stderr.Reset()
 	code = app.Run([]string{"session", "unknown"}, &stdout, &stderr)

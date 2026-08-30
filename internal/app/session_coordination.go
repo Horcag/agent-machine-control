@@ -342,14 +342,91 @@ func (s *SessionService) releaseUnexecutedApproval(ctx context.Context, admitted
 	return s.approvalStore.ReleaseUnexecutedContext(releaseCtx, *approval)
 }
 
+func validateSessionApprovalInput(approval *domain.Approval, approvalID string) error {
+	if approval != nil && approvalID != "" {
+		return fmt.Errorf("%w: approval and approval_id are mutually exclusive", domain.ErrInvalidApprovalRecord)
+	}
+	if approvalID == "" {
+		return nil
+	}
+	return domain.ValidateApprovalID(approvalID)
+}
+
+func (s *SessionService) loadSessionApprovalReference(ctx context.Context, approvalID string) (*domain.Approval, error) {
+	if approvalID == "" {
+		return nil, nil
+	}
+	if s.approvalStore == nil {
+		return nil, &PolicyDeniedError{Reason: policy.DenialApprovalMismatch, Message: "server-issued approval reference is invalid"}
+	}
+	loaded, err := s.approvalStore.LoadIssuedContext(ctx, approvalID)
+	if err != nil {
+		return nil, &PolicyDeniedError{Reason: policy.DenialApprovalMismatch, Message: "server-issued approval reference is invalid"}
+	}
+	return loaded, nil
+}
+
+func (s *SessionService) resolveSessionMutationApproval(
+	ctx context.Context,
+	op domain.Operation,
+	initialFP, idFp domain.Fingerprint,
+	approval *domain.Approval,
+	approvalID string,
+) (*domain.Approval, *domain.Receipt, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	if approval != nil && !op.Actor.HasScope(domain.ScopeSessionAdmin) {
+		now := s.now()
+		denial := &PolicyDeniedError{
+			Reason:  policy.DenialApprovalRequired,
+			Message: "raw approval objects require an authenticated session administrator",
+		}
+		decision := policy.Decision{Type: policy.DecisionDeny, EffectiveClass: op.Classification}
+		rcpt, persistErr := s.persistOutcome(ctx, op, initialFP, idFp, decision, now, now, denial, "", nil, 7, false)
+		return nil, &rcpt, errors.Join(denial, persistErr)
+	}
+	loaded, err := s.loadSessionApprovalReference(ctx, approvalID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if loaded != nil {
+		return loaded, nil, nil
+	}
+	return approval, nil, nil
+}
+
+func (s *SessionService) lookupCoordinatedSessionRetry(
+	ctx context.Context,
+	op domain.Operation,
+	entry *inFlightSessionCall,
+) (sessionMutationResult, *domain.Receipt, bool, error) {
+	n, obs, rcpt, handled, retryErr := s.lookupSessionRetry(ctx, op)
+	if !handled {
+		return sessionMutationResult{}, nil, false, nil
+	}
+	result := sessionMutationResult{BytesWritten: n, Observation: obs}
+	entry.result = result
+	if rcpt != nil {
+		entry.rcpt = *rcpt
+		entry.hasReceipt = true
+	}
+	entry.err = retryErr
+	return result, rcpt, true, retryErr
+}
+
 func (s *SessionService) coordinateSessionMutation(
 	ctx context.Context,
 	op domain.Operation,
 	flightKey string,
 	approval *domain.Approval,
+	approvalID string,
 	timeout time.Duration,
 	execute func(context.Context) (sessionMutationResult, error),
 ) (sessionMutationResult, *domain.Receipt, error) {
+	if err := validateSessionApprovalInput(approval, approvalID); err != nil {
+		return sessionMutationResult{}, nil, err
+	}
 	initialFP, idFp, err := s.validateAndFingerprint(op)
 	if err != nil {
 		return sessionMutationResult{}, nil, err
@@ -367,33 +444,17 @@ func (s *SessionService) coordinateSessionMutation(
 		return waitForInFlight(ctx, entry)
 	}
 	defer s.releaseFlight(flightKey, entry)
-
-	if n, obs, rcpt, handled, retryErr := s.lookupSessionRetry(ctx, op); handled {
-		entry.result = sessionMutationResult{BytesWritten: n, Observation: obs}
-		if rcpt != nil {
-			entry.rcpt = *rcpt
+	if result, rcpt, handled, retryErr := s.lookupCoordinatedSessionRetry(ctx, op, entry); handled {
+		return result, rcpt, retryErr
+	}
+	approval, approvalRcpt, err := s.resolveSessionMutationApproval(ctx, op, initialFP, idFp, approval, approvalID)
+	if err != nil {
+		entry.err = err
+		if approvalRcpt != nil {
+			entry.rcpt = *approvalRcpt
 			entry.hasReceipt = true
 		}
-		entry.err = retryErr
-		return sessionMutationResult{BytesWritten: n, Observation: obs}, rcpt, retryErr
-	}
-	if err := ctx.Err(); err != nil {
-		entry.err = err
-		return sessionMutationResult{}, nil, err
-	}
-	if approval != nil && !op.Actor.HasScope(domain.ScopeSessionAdmin) {
-		now := s.now()
-		denial := &PolicyDeniedError{
-			Reason:  policy.DenialApprovalRequired,
-			Message: "raw approval objects require an authenticated session administrator",
-		}
-		decision := policy.Decision{Type: policy.DecisionDeny, EffectiveClass: op.Classification}
-		rcpt, persistErr := s.persistOutcome(ctx, op, initialFP, idFp, decision, now, now, denial, "", nil, 7, false)
-		finalErr := errors.Join(denial, persistErr)
-		entry.rcpt = rcpt
-		entry.hasReceipt = true
-		entry.err = finalErr
-		return sessionMutationResult{}, &rcpt, finalErr
+		return sessionMutationResult{}, approvalRcpt, err
 	}
 
 	admitted, denialRcpt, err := s.admitSessionMutation(ctx, op, approval, timeout, leaseFP)

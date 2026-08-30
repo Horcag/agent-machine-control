@@ -73,6 +73,7 @@ type SessionOpenParams struct {
 	Cols           uint16
 	Rows           uint16
 	Term           string
+	ApprovalID     string
 	Approval       *domain.Approval
 }
 
@@ -84,6 +85,7 @@ type SessionWriteParams struct {
 	Reason         string
 	IdempotencyKey string
 	Timeout        time.Duration
+	ApprovalID     string
 	Approval       *domain.Approval
 }
 
@@ -95,6 +97,7 @@ type SessionControlParams struct {
 	Reason         string
 	IdempotencyKey string
 	Timeout        time.Duration
+	ApprovalID     string
 	Approval       *domain.Approval
 }
 
@@ -106,6 +109,7 @@ type SessionCloseParams struct {
 	IdempotencyKey string
 	Timeout        time.Duration
 	Force          bool
+	ApprovalID     string
 	Approval       *domain.Approval
 }
 

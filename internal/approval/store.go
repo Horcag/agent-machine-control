@@ -100,18 +100,38 @@ func (s *Store) ValidateIssuedContext(ctx context.Context, a domain.Approval) er
 	return s.validateIssuedLocked(ctx, a)
 }
 
-func (s *Store) validateIssuedLocked(ctx context.Context, a domain.Approval) error {
-	path, err := s.issuedApprovalPath(string(a.ID))
+// LoadIssuedContext loads immutable server-issued authority by canonical ID.
+func (s *Store) LoadIssuedContext(ctx context.Context, id string) (*domain.Approval, error) {
+	if err := lockApprovalStoreContext(ctx, &s.mu); err != nil {
+		return nil, err
+	}
+	defer s.mu.Unlock()
+	return s.loadIssuedLocked(ctx, id)
+}
+
+func (s *Store) loadIssuedLocked(ctx context.Context, id string) (*domain.Approval, error) {
+	path, err := s.issuedApprovalPath(id)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
 	issued, err := LoadFromFile(path)
-	if os.IsNotExist(err) || (err != nil && errors.Is(err, os.ErrNotExist)) {
-		return ErrApprovalNotIssued
+	if os.IsNotExist(err) || errors.Is(err, os.ErrNotExist) {
+		return nil, ErrApprovalNotIssued
 	}
+	if err != nil {
+		return nil, err
+	}
+	if issued.Consumed {
+		return nil, ErrApprovalNotIssued
+	}
+	return issued, ctx.Err()
+}
+
+func (s *Store) validateIssuedLocked(ctx context.Context, a domain.Approval) error {
+	issued, err := s.loadIssuedLocked(ctx, string(a.ID))
 	if err != nil {
 		return err
 	}

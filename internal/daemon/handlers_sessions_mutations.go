@@ -98,6 +98,7 @@ func (s *Server) handleWriteSession(w http.ResponseWriter, r *http.Request, id d
 		Reason:         req.Reason,
 		IdempotencyKey: req.IdempotencyKey,
 		Timeout:        timeout,
+		ApprovalID:     req.ApprovalID,
 		Approval:       req.Approval,
 	})
 	if err != nil {
@@ -161,6 +162,7 @@ func (s *Server) handleControlSession(w http.ResponseWriter, r *http.Request, id
 		Reason:         req.Reason,
 		IdempotencyKey: req.IdempotencyKey,
 		Timeout:        timeout,
+		ApprovalID:     req.ApprovalID,
 		Approval:       req.Approval,
 	})
 	if err != nil {
@@ -274,6 +276,7 @@ func (s *Server) handleCloseSession(w http.ResponseWriter, r *http.Request, id d
 		IdempotencyKey: req.IdempotencyKey,
 		Timeout:        timeout,
 		Force:          req.Force,
+		ApprovalID:     req.ApprovalID,
 		Approval:       req.Approval,
 	})
 	if err != nil {
@@ -327,7 +330,7 @@ func (s *Server) mapSessionError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadGateway, "host_key_mismatch", "guest host key verification failed")
 	case errors.Is(err, domain.ErrMissingHostKeyPin):
 		writeError(w, http.StatusBadGateway, "missing_host_key_pin", "guest host key pin missing")
-	case errors.Is(err, domain.ErrNonCanonicalParameter) || errors.Is(err, domain.ErrInvalidControlKey) || errors.Is(err, domain.ErrInvalidTerminalDimensions) || errors.Is(err, domain.ErrInvalidTerminalType):
+	case errors.Is(err, domain.ErrNonCanonicalParameter) || errors.Is(err, domain.ErrInvalidControlKey) || errors.Is(err, domain.ErrInvalidTerminalDimensions) || errors.Is(err, domain.ErrInvalidTerminalType) || errors.Is(err, domain.ErrInvalidApprovalRecord):
 		writeError(w, http.StatusBadRequest, "invalid_argument", "invalid parameter")
 	default:
 		writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")

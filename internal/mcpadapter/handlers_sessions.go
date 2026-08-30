@@ -18,6 +18,9 @@ func (a *Adapter) SessionOpen(ctx context.Context, _ *mcp.CallToolRequest, in Se
 	if err := validateSessionOpenInput(in); err != nil {
 		return mcpToolError(NewInputError(err.Error())), SessionOpenResult{}, nil
 	}
+	if err := validateApprovalID(in.ApprovalID); err != nil {
+		return mcpToolError(err), SessionOpenResult{}, nil
+	}
 
 	timeout, err := parseTimeout(in.Timeout, true)
 	if err != nil {
@@ -36,6 +39,7 @@ func (a *Adapter) SessionOpen(ctx context.Context, _ *mcp.CallToolRequest, in Se
 		Cols:           in.Cols,
 		Rows:           in.Rows,
 		Term:           in.Term,
+		ApprovalID:     in.ApprovalID,
 	}
 	req.TimeoutSeconds, req.TimeoutMillis, err = daemon.EncodeSessionTimeout(timeout)
 	if err != nil {
@@ -120,6 +124,9 @@ func (a *Adapter) SessionWrite(ctx context.Context, _ *mcp.CallToolRequest, in S
 	if in.IdempotencyKey == "" {
 		return mcpToolError(NewInputError("idempotency_key cannot be empty")), SessionWriteResult{}, nil
 	}
+	if err := validateApprovalID(in.ApprovalID); err != nil {
+		return mcpToolError(err), SessionWriteResult{}, nil
+	}
 	timeout, err := parseTimeout(in.Timeout, true)
 	if err != nil {
 		return mcpToolError(err), SessionWriteResult{}, nil
@@ -130,7 +137,7 @@ func (a *Adapter) SessionWrite(ctx context.Context, _ *mcp.CallToolRequest, in S
 		return mcpToolError(err), SessionWriteResult{}, nil
 	}
 
-	resp, err := cl.WriteSessionWithTimeout(ctx, in.SessionID, in.Data, in.Reason, in.IdempotencyKey, timeout)
+	resp, err := cl.WriteSessionWithApprovalID(ctx, in.SessionID, in.Data, in.Reason, in.IdempotencyKey, timeout, in.ApprovalID)
 	if err != nil {
 		return mcpToolError(err), SessionWriteResult{}, nil
 	}
@@ -152,6 +159,9 @@ func (a *Adapter) SessionControl(ctx context.Context, _ *mcp.CallToolRequest, in
 	if in.IdempotencyKey == "" {
 		return mcpToolError(NewInputError("idempotency_key cannot be empty")), SessionControlResult{}, nil
 	}
+	if err := validateApprovalID(in.ApprovalID); err != nil {
+		return mcpToolError(err), SessionControlResult{}, nil
+	}
 	timeout, err := parseTimeout(in.Timeout, true)
 	if err != nil {
 		return mcpToolError(err), SessionControlResult{}, nil
@@ -166,7 +176,7 @@ func (a *Adapter) SessionControl(ctx context.Context, _ *mcp.CallToolRequest, in
 		return mcpToolError(err), SessionControlResult{}, nil
 	}
 
-	resp, err := cl.SendControlKeyWithTimeout(ctx, in.SessionID, normKey, in.Reason, in.IdempotencyKey, timeout)
+	resp, err := cl.SendControlKeyWithApprovalID(ctx, in.SessionID, normKey, in.Reason, in.IdempotencyKey, timeout, in.ApprovalID)
 	if err != nil {
 		return mcpToolError(err), SessionControlResult{}, nil
 	}
@@ -268,6 +278,9 @@ func (a *Adapter) SessionClose(ctx context.Context, _ *mcp.CallToolRequest, in S
 	if in.IdempotencyKey == "" {
 		return mcpToolError(NewInputError("idempotency_key cannot be empty")), SessionCloseResult{}, nil
 	}
+	if err := validateApprovalID(in.ApprovalID); err != nil {
+		return mcpToolError(err), SessionCloseResult{}, nil
+	}
 	timeout, err := parseTimeout(in.Timeout, true)
 	if err != nil {
 		return mcpToolError(err), SessionCloseResult{}, nil
@@ -278,7 +291,7 @@ func (a *Adapter) SessionClose(ctx context.Context, _ *mcp.CallToolRequest, in S
 		return mcpToolError(err), SessionCloseResult{}, nil
 	}
 
-	resp, err := cl.CloseSessionWithTimeout(ctx, in.SessionID, in.Reason, in.IdempotencyKey, in.Force, timeout)
+	resp, err := cl.CloseSessionWithApprovalID(ctx, in.SessionID, in.Reason, in.IdempotencyKey, in.Force, timeout, in.ApprovalID)
 	if err != nil {
 		return mcpToolError(err), SessionCloseResult{}, nil
 	}
@@ -288,4 +301,14 @@ func (a *Adapter) SessionClose(ctx context.Context, _ *mcp.CallToolRequest, in S
 		Session:       resp.Session,
 		Receipt:       resp.Receipt,
 	}, nil
+}
+
+func validateApprovalID(id string) error {
+	if id == "" {
+		return nil
+	}
+	if err := domain.ValidateApprovalID(id); err != nil {
+		return NewInputError("invalid approval_id")
+	}
+	return nil
 }

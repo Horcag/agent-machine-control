@@ -11,6 +11,7 @@ type SessionOpenInput struct {
 	Reason         string `json:"reason" jsonschema:"Reason for opening terminal session"`
 	IdempotencyKey string `json:"idempotency_key" jsonschema:"Idempotency key"`
 	Timeout        string `json:"timeout" jsonschema:"Operation timeout (e.g. 30s, 5m)"`
+	ApprovalID     string `json:"approval_id,omitempty" jsonschema:"Server-issued approval reference for destructive or privileged execution"`
 	Cols           uint16 `json:"cols,omitempty" jsonschema:"Terminal columns (20-500, default 80)"`
 	Rows           uint16 `json:"rows,omitempty" jsonschema:"Terminal rows (5-200, default 24)"`
 	Term           string `json:"term,omitempty" jsonschema:"Terminal emulation type (default xterm-256color)"`
@@ -47,6 +48,7 @@ type SessionWriteInput struct {
 	Reason         string `json:"reason" jsonschema:"Reason for writing data"`
 	IdempotencyKey string `json:"idempotency_key" jsonschema:"Idempotency key"`
 	Timeout        string `json:"timeout" jsonschema:"Operation timeout (e.g. 30s, 5m)"`
+	ApprovalID     string `json:"approval_id,omitempty" jsonschema:"Server-issued approval reference for destructive or privileged execution"`
 }
 
 type SessionWriteResult struct {
@@ -61,6 +63,7 @@ type SessionControlInput struct {
 	Reason         string `json:"reason" jsonschema:"Reason for control keystroke"`
 	IdempotencyKey string `json:"idempotency_key" jsonschema:"Idempotency key"`
 	Timeout        string `json:"timeout" jsonschema:"Operation timeout (e.g. 30s, 5m)"`
+	ApprovalID     string `json:"approval_id,omitempty" jsonschema:"Server-issued approval reference for destructive or privileged execution"`
 }
 
 type SessionControlResult struct {
@@ -111,7 +114,8 @@ type SessionCloseInput struct {
 	Reason         string `json:"reason" jsonschema:"Reason for closing session"`
 	IdempotencyKey string `json:"idempotency_key" jsonschema:"Idempotency key"`
 	Timeout        string `json:"timeout" jsonschema:"Operation timeout (e.g. 30s, 5m)"`
-	Force          bool   `json:"force,omitempty" jsonschema:"Force close immediately"`
+	ApprovalID     string `json:"approval_id,omitempty" jsonschema:"Server-issued approval reference for destructive or privileged execution"`
+	Force          bool   `json:"force,omitempty" jsonschema:"Request immediate best-effort close; incomplete cleanup remains closing"`
 }
 
 type SessionCloseResult struct {

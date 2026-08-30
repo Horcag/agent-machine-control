@@ -53,7 +53,7 @@ func (s *SessionService) OpenSession(ctx context.Context, params SessionOpenPara
 	op, cols, rows, term := buildOpenOperation(params, deadline)
 	flightKey := fmt.Sprintf("%s:%s:%s", params.Caller.EffectiveActor, params.Target, params.IdempotencyKey)
 
-	result, rcpt, err := s.coordinateSessionMutation(ctx, op, flightKey, params.Approval, timeout, func(execCtx context.Context) (sessionMutationResult, error) {
+	result, rcpt, err := s.coordinateSessionMutation(ctx, op, flightKey, params.Approval, params.ApprovalID, timeout, func(execCtx context.Context) (sessionMutationResult, error) {
 		observed, err := s.sessionMgr.Open(execCtx, op, cols, rows, term)
 		result := sessionMutationResult{Observation: observed, EffectApplied: observed != nil}
 		var openFailure *sessions.OpenFailure

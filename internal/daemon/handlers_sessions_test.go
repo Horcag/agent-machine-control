@@ -466,6 +466,7 @@ func TestDaemonSessions_MapSessionErrorUnit(t *testing.T) {
 		{err: domain.ErrMissingHostKeyPin, wantStatus: http.StatusBadGateway},
 		{err: domain.ErrNonCanonicalParameter, wantStatus: http.StatusBadRequest},
 		{err: domain.ErrInvalidTerminalType, wantStatus: http.StatusBadRequest},
+		{err: domain.ErrInvalidApprovalRecord, wantStatus: http.StatusBadRequest},
 		{err: errors.New("unknown error"), wantStatus: http.StatusInternalServerError},
 	}
 

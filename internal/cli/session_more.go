@@ -154,7 +154,7 @@ func runSessionClose(ctx context.Context, cl *client.Client, args []string, stdo
 	fs.StringVar(&reason, "reason", "CLI user session close", "Reason for closing session")
 	fs.StringVar(&idemKey, "idempotency-key", "", "Idempotency key")
 	fs.StringVar(&approvalFile, "approval-file", "", "Path to operator approval JSON file")
-	fs.BoolVar(&force, "force", false, "Force terminate immediately")
+	fs.BoolVar(&force, "force", false, "Request immediate best-effort close; incomplete cleanup remains closing")
 	fs.BoolVar(&jsonOutput, "json", false, "Output JSON format")
 
 	if err := fs.Parse(flagArgs); err != nil {

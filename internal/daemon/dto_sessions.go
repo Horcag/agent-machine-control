@@ -87,6 +87,7 @@ type SessionOpenRequest struct {
 	Term           string           `json:"term,omitempty"`
 	TimeoutSeconds int64            `json:"timeout_seconds,omitempty"`
 	TimeoutMillis  int64            `json:"timeout_ms,omitempty"`
+	ApprovalID     string           `json:"approval_id,omitempty"`
 	Approval       *domain.Approval `json:"approval,omitempty"`
 }
 
@@ -116,6 +117,7 @@ type SessionWriteRequest struct {
 	IdempotencyKey string           `json:"idempotency_key"`
 	TimeoutSeconds int64            `json:"timeout_seconds,omitempty"`
 	TimeoutMillis  int64            `json:"timeout_ms,omitempty"`
+	ApprovalID     string           `json:"approval_id,omitempty"`
 	Approval       *domain.Approval `json:"approval,omitempty"`
 }
 
@@ -133,6 +135,7 @@ type SessionControlRequest struct {
 	IdempotencyKey string           `json:"idempotency_key"`
 	TimeoutSeconds int64            `json:"timeout_seconds,omitempty"`
 	TimeoutMillis  int64            `json:"timeout_ms,omitempty"`
+	ApprovalID     string           `json:"approval_id,omitempty"`
 	Approval       *domain.Approval `json:"approval,omitempty"`
 }
 
@@ -171,12 +174,14 @@ type SessionListResponse struct {
 
 // SessionCloseRequest payload for POST /v1/sessions/{id}/close.
 type SessionCloseRequest struct {
-	Reason         string           `json:"reason"`
-	IdempotencyKey string           `json:"idempotency_key"`
-	TimeoutSeconds int64            `json:"timeout_seconds,omitempty"`
-	TimeoutMillis  int64            `json:"timeout_ms,omitempty"`
-	Force          bool             `json:"force,omitempty"`
-	Approval       *domain.Approval `json:"approval,omitempty"`
+	Reason         string `json:"reason"`
+	IdempotencyKey string `json:"idempotency_key"`
+	TimeoutSeconds int64  `json:"timeout_seconds,omitempty"`
+	TimeoutMillis  int64  `json:"timeout_ms,omitempty"`
+	// Force requests immediate best-effort close; incomplete cleanup remains closing.
+	Force      bool             `json:"force,omitempty"`
+	ApprovalID string           `json:"approval_id,omitempty"`
+	Approval   *domain.Approval `json:"approval,omitempty"`
 }
 
 // SessionCloseResponse payload returned by POST /v1/sessions/{id}/close.

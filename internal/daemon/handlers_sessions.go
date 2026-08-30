@@ -143,6 +143,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		Cols:           req.Cols,
 		Rows:           req.Rows,
 		Term:           req.Term,
+		ApprovalID:     req.ApprovalID,
 		Approval:       req.Approval,
 	})
 	if err != nil {
