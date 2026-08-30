@@ -66,11 +66,12 @@ func (m *Manager) acquireTransitionLock(ctx context.Context, lockDir, ownerPath,
 }
 
 func (m *Manager) tryCreateTransitionLock(ctx context.Context, lockDir, ownerPath, runtimeID string, pid int, startTime string, now time.Time) (bool, error) {
-	if err := os.Mkdir(lockDir, 0700); err != nil {
-		if os.IsExist(err) {
-			return false, nil
-		}
+	created, err := createTransitionLockDir(lockDir)
+	if err != nil {
 		return false, fmt.Errorf("failed to create lock directory %q: %w", lockDir, err)
+	}
+	if !created {
+		return false, nil
 	}
 	if err := ctx.Err(); err != nil {
 		return false, errors.Join(err, m.removeOwnedPath(lockDir))
