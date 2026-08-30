@@ -98,6 +98,11 @@ receipt handling. `amc --direct` keeps an independent in-process recovery path w
 application contracts and shared host coordination. Persistent SSH/PTTY sessions require `amcd`;
 they do not make guest sidecars authoritative for policy, identity, approval, or audit truth.
 
+`amcd bootstrap ensure|status|start|stop|remove` manages the single current-user S4U Limited
+Scheduled Task that starts local WSL `amcd` automatically. It fingerprints the exact principal,
+logon trigger, settings, action, wrapper, metadata, binary, state directory, and process identity;
+drift is refused rather than repaired. See [Automatic local amcd bootstrap](docs/amcd-bootstrap.md).
+
 ### Current release backlog
 
 Hyper-V console framebuffer capture and synthetic input, the optional Windows UIA sidecar, the
@@ -125,6 +130,7 @@ The public API and command surface are not stable before `v0.1.0`.
 - [Development guide](docs/development.md)
 - [Quality system](docs/quality.md)
 - [Testing strategy](docs/testing.md)
+- [Automatic local amcd bootstrap](docs/amcd-bootstrap.md)
 - [Autonomous and parallel agent workflow](docs/agent-workflow.md)
 - [Recommended repository settings](docs/repository-settings.md)
 - [Open-source baseline research](docs/research/open-source-baseline.md)

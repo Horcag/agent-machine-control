@@ -47,6 +47,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return statusDaemon(args[1:], stdout, stderr)
 	case "stop":
 		return stopDaemon(args[1:], stdout, stderr)
+	case "bootstrap":
+		return runBootstrap(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "amcd: unknown command %q\n", args[0])
 		return ExitUsage
@@ -219,6 +221,7 @@ func printDaemonUsage(w io.Writer) {
 	fmt.Fprintln(w, "  run     Run the daemon in foreground")
 	fmt.Fprintln(w, "  status  Query running daemon status")
 	fmt.Fprintln(w, "  stop    Stop running daemon")
+	fmt.Fprintln(w, "  bootstrap  Manage the owned current-user S4U daemon task")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Flags:")
 	fmt.Fprintln(w, "  --state-dir <path>  Override state directory path")
