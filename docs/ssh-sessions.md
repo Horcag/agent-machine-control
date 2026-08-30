@@ -74,12 +74,18 @@ zeroing its in-memory buffer after protection.
 - **ConPTY Emulation**: Windows OpenSSH allocates pseudo-terminals via the Windows ConPTY API. Output streams may contain ANSI escape sequences and UTF-8 multi-byte characters.
 - **Linux Verification Boundary**: Note that Windows OpenSSH and ConPTY behaviors remain unverified on Linux hosts; on Linux, tests and verification utilize synthetic SSH server harnesses.
 - **Sanitization & Stream Cleansing**:
-  - Raw SSH output chunks are sanitized before buffering. Malicious or dangerous escape sequences (such as OSC 52 clipboard hijacking) are stripped.
+  - Raw SSH output chunks pass through a streaming allowlist parser before buffering. It preserves
+    valid UTF-8 text plus tab, carriage return, and newline, and strips all terminal escape
+    sequences, including CSI, OSC, DCS, APC, PM, SOS, and 7-bit or 8-bit C1 controls. Styling is
+    intentionally removed rather than allowing an SGR subset.
   - Multi-byte UTF-8 sequences split across network packet boundaries are held in a pending buffer and reassembled before emission to prevent corrupted unicode runes.
-  - Redaction state spans arbitrary transport chunks for OSC/CSI sequences, private-key blocks,
-    bearer/password/token forms, configured bounded regexes, and server-owned exact active-secret
-    values. Exact secret bytes exist only in process memory and are never serialized into machine
-    configuration, receipts, audit, journals, errors, or fixtures.
+  - Unterminated or malformed terminal controls fail closed with constant parser state; attacker
+    payloads are not retained. Redaction state separately spans arbitrary transport chunks for
+    private-key blocks, bearer/password/token forms, configured bounded regexes, and server-owned
+    exact active-secret values. Exact secret bytes exist only in process memory and are never
+    serialized into machine configuration, receipts, audit, journals, errors, or fixtures.
+  - CLI `session read`, `session wait`, and `session attach` reapply the same parser before writing
+    human or JSON output, so a malformed daemon response cannot directly inject terminal controls.
 
 ---
 

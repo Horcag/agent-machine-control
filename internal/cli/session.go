@@ -13,6 +13,7 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/client"
 	"github.com/Horcag/agent-machine-control/internal/daemon"
 	"github.com/Horcag/agent-machine-control/internal/domain"
+	guestssh "github.com/Horcag/agent-machine-control/internal/guest/ssh"
 )
 
 type sessionSubcommandRunner func(ctx context.Context, cl *client.Client, args []string, stdout, stderr io.Writer) int
@@ -178,15 +179,14 @@ func runSessionRead(ctx context.Context, cl *client.Client, args []string, stdou
 	if err != nil {
 		return mapClientError(err, stderr, "session read")
 	}
+	clean := sanitizeSessionChunks(resp.Chunks, guestssh.NewStreamSanitizer(guestssh.SanitizerConfig{}), true)
 
 	if jsonOutput {
 		_ = json.NewEncoder(stdout).Encode(resp)
 		return ExitSuccess
 	}
 
-	for _, c := range resp.Chunks {
-		fmt.Fprint(stdout, c.Data)
-	}
+	fmt.Fprint(stdout, clean)
 	return ExitSuccess
 }
 

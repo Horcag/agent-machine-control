@@ -9,9 +9,6 @@ import (
 )
 
 var (
-	// Matches OSC (Operating System Command) escape sequences: ESC ] ... (BEL | ESC \)
-	oscPattern = regexp.MustCompile(`\x1b\][^\x07\x1b]*(\x07|\x1b\\)`)
-
 	// Sensitive text patterns for conservative redaction.
 	privateKeyPattern = regexp.MustCompile(`-----BEGIN [A-Z0-9 ]+ PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]+ PRIVATE KEY-----`)
 	bearerPattern     = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9\-\._~\+\/]+=*`)
@@ -29,7 +26,6 @@ type sanitizerDropMode uint8
 const (
 	dropNone sanitizerDropMode = iota
 	dropUntilLine
-	dropUntilOSC
 	dropUntilFlush
 )
 
@@ -53,6 +49,7 @@ type StreamSanitizer struct {
 	secrets  [][]byte
 	patterns []RedactionPattern
 	dropping sanitizerDropMode
+	terminal terminalFilter
 }
 
 // NewStreamSanitizer creates an isolated stateful sanitizer. Secret bytes are copied.
@@ -81,13 +78,15 @@ func (s *StreamSanitizer) Push(raw []byte) string {
 		}
 		raw = rest
 	}
-	data := append(append([]byte(nil), s.pending...), raw...)
+	filtered := s.terminal.Push(raw)
+	if filtered == "" {
+		return ""
+	}
+	data := append(append([]byte(nil), s.pending...), filtered...)
 	s.pending = nil
-	complete, utf8Tail := splitIncompleteUTF8(data)
-	text := strings.ToValidUTF8(string(complete), "\uFFFD")
+	text := string(data)
 	cut := s.safeCut(text)
 	s.pending = append(s.pending, []byte(text[cut:])...)
-	s.pending = append(s.pending, utf8Tail...)
 	output := s.redactComplete(text[:cut])
 	if len(s.pending) > maxSanitizerPendingBytes {
 		s.dropping = dropModeForTail(text[cut:])
@@ -101,14 +100,14 @@ func (s *StreamSanitizer) Push(raw []byte) string {
 func (s *StreamSanitizer) RetainedBytes() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return len(s.pending)
+	return len(s.pending) + s.terminal.RetainedBytes()
 }
 
 // Flush emits sanitized terminal suffix data and clears all secret-bearing state.
 func (s *StreamSanitizer) Flush() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	text := strings.ToValidUTF8(string(s.pending), "\uFFFD")
+	text := string(s.pending) + s.terminal.Flush()
 	s.pending = nil
 	s.dropping = dropNone
 	text = redactIncompleteStructures(text)
@@ -119,9 +118,6 @@ func (s *StreamSanitizer) Flush() string {
 
 func dropModeForTail(tail string) sanitizerDropMode {
 	lower := strings.ToLower(tail)
-	if strings.HasPrefix(tail, "\x1b]") {
-		return dropUntilOSC
-	}
 	if strings.HasPrefix(lower, "-----begin ") && strings.Contains(lower, "private key-----") {
 		return dropUntilFlush
 	}
@@ -134,15 +130,6 @@ func (s *StreamSanitizer) consumeDropped(raw []byte) []byte {
 		if i := bytes.IndexAny(raw, "\r\n"); i >= 0 {
 			s.dropping = dropNone
 			return raw[i+1:]
-		}
-	case dropUntilOSC:
-		if _, rest, found := bytes.Cut(raw, []byte{'\a'}); found {
-			s.dropping = dropNone
-			return rest
-		}
-		if i := bytes.Index(raw, []byte{'\x1b', '\\'}); i >= 0 {
-			s.dropping = dropNone
-			return raw[i+2:]
 		}
 	case dropUntilFlush:
 		return nil
@@ -163,12 +150,11 @@ func (s *StreamSanitizer) safeCut(text string) int {
 	cut := len(text)
 	lower := strings.ToLower(text)
 	cut = minCut(cut, incompleteStructureStart(text, lower))
-	cut = minCut(cut, incompleteEscapeStart(text))
 	cut = cutForLiteralPrefixes(text, cut)
 	cut = s.cutForSecretPrefixes(text, cut)
 	cut = s.cutForConfiguredTail(text, cut)
 	cut = s.cutForExactSecretMatches(text, cut)
-	cut = cutForPatternMatches(text, cut, []*regexp.Regexp{oscPattern, privateKeyPattern, bearerPattern, passwordPattern, tokenPattern})
+	cut = cutForPatternMatches(text, cut, []*regexp.Regexp{privateKeyPattern, bearerPattern, passwordPattern, tokenPattern})
 	for _, configured := range s.patterns {
 		cut = cutForPatternMatches(text, cut, []*regexp.Regexp{configured.Pattern})
 	}
@@ -176,7 +162,7 @@ func (s *StreamSanitizer) safeCut(text string) int {
 }
 
 func cutForLiteralPrefixes(text string, cut int) int {
-	for _, prefix := range []string{"\x1b]", "-----begin", "bearer ", "password=", "password:", "token=", "token:"} {
+	for _, prefix := range []string{"-----begin", "bearer ", "password=", "password:", "token=", "token:"} {
 		for n := 1; n < len(prefix) && n <= len(text); n++ {
 			if strings.EqualFold(text[len(text)-n:], prefix[:n]) {
 				cut = minCut(cut, len(text)-n)
@@ -249,12 +235,6 @@ func minCut(current, candidate int) int {
 }
 
 func incompleteStructureStart(text, lower string) int {
-	if start := strings.LastIndex(text, "\x1b]"); start >= 0 {
-		tail := text[start+2:]
-		if !strings.Contains(tail, "\x07") && !strings.Contains(tail, "\x1b\\") {
-			return start
-		}
-	}
 	if start := strings.LastIndex(lower, "-----begin "); start >= 0 {
 		tail := lower[start:]
 		headerRemainder := tail[len("-----begin "):]
@@ -291,24 +271,8 @@ func sensitiveAssignmentPrefix(word, tail string) bool {
 	return !strings.ContainsAny(value, " \t")
 }
 
-func incompleteEscapeStart(text string) int {
-	start := strings.LastIndexByte(text, 0x1b)
-	if start < 0 || start+1 >= len(text) {
-		return start
-	}
-	if text[start+1] != '[' {
-		return -1
-	}
-	for i := start + 2; i < len(text); i++ {
-		if text[i] >= 0x40 && text[i] <= 0x7e {
-			return -1
-		}
-	}
-	return start
-}
-
 func (s *StreamSanitizer) redactComplete(text string) string {
-	text = sanitizeCompleteText(text)
+	text = RedactSensitiveText(text)
 	for _, secret := range s.secrets {
 		text = strings.ReplaceAll(text, string(secret), "[REDACTED]")
 	}
@@ -322,20 +286,10 @@ func (s *StreamSanitizer) redactComplete(text string) string {
 
 func redactIncompleteStructures(text string) string {
 	lower := strings.ToLower(text)
-	if start := strings.LastIndex(text, "\x1b]"); start >= 0 {
-		text = text[:start]
-		lower = strings.ToLower(text)
-	}
 	if start := strings.LastIndex(lower, "-----begin "); start >= 0 && strings.Contains(lower[start:], "private key-----") && !strings.Contains(lower[start:], "-----end ") {
 		text = text[:start] + "[REDACTED PRIVATE KEY]"
 	}
 	return text
-}
-
-func sanitizeCompleteText(text string) string {
-	text = oscPattern.ReplaceAllString(text, "")
-	text = stripUnsafeControlChars(text)
-	return RedactSensitiveText(text)
 }
 
 // SanitizeTerminalOutput filters dangerous escape sequences, resolves UTF-8 boundaries,
@@ -359,9 +313,9 @@ func SanitizeTerminalOutput(raw []byte, pendingBuf *[]byte) string {
 		*pendingBuf = incomplete
 	}
 
-	// 2. Decode valid UTF-8 string with replacement for corrupt bytes
-	cleanStr := strings.ToValidUTF8(string(data), "\uFFFD")
-	return sanitizeCompleteText(cleanStr)
+	// 2. Parse raw bytes before UTF-8 normalization so 8-bit C1 controls cannot
+	// be converted to printable replacement characters ahead of the parser.
+	return RedactSensitiveText(filterTerminalOutput(data))
 }
 
 func splitIncompleteUTF8(data []byte) ([]byte, []byte) {
@@ -381,37 +335,6 @@ func splitIncompleteUTF8(data []byte) ([]byte, []byte) {
 		}
 	}
 	return data, nil
-}
-
-func stripUnsafeControlChars(s string) string {
-	var buf strings.Builder
-	buf.Grow(len(s))
-
-	for i := 0; i < len(s); {
-		r, size := utf8.DecodeRuneInString(s[i:])
-		i += size
-
-		// Check for CSI ANSI escape sequence starting with ESC [
-		if r == 0x1b && i < len(s) && s[i] == '[' {
-			buf.WriteRune(r)
-			continue
-		}
-
-		// Preserve standard whitespace
-		if r == '\n' || r == '\r' || r == '\t' {
-			buf.WriteRune(r)
-			continue
-		}
-
-		// Strip C0 control characters (0x00..0x1F except \n, \r, \t, and ESC) and DEL (0x7F)
-		if (r < 0x20 && r != 0x1b) || r == 0x7f {
-			continue
-		}
-
-		buf.WriteRune(r)
-	}
-
-	return buf.String()
 }
 
 // RedactSensitiveText redacts known private key blocks, bearer tokens, and credentials.
@@ -443,22 +366,5 @@ func RedactSensitiveText(text string) string {
 
 // StripANSI removes all ANSI escape sequences for pure plain-text extraction.
 func StripANSI(text string) string {
-	var buf bytes.Buffer
-	inEscape := false
-
-	for i := 0; i < len(text); i++ {
-		b := text[i]
-		if b == 0x1b {
-			inEscape = true
-			continue
-		}
-		if inEscape {
-			if (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || b == '~' {
-				inEscape = false
-			}
-			continue
-		}
-		buf.WriteByte(b)
-	}
-	return buf.String()
+	return filterTerminalOutput([]byte(text))
 }

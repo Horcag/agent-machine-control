@@ -13,6 +13,7 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/client"
 	"github.com/Horcag/agent-machine-control/internal/daemon"
 	"github.com/Horcag/agent-machine-control/internal/domain"
+	guestssh "github.com/Horcag/agent-machine-control/internal/guest/ssh"
 )
 
 func runSessionWait(ctx context.Context, cl *client.Client, args []string, stdout, stderr io.Writer) int {
@@ -53,15 +54,14 @@ func runSessionWait(ctx context.Context, cl *client.Client, args []string, stdou
 	if err != nil {
 		return mapClientError(err, stderr, "session wait")
 	}
+	clean := sanitizeSessionChunks(resp.Chunks, guestssh.NewStreamSanitizer(guestssh.SanitizerConfig{}), true)
 
 	if jsonOutput {
 		_ = json.NewEncoder(stdout).Encode(resp)
 		return ExitSuccess
 	}
 
-	for _, c := range resp.Chunks {
-		fmt.Fprint(stdout, c.Data)
-	}
+	fmt.Fprint(stdout, clean)
 	return ExitSuccess
 }
 
@@ -204,9 +204,11 @@ func runSessionAttach(ctx context.Context, cl *client.Client, args []string, std
 
 	// Read loop with settle
 	afterSeq := uint64(0)
+	sanitizer := guestssh.NewStreamSanitizer(guestssh.SanitizerConfig{})
 	for {
 		select {
 		case <-ctx.Done():
+			fmt.Fprint(stdout, sanitizer.Flush())
 			return ExitSuccess
 		default:
 		}
@@ -214,15 +216,14 @@ func runSessionAttach(ctx context.Context, cl *client.Client, args []string, std
 		resp, err := cl.ReadSession(ctx, sessID, afterSeq, 64*1024, 2*time.Second)
 		if err != nil {
 			if errors.Is(err, client.ErrNotFound) || errors.Is(err, domain.ErrSessionClosed) {
+				fmt.Fprint(stdout, sanitizer.Flush())
 				return ExitSuccess
 			}
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
 
-		for _, c := range resp.Chunks {
-			fmt.Fprint(stdout, c.Data)
-		}
+		fmt.Fprint(stdout, sanitizeSessionChunks(resp.Chunks, sanitizer, resp.Closed))
 		afterSeq = resp.NextSeq
 
 		if resp.Closed {

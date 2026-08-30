@@ -53,11 +53,11 @@ func TestStreamSanitizer_RedactsEveryChunkBoundary(t *testing.T) {
 	}
 }
 
-func TestStreamSanitizer_PreservesSplitCSIAndFlushesIncompleteSensitiveForms(t *testing.T) {
+func TestStreamSanitizer_StripsSplitCSIAndFlushesIncompleteSensitiveForms(t *testing.T) {
 	input := "\x1b[31mred\x1b[0m"
 	for split := 0; split <= len(input); split++ {
-		if out := sanitizeAtBoundary(input, split, ssh.SanitizerConfig{}); out != input {
-			t.Fatalf("CSI changed at split boundary %d", split)
+		if out := sanitizeAtBoundary(input, split, ssh.SanitizerConfig{}); out != "red" {
+			t.Fatalf("CSI survived split boundary %d: %q", split, out)
 		}
 	}
 
@@ -71,13 +71,14 @@ func TestStreamSanitizer_PreservesSplitCSIAndFlushesIncompleteSensitiveForms(t *
 
 func TestStreamSanitizer_AdversarialStreamsRetainBoundedState(t *testing.T) {
 	tests := []struct {
-		name   string
-		prefix string
-		cfg    ssh.SanitizerConfig
+		name        string
+		prefix      string
+		cfg         ssh.SanitizerConfig
+		wantMarkers int
 	}{
-		{name: "unterminated bearer", prefix: "Bearer "},
+		{name: "unterminated bearer", prefix: "Bearer ", wantMarkers: 1},
 		{name: "unterminated OSC", prefix: "\x1b]52;c;"},
-		{name: "configured matcher", prefix: "CFG-", cfg: ssh.SanitizerConfig{Patterns: []ssh.RedactionPattern{{Pattern: regexp.MustCompile(`CFG-[A]+`), MaxMatchBytes: 4 << 20}}}},
+		{name: "configured matcher", prefix: "CFG-", cfg: ssh.SanitizerConfig{Patterns: []ssh.RedactionPattern{{Pattern: regexp.MustCompile(`CFG-[A]+`), MaxMatchBytes: 4 << 20}}}, wantMarkers: 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -93,8 +94,8 @@ func TestStreamSanitizer_AdversarialStreamsRetainBoundedState(t *testing.T) {
 			if strings.Contains(output, strings.Repeat("A", 4096)) {
 				t.Fatal("attacker-controlled sensitive run was emitted")
 			}
-			if strings.Count(output, "[REDACTED TRUNCATED]") != 1 {
-				t.Fatalf("overflow markers = %d, want 1", strings.Count(output, "[REDACTED TRUNCATED]"))
+			if markers := strings.Count(output, "[REDACTED TRUNCATED]"); markers != tt.wantMarkers {
+				t.Fatalf("overflow markers = %d, want %d", markers, tt.wantMarkers)
 			}
 		})
 	}
