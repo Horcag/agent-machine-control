@@ -22,11 +22,41 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/statedir"
 )
 
-type effectTruthTransport struct{ channel guestssh.Channel }
+type effectTruthTransport struct {
+	channel   guestssh.Channel
+	dialCalls *atomic.Int32
+}
 
 func (t effectTruthTransport) Dial(context.Context, domain.MachineRef, uint16, uint16, string) (guestssh.Channel, error) {
+	if t.dialCalls != nil {
+		t.dialCalls.Add(1)
+	}
 	return t.channel, nil
 }
+
+type publicationEffectChannel struct {
+	done       chan struct{}
+	once       sync.Once
+	closeCalls atomic.Int32
+}
+
+func (c *publicationEffectChannel) Read([]byte) (int, error) { <-c.done; return 0, io.EOF }
+func (c *publicationEffectChannel) Write(_ context.Context, data []byte) (int, error) {
+	return len(data), nil
+}
+func (c *publicationEffectChannel) SendControl(context.Context, domain.ControlKey) (guestssh.ControlResult, error) {
+	return guestssh.ControlResult{AcceptedBytes: 1, EffectApplied: true}, nil
+}
+func (c *publicationEffectChannel) Resize(uint16, uint16) error { return nil }
+func (c *publicationEffectChannel) Close(context.Context) error {
+	c.closeCalls.Add(1)
+	c.once.Do(func() { close(c.done) })
+	return nil
+}
+func (c *publicationEffectChannel) LastCloseOutcome() guestssh.CloseOutcome {
+	return guestssh.CloseOutcome{Complete: c.closeCalls.Load() > 0}
+}
+func (c *publicationEffectChannel) Wait() (int, error) { <-c.done; return 0, nil }
 
 type acceptedControlCancelChannel struct {
 	done   chan struct{}
@@ -188,6 +218,110 @@ func assertFailedEffectReceipt(t *testing.T, receipt *domain.Receipt, checkpoint
 	}
 	if len(receipt.EvidenceRefs) != 1 || receipt.EvidenceRefs[0] != sessionID {
 		t.Fatalf("evidence_refs = %v, want session %q", receipt.EvidenceRefs, sessionID)
+	}
+}
+
+func assertCommittedOpenEvidence(
+	t *testing.T,
+	sd *statedir.StateDir,
+	manager *sessions.Manager,
+	actor domain.ActorContext,
+	receipts *receipt.Store,
+	audits *audit.Store,
+	params app.SessionOpenParams,
+	observed *domain.SessionObservation,
+	firstReceipt *domain.Receipt,
+) {
+	t.Helper()
+	assertFailedEffectReceipt(t, firstReceipt, "e4a523d4-6b99-4d62-a5e2-4752c0f20001", string(observed.ID))
+	reservation := mutationReservationByKey(t, filepath.Join(sd.SessionsDir(), "mutations"), params.IdempotencyKey)
+	if reservation.Result.EffectApplied == nil || !*reservation.Result.EffectApplied ||
+		reservation.Result.Observation == nil || reservation.Result.Observation.ID != observed.ID {
+		t.Fatalf("durable open result = %+v, want applied session observation", reservation.Result)
+	}
+	if _, err := os.Stat(filepath.Join(sd.SessionsDir(), string(observed.ID)+".json")); err != nil {
+		t.Fatalf("canonical session file is not visible: %v", err)
+	}
+	if loaded, err := manager.Get(t.Context(), observed.ID, actor); err != nil || loaded == nil || loaded.ID != observed.ID {
+		t.Fatalf("live manager observation = %+v err %v", loaded, err)
+	}
+	if stored, err := receipts.Get(string(firstReceipt.ReceiptID)); err != nil || stored.ReceiptID != firstReceipt.ReceiptID {
+		t.Fatalf("stored receipt = %+v err %v", stored, err)
+	}
+	if err := audits.VerifyTerminalOutcome(*firstReceipt); err != nil {
+		t.Fatalf("terminal audit evidence = %v", err)
+	}
+}
+
+func failFirstDirectorySync(syncErr error, calls *atomic.Int32) func(string) error {
+	return func(dir string) error {
+		if calls.Add(1) == 1 {
+			return syncErr
+		}
+		return statedir.SyncDir(dir)
+	}
+}
+
+func TestOpenPostCommitDirectorySyncFailurePreservesEffectAndExactRetryTruth(t *testing.T) {
+	sd, err := statedir.Resolve(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sd.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	channel := &publicationEffectChannel{done: make(chan struct{})}
+	var dialCalls atomic.Int32
+	var syncCalls atomic.Int32
+	syncErr := errors.New("synthetic post-rename directory sync failure")
+	manager := sessions.NewManager(
+		sd.SessionsDir(),
+		effectTruthTransport{channel: channel, dialCalls: &dialCalls},
+		time.Now,
+		sessions.WithSessionDirectorySync(failFirstDirectorySync(syncErr, &syncCalls)),
+	)
+	receipts := receipt.NewStore(sd.ReceiptsDir())
+	audits := audit.NewStore(sd.AuditDir())
+	svc := app.NewSessionService(
+		manager,
+		diagnosticReversibleSafety{},
+		nil,
+		audits,
+		receipts,
+		approval.NewStore(sd.ApprovalsDir()),
+	)
+	scopes := domain.NewScopeSet(domain.ScopeSessionOpen, domain.ScopeSessionRead, domain.ScopeSessionWrite, domain.ScopeSessionClose)
+	actor, err := domain.NewActorContext("agent:publication-truth", "agent:publication-truth", scopes, scopes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	params := app.SessionOpenParams{
+		Target: "c4a523d4-6b99-4d62-a5e2-4752c0f20001", Caller: actor,
+		Reason: "prove committed publication truth", IdempotencyKey: "publication-effect-truth",
+	}
+
+	observed, firstReceipt, firstErr := svc.OpenSession(context.Background(), params)
+	if observed == nil || !errors.Is(firstErr, syncErr) {
+		t.Fatalf("OpenSession = observation %+v receipt %+v error %v, want committed durability failure", observed, firstReceipt, firstErr)
+	}
+	assertCommittedOpenEvidence(t, sd, manager, actor, receipts, audits, params, observed, firstReceipt)
+
+	retryObservation, retryReceipt, retryErr := svc.OpenSession(context.Background(), params)
+	if retryErr == nil || retryObservation == nil || retryObservation.ID != observed.ID ||
+		retryReceipt == nil || retryReceipt.ReceiptID != firstReceipt.ReceiptID {
+		t.Fatalf("exact retry = observation %+v receipt %+v error %v", retryObservation, retryReceipt, retryErr)
+	}
+	if got := dialCalls.Load(); got != 1 {
+		t.Fatalf("dial calls after exact retry = %d, want 1", got)
+	}
+	if got := channel.closeCalls.Load(); got != 0 {
+		t.Fatalf("channel cleanup calls after committed failure = %d, want 0", got)
+	}
+	if got := syncCalls.Load(); got != 1 {
+		t.Fatalf("session persistence calls after exact retry = %d, want 1", got)
+	}
+	if _, err := manager.Close(context.Background(), observed.ID, actor, "test cleanup", false); err != nil {
+		t.Fatal(err)
 	}
 }
 

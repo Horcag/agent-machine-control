@@ -218,7 +218,7 @@ func (s *Store) Save(r domain.Receipt) error {
 		syncFn = statedir.SyncDir
 	}
 	if err := syncFn(s.dir); err != nil {
-		return fmt.Errorf("receipt: failed to sync directory %q: %w", s.dir, err)
+		return fmt.Errorf("receipt: receipt committed but failed to sync directory %q: %w", s.dir, err)
 	}
 
 	return nil
@@ -306,9 +306,9 @@ func (s *Store) persistEnsuredReceiptContext(ctx context.Context, finalPath stri
 		syncFn = statedir.SyncDir
 	}
 	if err := syncFn(s.dir); err != nil {
-		return fmt.Errorf("receipt: failed to sync directory %q: %w", s.dir, err)
+		return fmt.Errorf("receipt: receipt committed but failed to sync directory %q: %w", s.dir, err)
 	}
-	return ctx.Err()
+	return nil
 }
 
 func lockReceiptStoreContext(ctx context.Context, mu *sync.RWMutex) error {

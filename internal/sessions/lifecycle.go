@@ -104,7 +104,7 @@ func (m *Manager) finalizeSession(
 	if terminal {
 		s.closeOnce.Do(func() { close(s.closedCh) })
 	}
-	persistErr := m.persistSession(s)
+	persistErr := m.persistSession(s).Err
 	return &obs, errors.Join(terminalErr, persistErr)
 }
 

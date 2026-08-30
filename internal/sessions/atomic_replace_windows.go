@@ -6,8 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -21,124 +19,109 @@ type fileRenameInformation struct {
 }
 
 const fileRenameInfoExFlags = windows.FILE_RENAME_REPLACE_IF_EXISTS | windows.FILE_RENAME_POSIX_SEMANTICS
-const moveFileExFlags = windows.MOVEFILE_REPLACE_EXISTING | windows.MOVEFILE_WRITE_THROUGH
+const fileRenameSourceAccess = windows.DELETE | windows.SYNCHRONIZE | windows.GENERIC_WRITE
+const fileRenameSourceShare = windows.FILE_SHARE_READ | windows.FILE_SHARE_WRITE | windows.FILE_SHARE_DELETE
+const fileRenameSourceFlags = windows.FILE_ATTRIBUTE_NORMAL | windows.FILE_FLAG_OPEN_REPARSE_POINT | windows.FILE_FLAG_WRITE_THROUGH
 
 type windowsReplaceOperations struct {
-	targetExists    func(string) (bool, error)
-	moveAbsent      func(context.Context, string, string) error
-	replaceExisting func(context.Context, string, string) error
+	createFile         func(*uint16, uint32, uint32, *windows.SecurityAttributes, uint32, uint32, windows.Handle) (windows.Handle, error)
+	getFileInformation func(windows.Handle, *windows.ByHandleFileInformation) error
+	setFileInformation func(windows.Handle, uint32, *byte, uint32) error
+	flushFileBuffers   func(windows.Handle) error
+	closeHandle        func(windows.Handle) error
 }
 
 func prepareAtomicReplace(oldPath, newPath string) (atomicReplacement, error) {
 	return prepareAtomicReplaceWith(oldPath, newPath, windowsReplaceOperations{
-		targetExists:    validatedCanonicalTargetExists,
-		moveAbsent:      moveFileExReplace,
-		replaceExisting: fileRenameInfoExReplace,
+		createFile:         windows.CreateFile,
+		getFileInformation: windows.GetFileInformationByHandle,
+		setFileInformation: windows.SetFileInformationByHandle,
+		flushFileBuffers:   windows.FlushFileBuffers,
+		closeHandle:        windows.CloseHandle,
 	})
 }
 
 func syncSessionDirectory(string) error {
-	// Windows cannot flush directory handles. Each selected replacement primitive
-	// owns its durability contract, so no fallible work follows a successful commit.
+	// The source handle is opened write-through and flushed after the rename.
+	// Windows does not expose a supported directory-handle flush equivalent.
 	return nil
 }
 
 func prepareAtomicReplaceWith(oldPath, newPath string, operations windowsReplaceOperations) (atomicReplacement, error) {
-	exists, err := operations.targetExists(newPath)
-	if err != nil {
-		return nil, err
+	if operations.createFile == nil || operations.getFileInformation == nil || operations.setFileInformation == nil ||
+		operations.flushFileBuffers == nil || operations.closeHandle == nil {
+		return nil, errors.New("sessions: incomplete Windows replacement operations")
 	}
-	if !exists {
-		return func(ctx context.Context) error {
-			return operations.moveAbsent(ctx, oldPath, newPath)
-		}, nil
-	}
-	return func(ctx context.Context) error {
-		return operations.replaceExisting(ctx, oldPath, newPath)
+	return func(ctx context.Context) publicationResult {
+		return fileRenameInfoExReplaceWith(ctx, oldPath, newPath, operations)
 	}, nil
 }
 
-func validatedCanonicalTargetExists(path string) (bool, error) {
-	file, err := openSessionStateFileOnce(filepath.Dir(path), filepath.Base(path))
-	if errors.Is(err, os.ErrNotExist) || errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_PATH_NOT_FOUND) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("sessions: validate existing canonical target: %w", err)
-	}
-	if err := file.Close(); err != nil {
-		return false, fmt.Errorf("sessions: close validated canonical target: %w", err)
-	}
-	return true, nil
-}
-
-func moveFileExReplace(ctx context.Context, oldPath, newPath string) error {
+func fileRenameInfoExReplaceWith(ctx context.Context, oldPath, newPath string, operations windowsReplaceOperations) publicationResult {
 	oldPath16, err := windows.UTF16PtrFromString(oldPath)
 	if err != nil {
-		return fmt.Errorf("sessions: MoveFileEx source path: %w", err)
-	}
-	newPath16, err := windows.UTF16PtrFromString(newPath)
-	if err != nil {
-		return fmt.Errorf("sessions: MoveFileEx target path: %w", err)
+		return publicationResult{Err: fmt.Errorf("sessions: FileRenameInfoEx source path: %w", err)}
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return publicationResult{Err: err}
 	}
-	if err := windows.MoveFileEx(oldPath16, newPath16, moveFileExFlags); err != nil {
-		return fmt.Errorf("sessions: MoveFileEx commit: %w", err)
-	}
-	return nil
-}
-
-func fileRenameInfoExReplace(ctx context.Context, oldPath, newPath string) error {
-	oldPath16, err := windows.UTF16PtrFromString(oldPath)
-	if err != nil {
-		return fmt.Errorf("sessions: FileRenameInfoEx source path: %w", err)
-	}
-	handle, err := windows.CreateFile(
+	handle, err := operations.createFile(
 		oldPath16,
-		windows.DELETE|windows.SYNCHRONIZE,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		fileRenameSourceAccess,
+		fileRenameSourceShare,
 		nil,
 		windows.OPEN_EXISTING,
-		windows.FILE_ATTRIBUTE_NORMAL,
+		fileRenameSourceFlags,
 		0,
 	)
 	if err != nil {
-		return fmt.Errorf("sessions: open FileRenameInfoEx source: %w", err)
+		return publicationResult{Err: fmt.Errorf("sessions: open FileRenameInfoEx source: %w", err)}
+	}
+
+	closeBeforeCommit := func(commitErr error) publicationResult {
+		if closeErr := operations.closeHandle(handle); closeErr != nil {
+			commitErr = errors.Join(commitErr, fmt.Errorf("sessions: close FileRenameInfoEx source before commit: %w", closeErr))
+		}
+		return publicationResult{Err: commitErr}
+	}
+
+	var info windows.ByHandleFileInformation
+	if err := operations.getFileInformation(handle, &info); err != nil {
+		return closeBeforeCommit(fmt.Errorf("sessions: inspect FileRenameInfoEx source: %w", err))
+	}
+	if info.FileAttributes&(windows.FILE_ATTRIBUTE_DIRECTORY|windows.FILE_ATTRIBUTE_REPARSE_POINT) != 0 {
+		return closeBeforeCommit(errors.New("sessions: FileRenameInfoEx source must be a regular non-reparse file"))
 	}
 
 	newPath16, err := windows.UTF16FromString(newPath)
 	if err != nil {
-		_ = windows.CloseHandle(handle)
-		return fmt.Errorf("sessions: FileRenameInfoEx target path: %w", err)
+		return closeBeforeCommit(fmt.Errorf("sessions: FileRenameInfoEx target path: %w", err))
 	}
 	fileNameLength := len(newPath16)*2 - 2
 	var layout fileRenameInformation
-	bufferSize := int(unsafe.Offsetof(layout.FileName)) + fileNameLength
+	bufferSize := int(unsafe.Offsetof(layout.FileName)) + fileNameLength + 2
 	buffer := make([]byte, bufferSize)
-	info := (*fileRenameInformation)(unsafe.Pointer(&buffer[0]))
-	info.Flags = fileRenameInfoExFlags
-	info.FileNameLength = uint32(fileNameLength)
-	copy(unsafe.Slice(&info.FileName[0], len(newPath16)-1), newPath16[:len(newPath16)-1])
+	renameInfo := (*fileRenameInformation)(unsafe.Pointer(&buffer[0]))
+	renameInfo.Flags = fileRenameInfoExFlags
+	renameInfo.FileNameLength = uint32(fileNameLength)
+	copy(unsafe.Slice(&renameInfo.FileName[0], len(newPath16)), newPath16)
 
 	if err := ctx.Err(); err != nil {
-		_ = windows.CloseHandle(handle)
-		return err
+		return closeBeforeCommit(err)
 	}
-	renameErr := windows.SetFileInformationByHandle(handle, windows.FileRenameInfoEx, &buffer[0], uint32(bufferSize))
-	closeErr := windows.CloseHandle(handle)
-	if renameErr == nil {
-		// The replacement is committed once SetFileInformationByHandle succeeds.
-		// A later source-handle close anomaly cannot safely reclassify that effect.
-		_ = closeErr
-		return nil
+	if err := operations.setFileInformation(handle, windows.FileRenameInfoEx, &buffer[0], uint32(bufferSize)); err != nil {
+		return closeBeforeCommit(fmt.Errorf("sessions: FileRenameInfoEx commit: %w", err))
 	}
-	if closeErr != nil {
-		return errors.Join(
-			fmt.Errorf("sessions: FileRenameInfoEx commit: %w", renameErr),
-			fmt.Errorf("sessions: close FileRenameInfoEx source after failed commit: %w", closeErr),
-		)
+
+	// Successful SetFileInformationByHandle is the namespace commit point.
+	// Caller cancellation and handle-close anomalies cannot erase that effect.
+	if err := operations.flushFileBuffers(handle); err != nil {
+		_ = operations.closeHandle(handle)
+		return publicationResult{
+			Committed: true,
+			Err:       fmt.Errorf("sessions: FileRenameInfoEx committed but FlushFileBuffers failed: %w", err),
+		}
 	}
-	return fmt.Errorf("sessions: FileRenameInfoEx commit: %w", renameErr)
+	_ = operations.closeHandle(handle)
+	return publicationResult{Committed: true}
 }

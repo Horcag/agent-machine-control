@@ -255,19 +255,26 @@ func runFinalizingEnsureDeadlineCase(t *testing.T, name string, buildCut finaliz
 	before := atomic.LoadInt32(&h.transport.writeCalls)
 	entered := make(chan struct{})
 	blockedReceipts, blockedAudits := blocked(h, entered)
-	params.Timeout = 50 * time.Millisecond
-	started := time.Now()
-	_, rcpt, err := h.service(blockedReceipts, blockedAudits, nil).WriteSession(context.Background(), params)
-	if !errors.Is(err, context.DeadlineExceeded) || rcpt != nil {
-		t.Fatalf("blocked retry = receipt %v err %v", rcpt, err)
+	params.Timeout = time.Minute
+	ctx, cancel := context.WithCancel(context.Background())
+	type outcome struct {
+		rcpt *domain.Receipt
+		err  error
 	}
-	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
-		t.Fatalf("blocked retry exceeded deadline bound: %s", elapsed)
-	}
+	done := make(chan outcome, 1)
+	go func() {
+		_, rcpt, err := h.service(blockedReceipts, blockedAudits, nil).WriteSession(ctx, params)
+		done <- outcome{rcpt: rcpt, err: err}
+	}()
 	select {
 	case <-entered:
-	default:
+	case <-time.After(5 * time.Second):
 		t.Fatal("context-aware ensure hook was not entered")
+	}
+	cancel()
+	result := <-done
+	if !errors.Is(result.err, context.Canceled) || result.rcpt != nil {
+		t.Fatalf("blocked retry = receipt %v err %v", result.rcpt, result.err)
 	}
 	if got := atomic.LoadInt32(&h.transport.writeCalls); got != before {
 		t.Fatalf("blocked retry replayed transport: writes=%d before=%d", got, before)

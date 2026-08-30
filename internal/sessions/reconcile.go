@@ -11,6 +11,16 @@ import (
 )
 
 func reconcileSessionFile(ctx context.Context, sessionsDir string, id domain.SessionID, now time.Time) (*domain.SessionID, error) {
+	return reconcileSessionFileWithSync(ctx, sessionsDir, id, now, syncSessionDirectory)
+}
+
+func reconcileSessionFileWithSync(
+	ctx context.Context,
+	sessionsDir string,
+	id domain.SessionID,
+	now time.Time,
+	syncDir func(string) error,
+) (*domain.SessionID, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -35,8 +45,13 @@ func reconcileSessionFile(ctx context.Context, sessionsDir string, id domain.Ses
 	if err != nil {
 		return nil, err
 	}
-	if err := replaceSessionFileContext(ctx, filePath, updatedData); err != nil {
-		return nil, fmt.Errorf("sessions: failed to write session file %s: %w", filePath, err)
+	result := replaceSessionFileContextWithPreparer(ctx, filePath, updatedData, prepareAtomicReplace, syncDir)
+	if result.Err != nil {
+		err = fmt.Errorf("sessions: failed to write session file %s: %w", filePath, result.Err)
+		if result.Committed {
+			return &obs.ID, err
+		}
+		return nil, err
 	}
 
 	return &obs.ID, nil
@@ -70,11 +85,11 @@ func ReconcileCrashedSessions(ctx context.Context, sessionsDir string, now time.
 			continue
 		}
 		id, err := reconcileSessionFile(ctx, sessionsDir, candidateID, now)
-		if err != nil {
-			return reconciled, err
-		}
 		if id != nil {
 			reconciled = append(reconciled, *id)
+		}
+		if err != nil {
+			return reconciled, err
 		}
 	}
 

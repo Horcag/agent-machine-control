@@ -71,6 +71,11 @@ func WithEnsureHook(fn func(context.Context, Event) error) Option {
 	return func(s *Store) { s.ensureHook = fn }
 }
 
+// WithPostAppendHook injects a boundary after append and before durable file sync.
+func WithPostAppendHook(fn func()) Option {
+	return func(s *Store) { s.postAppendHook = fn }
+}
+
 // WithWritableHook injects a context-aware writability boundary for deterministic platform tests.
 func WithWritableHook(fn func(context.Context) error) Option {
 	return func(s *Store) { s.writableHook = fn }
@@ -92,6 +97,7 @@ type Store struct {
 	lockTimeout      time.Duration
 	appendHook       func(Event) error
 	ensureHook       func(context.Context, Event) error
+	postAppendHook   func()
 	writableHook     func(context.Context) error
 	removeFn         func(string) error
 }
@@ -342,25 +348,23 @@ func (s *Store) writeEventContext(ctx context.Context, event Event) error {
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrAuditUnavailable, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := f.Write(data); err != nil {
 		return fmt.Errorf("%w: %v", ErrAuditUnavailable, err)
 	}
-	if err := ctx.Err(); err != nil {
-		return err
+	if s.postAppendHook != nil {
+		s.postAppendHook()
 	}
 	if err := f.Sync(); err != nil {
-		return fmt.Errorf("%w: %v", ErrAuditUnavailable, err)
+		return fmt.Errorf("%w: audit event appended but file sync failed: %v", ErrAuditUnavailable, err)
 	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("%w: %v", ErrAuditUnavailable, err)
-	}
+	_ = f.Close()
 	syncFn := s.syncDirFn
 	if syncFn == nil {
 		syncFn = statedir.SyncDir
 	}
 	if err := syncFn(s.dir); err != nil {
-		return fmt.Errorf("%w: failed to sync audit directory %q: %v", ErrAuditUnavailable, s.dir, err)
+		return fmt.Errorf("%w: audit event appended but failed to sync directory %q: %v", ErrAuditUnavailable, s.dir, err)
 	}
-	return ctx.Err()
+	return nil
 }

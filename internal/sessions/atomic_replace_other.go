@@ -10,11 +10,14 @@ import (
 )
 
 func prepareAtomicReplace(oldPath, newPath string) (atomicReplacement, error) {
-	return func(ctx context.Context) error {
+	return func(ctx context.Context) publicationResult {
 		if err := ctx.Err(); err != nil {
-			return err
+			return publicationResult{Err: err}
 		}
-		return os.Rename(oldPath, newPath)
+		if err := os.Rename(oldPath, newPath); err != nil {
+			return publicationResult{Err: err}
+		}
+		return publicationResult{Committed: true}
 	}, nil
 }
 

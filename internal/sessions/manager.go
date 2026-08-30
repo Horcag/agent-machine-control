@@ -38,6 +38,7 @@ type Manager struct {
 	clock             func() time.Time
 	generateSessionID func() (domain.SessionID, error)
 	publishOpenHook   func() error
+	syncSessionDir    func(string) error
 	sessions          map[domain.SessionID]*Session
 	idempotency       map[string]domain.SessionID // key: actor:target:idempotencyKey -> SessionID
 	pendingCleanups   map[uint64]*pendingCleanup
@@ -71,6 +72,11 @@ func WithPublishOpenHook(hook func() error) ManagerOption {
 	return func(m *Manager) { m.publishOpenHook = hook }
 }
 
+// WithSessionDirectorySync injects the post-publication directory durability boundary for tests.
+func WithSessionDirectorySync(syncDir func(string) error) ManagerOption {
+	return func(m *Manager) { m.syncSessionDir = syncDir }
+}
+
 // NewManager constructs a SessionManager.
 func NewManager(sessionsDir string, transport guestssh.Transport, clock func() time.Time, opts ...ManagerOption) *Manager {
 	if clock == nil {
@@ -81,6 +87,7 @@ func NewManager(sessionsDir string, transport guestssh.Transport, clock func() t
 		transport:         transport,
 		clock:             clock,
 		generateSessionID: domain.GenerateSessionID,
+		syncSessionDir:    syncSessionDirectory,
 		sessions:          make(map[domain.SessionID]*Session),
 		idempotency:       make(map[string]domain.SessionID),
 		pendingCleanups:   make(map[uint64]*pendingCleanup),
@@ -157,25 +164,26 @@ func (m *Manager) findIdempotentOpen(idemKey, paramsFp string) (*domain.SessionO
 	return &obs, true, nil
 }
 
-func (m *Manager) publishOpenSession(session *Session, idemKey string) error {
+func (m *Manager) publishOpenSession(session *Session, idemKey string) publicationResult {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
-		return domain.ErrSessionManagerClosed
+		return publicationResult{Err: domain.ErrSessionManagerClosed}
 	}
 	if m.publishOpenHook != nil {
 		if err := m.publishOpenHook(); err != nil {
-			return err
+			return publicationResult{Err: err}
 		}
 	}
-	if err := m.persistSession(session); err != nil {
-		return err
+	result := m.persistSession(session)
+	if result.failedBeforeCommit() {
+		return result
 	}
 	m.sessions[session.obs.ID] = session
 	if idemKey != "" {
 		m.idempotency[idemKey] = session.obs.ID
 	}
-	return nil
+	return result
 }
 
 // Open establishes a new persistent SSH terminal session or returns an existing idempotent session.
@@ -249,8 +257,9 @@ func (m *Manager) Open(ctx context.Context, op domain.Operation, cols, rows uint
 	if op.IdempotencyKey != "" {
 		publishKey = idemKey
 	}
-	if err := m.publishOpenSession(session, publishKey); err != nil {
-		return nil, m.cleanupFailedOpen(ctx, channel, err)
+	publication := m.publishOpenSession(session, publishKey)
+	if publication.failedBeforeCommit() {
+		return nil, m.cleanupFailedOpen(ctx, channel, publication.Err)
 	}
 
 	// Start reader goroutine
@@ -259,7 +268,7 @@ func (m *Manager) Open(ctx context.Context, op domain.Operation, cols, rows uint
 	// Start exit waiter
 	go m.waitChannelExit(context.WithoutCancel(ctx), session)
 
-	return &obs, nil
+	return &obs, publication.Err
 }
 
 func (m *Manager) pumpChannelOutput(s *Session) {
@@ -369,7 +378,7 @@ func (m *Manager) Write(ctx context.Context, id domain.SessionID, caller domain.
 	s.obs.LastActivityAt = m.now()
 	s.mu.Unlock()
 
-	if pErr := m.persistSession(s); pErr != nil {
+	if pErr := m.persistSession(s).Err; pErr != nil {
 		return n, errors.Join(writeErr, pErr)
 	}
 	return n, writeErr
@@ -417,7 +426,7 @@ func (m *Manager) Control(ctx context.Context, id domain.SessionID, caller domai
 	s.mu.Lock()
 	s.obs.LastActivityAt = m.now()
 	s.mu.Unlock()
-	return result, errors.Join(controlErr, m.persistSession(s))
+	return result, errors.Join(controlErr, m.persistSession(s).Err)
 }
 
 // Close terminates the session and returns its final observation.

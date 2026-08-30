@@ -32,45 +32,122 @@ func TestFileRenameInformationExLayoutAndFlags(t *testing.T) {
 	if fileRenameInfoExFlags != wantFlags {
 		t.Fatalf("FileRenameInfoEx flags = %#x, want %#x", fileRenameInfoExFlags, wantFlags)
 	}
-	wantMoveFlags := uint32(windows.MOVEFILE_REPLACE_EXISTING | windows.MOVEFILE_WRITE_THROUGH)
-	if moveFileExFlags != wantMoveFlags {
-		t.Fatalf("MoveFileEx flags = %#x, want %#x", moveFileExFlags, wantMoveFlags)
+	if fileRenameSourceAccess != windows.DELETE|windows.SYNCHRONIZE|windows.GENERIC_WRITE {
+		t.Fatalf("source access = %#x", fileRenameSourceAccess)
+	}
+	if fileRenameSourceShare != windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE {
+		t.Fatalf("source share = %#x", fileRenameSourceShare)
+	}
+	wantSourceFlags := uint32(windows.FILE_ATTRIBUTE_NORMAL | windows.FILE_FLAG_OPEN_REPARSE_POINT | windows.FILE_FLAG_WRITE_THROUGH)
+	if fileRenameSourceFlags != wantSourceFlags {
+		t.Fatalf("source flags = %#x, want %#x", fileRenameSourceFlags, wantSourceFlags)
 	}
 }
 
-func TestPrepareAtomicReplaceSelectsOneCommitPathWithoutFallback(t *testing.T) {
+func TestPrepareAtomicReplaceUsesOneFileRenameInfoExCallForAbsentAndExistingTargets(t *testing.T) {
 	commitErr := errors.New("injected commit failure")
-	for _, test := range []struct {
-		name         string
-		targetExists bool
-		wantMove     int
-		wantRename   int
-	}{
-		{name: "absent target", targetExists: false, wantMove: 1},
-		{name: "existing target", targetExists: true, wantRename: 1},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			moveCalls := 0
+	for _, name := range []string{"absent target", "existing target"} {
+		t.Run(name, func(t *testing.T) {
+			createCalls := 0
 			renameCalls := 0
+			flushCalls := 0
 			replace, err := prepareAtomicReplaceWith("source", "target", windowsReplaceOperations{
-				targetExists: func(string) (bool, error) { return test.targetExists, nil },
-				moveAbsent: func(context.Context, string, string) error {
-					moveCalls++
-					return commitErr
+				createFile: func(_ *uint16, access, share uint32, _ *windows.SecurityAttributes, disposition, flags uint32, _ windows.Handle) (windows.Handle, error) {
+					createCalls++
+					if access != fileRenameSourceAccess || share != fileRenameSourceShare || disposition != windows.OPEN_EXISTING || flags != fileRenameSourceFlags {
+						t.Fatalf("CreateFile args = access %#x share %#x disposition %#x flags %#x", access, share, disposition, flags)
+					}
+					return windows.Handle(1), nil
 				},
-				replaceExisting: func(context.Context, string, string) error {
+				getFileInformation: func(_ windows.Handle, info *windows.ByHandleFileInformation) error {
+					info.FileAttributes = windows.FILE_ATTRIBUTE_NORMAL
+					return nil
+				},
+				setFileInformation: func(_ windows.Handle, class uint32, buffer *byte, bufferLen uint32) error {
 					renameCalls++
+					if class != windows.FileRenameInfoEx {
+						t.Fatalf("information class = %d, want FileRenameInfoEx", class)
+					}
+					info := (*fileRenameInformation)(unsafe.Pointer(buffer))
+					if info.Flags != fileRenameInfoExFlags {
+						t.Fatalf("rename flags = %#x, want %#x", info.Flags, fileRenameInfoExFlags)
+					}
+					if info.RootDirectory != 0 {
+						t.Fatalf("rename root directory = %d, want 0", info.RootDirectory)
+					}
+					wantBufferLen := uint32(unsafe.Offsetof(fileRenameInformation{}.FileName)) + info.FileNameLength + 2
+					if bufferLen != wantBufferLen {
+						t.Fatalf("rename buffer length = %d, want %d with terminator", bufferLen, wantBufferLen)
+					}
+					nameUnits := unsafe.Slice(&info.FileName[0], int(info.FileNameLength/2)+1)
+					if nameUnits[len(nameUnits)-1] != 0 {
+						t.Fatal("rename buffer omitted NUL terminator")
+					}
 					return commitErr
 				},
+				flushFileBuffers: func(windows.Handle) error {
+					flushCalls++
+					return nil
+				},
+				closeHandle: func(windows.Handle) error { return nil },
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := replace(t.Context()); !errors.Is(err, commitErr) {
-				t.Fatalf("replacement error = %v, want injected failure", err)
+			result := replace(t.Context())
+			if result.Committed || !errors.Is(result.Err, commitErr) {
+				t.Fatalf("replacement result = %+v, want pre-commit injected failure", result)
 			}
-			if moveCalls != test.wantMove || renameCalls != test.wantRename {
-				t.Fatalf("commit calls = MoveFileEx:%d FileRenameInfoEx:%d, want %d and %d", moveCalls, renameCalls, test.wantMove, test.wantRename)
+			if createCalls != 1 || renameCalls != 1 || flushCalls != 0 {
+				t.Fatalf("calls = create:%d rename:%d flush:%d, want 1/1/0", createCalls, renameCalls, flushCalls)
+			}
+		})
+	}
+}
+
+func TestFileRenameInfoExPostCommitFlushFailurePreservesCommit(t *testing.T) {
+	flushErr := errors.New("injected FlushFileBuffers failure")
+	closeErr := errors.New("injected close anomaly")
+	operations := windowsReplaceOperations{
+		createFile: func(*uint16, uint32, uint32, *windows.SecurityAttributes, uint32, uint32, windows.Handle) (windows.Handle, error) {
+			return windows.Handle(1), nil
+		},
+		getFileInformation: func(_ windows.Handle, info *windows.ByHandleFileInformation) error {
+			info.FileAttributes = windows.FILE_ATTRIBUTE_NORMAL
+			return nil
+		},
+		setFileInformation: func(windows.Handle, uint32, *byte, uint32) error { return nil },
+		flushFileBuffers:   func(windows.Handle) error { return flushErr },
+		closeHandle:        func(windows.Handle) error { return closeErr },
+	}
+	result := fileRenameInfoExReplaceWith(t.Context(), "source", "target", operations)
+	if !result.Committed || result.Durable || !errors.Is(result.Err, flushErr) || errors.Is(result.Err, closeErr) {
+		t.Fatalf("flush failure result = %+v, want committed durability error only", result)
+	}
+}
+
+func TestFileRenameInfoExRejectsDirectoryAndReparseSourcesBeforeCommit(t *testing.T) {
+	for _, attributes := range []uint32{windows.FILE_ATTRIBUTE_DIRECTORY, windows.FILE_ATTRIBUTE_REPARSE_POINT} {
+		t.Run(fmt.Sprintf("attributes-%#x", attributes), func(t *testing.T) {
+			renameCalls := 0
+			operations := windowsReplaceOperations{
+				createFile: func(*uint16, uint32, uint32, *windows.SecurityAttributes, uint32, uint32, windows.Handle) (windows.Handle, error) {
+					return windows.Handle(1), nil
+				},
+				getFileInformation: func(_ windows.Handle, info *windows.ByHandleFileInformation) error {
+					info.FileAttributes = attributes
+					return nil
+				},
+				setFileInformation: func(windows.Handle, uint32, *byte, uint32) error {
+					renameCalls++
+					return nil
+				},
+				flushFileBuffers: func(windows.Handle) error { return nil },
+				closeHandle:      func(windows.Handle) error { return nil },
+			}
+			result := fileRenameInfoExReplaceWith(t.Context(), "source", "target", operations)
+			if result.Committed || result.Err == nil || renameCalls != 0 {
+				t.Fatalf("rejected source result = %+v rename calls %d", result, renameCalls)
 			}
 		})
 	}
@@ -93,8 +170,8 @@ func TestReplaceSessionFilePublishesCanonicalStateToConcurrentReaders(t *testing
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := replaceSessionFileContext(t.Context(), path, data); err != nil {
-			t.Fatal(err)
+		if result := replaceSessionFileContext(t.Context(), path, data); result.Err != nil || !result.Committed || !result.Durable {
+			t.Fatalf("replacement result = %+v", result)
 		}
 		published, err := readSessionState(dir, id)
 		if err != nil {

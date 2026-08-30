@@ -1,6 +1,7 @@
 package audit_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -69,6 +70,30 @@ func TestStore_AdmissionAndTerminalOutcome(t *testing.T) {
 
 	if len(content) == 0 {
 		t.Fatalf("audit log is empty")
+	}
+}
+
+func TestEnsureTerminalOutcomeCancellationAfterAppendFinishesDurability(t *testing.T) {
+	dir := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	store := audit.NewStore(dir, audit.WithPostAppendHook(cancel))
+	want := terminalReceipt()
+
+	if err := store.EnsureTerminalOutcomeContext(ctx, want); err != nil {
+		t.Fatalf("committed audit event was reclassified by cancellation: %v", err)
+	}
+	if !errors.Is(ctx.Err(), context.Canceled) {
+		t.Fatalf("context error = %v, want canceled after append", ctx.Err())
+	}
+	if err := audit.NewStore(dir).EnsureTerminalOutcome(want); err != nil {
+		t.Fatalf("exact retry after committed cancellation failed: %v", err)
+	}
+	content, err := os.ReadFile(filepath.Join(dir, audit.AuditFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lines := bytes.Count(content, []byte{'\n'}); lines != 1 {
+		t.Fatalf("audit event count = %d, want exactly one", lines)
 	}
 }
 

@@ -26,6 +26,7 @@ type repairBlockingBackend struct {
 	current      atomic.Int64
 	maxCurrent   atomic.Int64
 	blockChannel chan struct{}
+	entered      chan struct{}
 }
 
 func (b *repairBlockingBackend) Doctor(_ context.Context) (app.DoctorReport, error) {
@@ -53,6 +54,9 @@ func (b *repairBlockingBackend) StartMachine(ctx context.Context, id string) (do
 		if current <= observed || b.maxCurrent.CompareAndSwap(observed, current) {
 			break
 		}
+	}
+	if b.entered != nil {
+		b.entered <- struct{}{}
 	}
 	if b.blockChannel != nil {
 		select {
@@ -169,7 +173,7 @@ func TestManager_PendingAdmittedRunningObservationAndExactRetry(t *testing.T) {
 
 func TestManager_Over100ConcurrentBlockedBackendCapacity(t *testing.T) {
 	blockCh := make(chan struct{})
-	backend := &repairBlockingBackend{blockChannel: blockCh}
+	backend := &repairBlockingBackend{blockChannel: blockCh, entered: make(chan struct{}, 100)}
 
 	dir := t.TempDir()
 	leasesDir := t.TempDir()
@@ -204,7 +208,7 @@ func TestManager_Over100ConcurrentBlockedBackendCapacity(t *testing.T) {
 			defer wg.Done()
 			op := domain.Operation{
 				Kind:                "machine.start",
-				Target:              domain.MachineRef(fmt.Sprintf("target-%04d", idx)),
+				Target:              domain.MachineRef(fmt.Sprintf("c4a523d4-6b99-4d62-a5e2-%012x", idx+1)),
 				Actor:               actor,
 				Reason:              "capacity stress test",
 				Deadline:            time.Now().Add(5 * time.Minute),
@@ -231,11 +235,21 @@ func TestManager_Over100ConcurrentBlockedBackendCapacity(t *testing.T) {
 	if otherErrCount.Load() > 0 {
 		t.Errorf("unexpected errors during concurrent submit: %d", otherErrCount.Load())
 	}
-	if acceptedCount.Load() > 100 {
-		t.Errorf("expected at most 100 live operations admitted, got %d", acceptedCount.Load())
+	if acceptedCount.Load() != 100 || busyCount.Load() != int64(totalSubmitters-100) {
+		t.Fatalf("capacity outcomes = accepted %d busy %d, want 100/%d", acceptedCount.Load(), busyCount.Load(), totalSubmitters-100)
 	}
-	if got := backend.maxCurrent.Load(); got > 100 {
-		t.Errorf("backend concurrency = %d, want at most 100", got)
+	for range 100 {
+		select {
+		case <-backend.entered:
+		case <-time.After(5 * time.Second):
+			t.Fatal("backend operations did not reach simultaneous blocking barrier")
+		}
+	}
+	if got := backend.current.Load(); got != 100 {
+		t.Errorf("simultaneous backend concurrency = %d, want 100", got)
+	}
+	if got := backend.maxCurrent.Load(); got != 100 {
+		t.Errorf("maximum backend concurrency = %d, want 100", got)
 	}
 	if acceptedCount.Load()+busyCount.Load() != int64(totalSubmitters) {
 		t.Errorf("expected accepted + busy == %d, got %d + %d", totalSubmitters, acceptedCount.Load(), busyCount.Load())

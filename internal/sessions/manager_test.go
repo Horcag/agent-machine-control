@@ -127,6 +127,51 @@ func TestManagerOpenRejectsExpiredContextAndCleansLateChannel(t *testing.T) {
 	})
 }
 
+func TestManagerOpenRetainsCommittedSessionAfterDirectorySyncFailure(t *testing.T) {
+	actor := deadlineGuardActor(t)
+	channel := newDeadlineGuardChannel()
+	transport := &deadlineGuardTransport{channel: channel}
+	syncErr := errors.New("synthetic post-rename directory sync failure")
+	var syncCalls atomic.Int32
+	mgr := sessions.NewManager(
+		t.TempDir(),
+		transport,
+		time.Now,
+		sessions.WithSessionDirectorySync(func(dir string) error {
+			if syncCalls.Add(1) == 1 {
+				return syncErr
+			}
+			return statedir.SyncDir(dir)
+		}),
+	)
+	op := deadlineGuardOperation(actor, "committed-directory-sync-failure")
+
+	obs, err := mgr.Open(context.Background(), op, 80, 24, "xterm")
+	if obs == nil || !errors.Is(err, syncErr) {
+		t.Fatalf("Open = observation %+v error %v, want committed observation and durability error", obs, err)
+	}
+	if got := channel.closeCalls.Load(); got != 0 {
+		t.Fatalf("failed-open cleanup calls = %d, want 0 after commit", got)
+	}
+	if loaded, getErr := mgr.Get(t.Context(), obs.ID, actor); getErr != nil || loaded == nil || loaded.ID != obs.ID {
+		t.Fatalf("live committed session = %+v err %v", loaded, getErr)
+	}
+
+	retry, retryErr := mgr.Open(context.Background(), op, 80, 24, "xterm")
+	if retryErr != nil || retry == nil || retry.ID != obs.ID {
+		t.Fatalf("exact retry = observation %+v error %v, want existing session", retry, retryErr)
+	}
+	if got := transport.dialCalls.Load(); got != 1 {
+		t.Fatalf("dial calls after exact retry = %d, want 1", got)
+	}
+	if got := syncCalls.Load(); got != 1 {
+		t.Fatalf("persistence attempts after exact retry = %d, want 1", got)
+	}
+	if _, err := mgr.Close(context.Background(), obs.ID, actor, "test cleanup", false); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestManagerExpiredContextsNeverReachSessionEffects(t *testing.T) {
 	actor := deadlineGuardActor(t)
 	channel := newDeadlineGuardChannel()
