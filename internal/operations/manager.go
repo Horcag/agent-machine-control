@@ -32,6 +32,8 @@ type Manager struct {
 	liveOpsCount atomic.Int64
 	capacity     chan struct{}
 	wg           sync.WaitGroup
+	drainOnce    sync.Once
+	drained      chan struct{}
 
 	mu                 sync.Mutex
 	inFlight           map[string]*inFlightEntry // keyed globally by IdempotencyKey
@@ -69,6 +71,7 @@ func NewManager(
 		liveCancels:        make(map[string]context.CancelCauseFunc),
 		finalizationErrors: make(map[string]error),
 		capacity:           make(chan struct{}, 100),
+		drained:            make(chan struct{}),
 	}
 	for _, opt := range opts {
 		opt(m)
@@ -219,15 +222,16 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	}
 	m.mu.Unlock()
 
-	done := make(chan struct{})
-	go func() {
-		m.wg.Wait()
-		close(done)
-	}()
+	m.drainOnce.Do(func() {
+		go func() {
+			m.wg.Wait()
+			close(m.drained)
+		}()
+	})
 
 	var errs []error
 	select {
-	case <-done:
+	case <-m.drained:
 	case <-ctx.Done():
 		errs = append(errs, fmt.Errorf("operations: shutdown timed out waiting for %d live operations: %w", m.liveOpsCount.Load(), ctx.Err()))
 	}
@@ -239,6 +243,12 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	m.mu.Unlock()
 
 	return errors.Join(errs...)
+}
+
+// Drained reports whether every admitted operation has finished execution and finalization.
+// Terminal finalization errors remain reportable but do not represent live owned work.
+func (m *Manager) Drained() bool {
+	return m == nil || m.liveOpsCount.Load() == 0
 }
 
 // Get returns the operation record for a given ID, checking permissions and in-memory freshness.

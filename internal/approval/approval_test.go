@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -288,6 +289,34 @@ func TestStore_ReleasesConsumedApprovalOnlyForMatchingUnexecutedAuthority(t *tes
 	}
 	if consumed, err := store.IsConsumed(string(issued.ID)); err != nil || consumed {
 		t.Fatalf("released approval consumed=%v err=%v", consumed, err)
+	}
+}
+
+func TestStore_IsConsumedRejectsInsecureConsumedRecord(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission regression")
+	}
+	dir := t.TempDir()
+	store := approval.NewStore(dir)
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	issued := domain.Approval{
+		ID: "app-insecure-consumed", Actor: "operator:privacy", Target: "c4a523d4-6b99-4d62-a5e2-4752c0f20001",
+		AuthorizedClass: domain.ClassDestructivePrivileged,
+		Fingerprint:     "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+		IdempotencyKey:  "insecure-consumed", IssuedAt: now, ExpiresAt: now.Add(time.Hour),
+	}
+	if err := store.Issue(issued); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkConsumed(issued, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, string(issued.ID)+".json")
+	if err := os.Chmod(path, 0666); err != nil {
+		t.Fatal(err)
+	}
+	if consumed, err := store.IsConsumed(string(issued.ID)); consumed || !errors.Is(err, approval.ErrInsecurePermissions) {
+		t.Fatalf("IsConsumed = (%v, %v), want false and ErrInsecurePermissions", consumed, err)
 	}
 }
 

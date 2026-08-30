@@ -145,6 +145,9 @@ func (s *Store) IsConsumedContext(ctx context.Context, id string) (bool, error) 
 		if fi.Mode()&os.ModeSymlink != 0 {
 			return false, fmt.Errorf("approval: symlink detected for consumed record %s", path)
 		}
+		if err := validateApprovalFilePrivacy(path, fi); err != nil {
+			return false, err
+		}
 		return true, nil
 	}
 	if os.IsNotExist(err) {
@@ -186,14 +189,13 @@ func (s *Store) MarkConsumedContext(ctx context.Context, a domain.Approval, cons
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	f, err := createApprovalFile(path)
 	if err != nil {
 		if os.IsExist(err) {
 			return domain.ErrApprovalConsumed
 		}
 		return fmt.Errorf("approval: failed to create consumed record: %w", err)
 	}
-
 	if _, err := f.Write(data); err != nil {
 		_ = f.Close()
 		_ = os.Remove(path)
@@ -257,7 +259,7 @@ func writeApprovalRecordContext(ctx context.Context, path string, a domain.Appro
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	f, err := createApprovalFile(path)
 	if err != nil {
 		return err
 	}

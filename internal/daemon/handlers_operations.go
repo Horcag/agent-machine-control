@@ -42,7 +42,11 @@ func (s *Server) handleCreateOperation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	op, timeout := buildOperationFromRequest(req, caller, s.now())
+	op, timeout, err := buildOperationFromRequest(req, caller, s.now())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_argument", "invalid operation deadline")
+		return
+	}
 
 	rec, wasExisting, err := s.opMgr.Submit(r.Context(), op, timeout)
 	if err != nil {
@@ -265,17 +269,38 @@ func streamSSEEvents(ctx context.Context, w io.Writer, flusher http.Flusher, ch 
 	}
 }
 
-func buildOperationFromRequest(req CreateOperationRequest, caller domain.ActorContext, now time.Time) (domain.Operation, time.Duration) {
-	timeout := 30 * time.Second
-	if req.TimeoutSeconds > 0 {
+const (
+	defaultOperationTimeout = 30 * time.Second
+	maxOperationTimeout     = time.Hour
+)
+
+func resolveOperationDeadline(req CreateOperationRequest, now time.Time) (time.Time, time.Duration, error) {
+	if req.TimeoutSeconds < 0 || req.TimeoutSeconds > int(maxOperationTimeout/time.Second) {
+		return time.Time{}, 0, errors.New("operation timeout is outside the allowed range")
+	}
+	if req.TimeoutSeconds != 0 && req.Deadline != nil {
+		return time.Time{}, 0, errors.New("operation timeout and deadline are mutually exclusive")
+	}
+	if req.Deadline != nil {
+		deadline := req.Deadline.UTC()
+		remaining := deadline.Sub(now)
+		if remaining <= 0 || remaining > maxOperationTimeout {
+			return time.Time{}, 0, errors.New("operation deadline is outside the allowed range")
+		}
+		return deadline, remaining, nil
+	}
+
+	timeout := defaultOperationTimeout
+	if req.TimeoutSeconds != 0 {
 		timeout = time.Duration(req.TimeoutSeconds) * time.Second
 	}
-	deadline := now.Add(timeout)
-	if req.Deadline != nil && !req.Deadline.IsZero() {
-		deadline = req.Deadline.UTC()
-		if remaining := time.Until(deadline); remaining > 0 {
-			timeout = remaining
-		}
+	return now.Add(timeout), timeout, nil
+}
+
+func buildOperationFromRequest(req CreateOperationRequest, caller domain.ActorContext, now time.Time) (domain.Operation, time.Duration, error) {
+	deadline, timeout, err := resolveOperationDeadline(req, now)
+	if err != nil {
+		return domain.Operation{}, 0, err
 	}
 	initialClass, capStr := resolveCapabilityAndClass(req.Kind, req.Parameters)
 
@@ -292,7 +317,7 @@ func buildOperationFromRequest(req CreateOperationRequest, caller domain.ActorCo
 		EvidenceSensitivity: domain.EvidenceSensitivityStandard,
 		Parameters:          req.Parameters,
 	}
-	return op, timeout
+	return op, timeout, nil
 }
 
 func resolveCapabilityAndClass(kind string, params map[string]any) (domain.OperationClass, string) {

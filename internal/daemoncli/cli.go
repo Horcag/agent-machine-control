@@ -2,6 +2,7 @@ package daemoncli
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -93,21 +94,43 @@ func runDaemon(args []string, stdout, stderr io.Writer) int {
 	}()
 
 	srv.Wait()
+	return shutdownUntilDrained(srv, stderr)
+}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return reportShutdownFailure(stderr, err)
+type daemonShutdowner interface {
+	Shutdown(context.Context) error
+}
+
+var (
+	shutdownAttemptTimeout = 5 * time.Second
+	shutdownRetryDelay     = 100 * time.Millisecond
+)
+
+func shutdownUntilDrained(server daemonShutdowner, stderr io.Writer) int {
+	retryReported := false
+	for {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownAttemptTimeout)
+		err := server.Shutdown(shutdownCtx)
+		cancel()
+		if err == nil {
+			return ExitSuccess
+		}
+		if !errors.Is(err, daemon.ErrShutdownIncomplete) {
+			return reportShutdownFailure(stderr, err)
+		}
+		if !retryReported {
+			fmt.Fprintln(stderr, "amcd: shutdown drain incomplete; ownership retained while cleanup retries")
+			retryReported = true
+		}
+		time.Sleep(shutdownRetryDelay)
 	}
-
-	return ExitSuccess
 }
 
 func reportShutdownFailure(stderr io.Writer, err error) int {
 	if err == nil {
 		return ExitSuccess
 	}
-	fmt.Fprintln(stderr, "amcd: shutdown failed; daemon ownership retained for safe retry")
+	fmt.Fprintln(stderr, "amcd: shutdown failed after owned work drained; external cleanup was attempted")
 	return ExitBackendUnavailable
 }
 

@@ -6,28 +6,25 @@ import (
 	"fmt"
 	"os"
 
-	"golang.org/x/sys/windows"
+	"github.com/Horcag/agent-machine-control/internal/winacl"
 )
 
 func validateApprovalFilePrivacy(path string, _ os.FileInfo) error {
-	token, err := windows.OpenCurrentProcessToken()
-	if err != nil {
-		return fmt.Errorf("%w: cannot inspect current identity", ErrInsecurePermissions)
-	}
-	defer token.Close()
-	user, err := token.GetTokenUser()
-	if err != nil || user == nil || user.User.Sid == nil {
-		return fmt.Errorf("%w: cannot resolve current identity", ErrInsecurePermissions)
-	}
-	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
-		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
-	if err != nil {
-		return fmt.Errorf("%w: cannot inspect approval DACL", ErrInsecurePermissions)
-	}
-	owner, _, ownerErr := descriptor.Owner()
-	dacl, _, daclErr := descriptor.DACL()
-	if ownerErr != nil || owner == nil || !owner.Equals(user.User.Sid) || daclErr != nil || dacl == nil {
-		return ErrInsecurePermissions
+	if err := winacl.ValidatePrivateFile(path); err != nil {
+		return fmt.Errorf("%w: %v", ErrInsecurePermissions, err)
 	}
 	return nil
+}
+
+func createApprovalFile(path string) (*os.File, error) {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err := winacl.ProtectPrivateFile(path); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return nil, fmt.Errorf("%w: cannot protect approval file", ErrInsecurePermissions)
+	}
+	return file, nil
 }

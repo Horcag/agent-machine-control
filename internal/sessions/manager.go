@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"path/filepath"
 	"sync"
 	"time"
@@ -441,49 +440,4 @@ func (m *Manager) Close(ctx context.Context, id domain.SessionID, caller domain.
 	}
 	defer releaseSessionCloseLane(s)
 	return m.finalizeSession(ctx, s, finalizationExplicitClose, nil, nil, force)
-}
-
-// Shutdown cleanly terminates all active sessions.
-func (m *Manager) Shutdown(ctx context.Context) error {
-	m.mu.Lock()
-	m.closed = true
-	opensDrained := m.opensDrained
-	m.mu.Unlock()
-
-	if opensDrained != nil {
-		select {
-		case <-opensDrained:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-
-	m.mu.RLock()
-	sessions := make([]*Session, 0, len(m.sessions))
-	for _, s := range m.sessions {
-		sessions = append(sessions, s)
-	}
-	pending := make(map[uint64]*pendingCleanup, len(m.pendingCleanups))
-	maps.Copy(pending, m.pendingCleanups)
-	m.mu.RUnlock()
-
-	var errs []error
-	for _, s := range sessions {
-		if err := acquireSessionCloseLane(ctx, s); err != nil {
-			errs = append(errs, ctx.Err())
-			continue
-		}
-		_, closeErr := m.finalizeSession(ctx, s, finalizationShutdown, nil, nil, true)
-		if closeErr != nil {
-			errs = append(errs, closeErr)
-		}
-		releaseSessionCloseLane(s)
-	}
-	for id, cleanup := range pending {
-		if err := m.retryPendingCleanup(ctx, id, cleanup, false); err != nil {
-			errs = append(errs, err)
-		}
-	}
-
-	return errors.Join(errs...)
 }

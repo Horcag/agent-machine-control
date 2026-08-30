@@ -127,7 +127,8 @@ func (s *RecoveryService) executeMutation(
 	}
 
 	// 7. Audit Admission Intent & Approval Consumption
-	if err := s.recordAdmissionAndConsume(op, decision, req, now); err != nil {
+	approvalConsumed, err := s.recordAdmissionAndConsume(ctx, op, decision, req, now)
+	if err != nil {
 		if relErr := releaseLease(); relErr != nil {
 			return domain.Receipt{}, errors.Join(err, relErr)
 		}
@@ -135,8 +136,11 @@ func (s *RecoveryService) executeMutation(
 	}
 
 	// 8. Lifecycle hooks & Provider Execution
-	if err := runLifecycleHooks(ctx, req, releaseLease); err != nil {
-		return domain.Receipt{}, err
+	if err := runLifecycleHooks(ctx, req); err != nil {
+		return domain.Receipt{}, s.compensatePreProviderAbort(ctx, req, approvalConsumed, releaseLease, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return domain.Receipt{}, s.compensatePreProviderAbort(ctx, req, approvalConsumed, releaseLease, err)
 	}
 
 	startedAt, completedAt, runErr := s.runProviderExecution(ctx, req, execFn)
@@ -167,20 +171,14 @@ func (s *RecoveryService) prepareAndAuthorizeMutation(
 	return decision, rollbackRef, nil
 }
 
-func runLifecycleHooks(ctx context.Context, req MutationRequest, releaseLease func() error) error {
+func runLifecycleHooks(ctx context.Context, req MutationRequest) error {
 	if req.OnAdmitted != nil {
 		if err := req.OnAdmitted(ctx); err != nil {
-			if relErr := releaseLease(); relErr != nil {
-				return errors.Join(err, relErr)
-			}
 			return err
 		}
 	}
 	if req.OnRunning != nil {
 		if err := req.OnRunning(ctx); err != nil {
-			if relErr := releaseLease(); relErr != nil {
-				return errors.Join(err, relErr)
-			}
 			return err
 		}
 	}
@@ -227,22 +225,43 @@ func (s *RecoveryService) acquireMutationLease(
 }
 
 func (s *RecoveryService) recordAdmissionAndConsume(
+	ctx context.Context,
 	op domain.Operation,
 	decision policy.Decision,
 	req MutationRequest,
 	now time.Time,
-) error {
+) (bool, error) {
 	if s.auditStore != nil {
 		if err := s.auditStore.RecordAdmissionIntent(op); err != nil {
-			return fmt.Errorf("%w: %v", ErrAuditUnavailable, err)
+			return false, fmt.Errorf("%w: %v", ErrAuditUnavailable, err)
 		}
 	}
 	if decision.EffectiveClass.RequiresApproval() && req.Approval != nil && s.approvalStore != nil {
-		if err := s.approvalStore.MarkConsumed(*req.Approval, now); err != nil {
-			return fmt.Errorf("app: failed to record approval consumption: %w", err)
+		if err := s.approvalStore.MarkConsumedContext(ctx, *req.Approval, now); err != nil {
+			return false, fmt.Errorf("app: failed to record approval consumption: %w", err)
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+func (s *RecoveryService) compensatePreProviderAbort(
+	ctx context.Context,
+	req MutationRequest,
+	approvalConsumed bool,
+	releaseLease func() error,
+	primary error,
+) error {
+	var compensationErr error
+	if approvalConsumed && req.Approval != nil && s.approvalStore != nil {
+		compensationCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		compensationErr = s.approvalStore.ReleaseUnexecutedContext(compensationCtx, *req.Approval)
+		cancel()
+		if compensationErr != nil {
+			compensationErr = fmt.Errorf("app: failed to persist pre-provider approval compensation: %w", compensationErr)
 		}
 	}
-	return nil
+	return errors.Join(primary, compensationErr, releaseLease())
 }
 
 func (s *RecoveryService) runProviderExecution(

@@ -32,6 +32,12 @@ type contextKey string
 
 const callerContextKey contextKey = "callerContext"
 
+var (
+	// ErrShutdownIncomplete means admitted operations, sessions, or transport cleanup remain live.
+	// Endpoint and singleton ownership are intentionally retained so the same process can retry.
+	ErrShutdownIncomplete = errors.New("daemon: shutdown drain incomplete")
+)
+
 // Server is the HTTP/1.1 daemon server for Agent Machine Control.
 type Server struct {
 	cfg              Config
@@ -59,6 +65,8 @@ type Server struct {
 	admissionClosed  atomic.Bool
 	semaphore        chan struct{}
 	identityProvider lease.IdentityProvider
+	shutdownHTTP     func(context.Context) error
+	closeHTTP        func() error
 
 	afterEarlyMutationAdmissionCheck func()
 
@@ -213,6 +221,8 @@ func (s *Server) setupHTTPServer() {
 		MaxHeaderBytes:    16 * 1024,
 		TLSNextProto:      make(map[string]func(*http.Server, *tls.Conn, http.Handler)),
 	}
+	s.shutdownHTTP = s.httpServer.Shutdown
+	s.closeHTTP = s.httpServer.Close
 }
 
 func (s *Server) dispatchV1(w http.ResponseWriter, r *http.Request) {
@@ -381,72 +391,6 @@ func (s *Server) TriggerShutdown() {
 		s.admissionClosed.Store(true)
 		close(s.shutdownChan)
 	})
-}
-
-// Shutdown gracefully stops the daemon and removes the endpoint and lock files.
-func (s *Server) Shutdown(ctx context.Context) error {
-	s.TriggerShutdown()
-
-	var errs []error
-	if err := s.closeAdmissionListener(); err != nil {
-		errs = append(errs, err)
-	}
-
-	// Admission is closed and the listener is stopped before owned managers drain.
-	// Accepted handlers remain live so manager cancellation can unblock them.
-	// 1. Drain & shutdown operations manager (cancels active operations, publishes terminal events, cleans leases)
-	if s.opMgr != nil {
-		if err := s.opMgr.Shutdown(ctx); err != nil {
-			errs = append(errs, fmt.Errorf("daemon: operations manager shutdown error: %w", err))
-		}
-	}
-
-	// 1b. Shutdown session manager (terminates active SSH sessions)
-	if s.sessionMgr != nil {
-		if err := s.sessionMgr.Shutdown(ctx); err != nil {
-			errs = append(errs, fmt.Errorf("daemon: session manager shutdown error: %w", err))
-		}
-	}
-
-	// The singleton and endpoint remain authoritative while any admitted manager
-	// work has not drained. A later Shutdown call can resume cleanup safely.
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-
-	// 2. Close event hub to close all subscriber channels and unblock waiting SSE handlers
-	if s.eventHub != nil {
-		if err := s.eventHub.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("daemon: event hub close error: %w", err))
-		}
-	}
-
-	// 3. Gracefully shutdown HTTP server
-	if s.httpServer != nil {
-		if err := s.httpServer.Shutdown(ctx); err != nil {
-			return fmt.Errorf("daemon: http server shutdown failed; singleton ownership retained: %w", err)
-		}
-	}
-
-	// 4. Remove endpoint file if owned
-	if err := RemoveEndpointFileIfOwned(s.stateDir.DaemonDir(), s.pid, s.runtimeID, s.startTime); err != nil {
-		errs = append(errs, err)
-	}
-
-	// 5. Release singleton lock
-	if s.singletonLock != nil {
-		if err := s.singletonLock.Release(); err != nil {
-			errs = append(errs, err)
-		}
-	}
-
-	s.serveErrMu.Lock()
-	if s.serveErr != nil {
-		errs = append(errs, s.serveErr)
-	}
-	s.serveErrMu.Unlock()
-
-	return errors.Join(errs...)
 }
 
 // Wait blocks until the daemon receives a stop signal or shutdown request.
