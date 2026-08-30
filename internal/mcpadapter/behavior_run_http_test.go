@@ -5,12 +5,9 @@ import (
 	"io"
 	"net"
 	"os"
-	"strings"
 	"syscall"
 	"testing"
 )
-
-var validTestToken = strings.Repeat("a", 64)
 
 func TestRunHTTP_BindFailure(t *testing.T) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
