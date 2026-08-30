@@ -52,9 +52,11 @@ func (c *lifecycleChannel) Read([]byte) (int, error) {
 	return 0, io.EOF
 }
 
-func (c *lifecycleChannel) Write(_ context.Context, data []byte) (int, error)    { return len(data), nil }
-func (c *lifecycleChannel) SendControl(context.Context, domain.ControlKey) error { return nil }
-func (c *lifecycleChannel) Resize(uint16, uint16) error                          { return nil }
+func (c *lifecycleChannel) Write(_ context.Context, data []byte) (int, error) { return len(data), nil }
+func (c *lifecycleChannel) SendControl(context.Context, domain.ControlKey) (int, error) {
+	return 1, nil
+}
+func (c *lifecycleChannel) Resize(uint16, uint16) error { return nil }
 
 func (c *lifecycleChannel) Close(ctx context.Context) error {
 	c.closeCalls.Add(1)

@@ -32,8 +32,31 @@ const (
 
 // MutationResult is the minimal immutable response data needed for an exact retry.
 type MutationResult struct {
-	BytesWritten int                        `json:"bytes_written,omitempty"`
-	Observation  *domain.SessionObservation `json:"observation,omitempty"`
+	BytesWritten  int                        `json:"bytes_written,omitempty"`
+	Observation   *domain.SessionObservation `json:"observation,omitempty"`
+	EffectApplied *bool                      `json:"effect_applied,omitempty"`
+}
+
+// EffectTruth returns explicit effect truth for new records and only unambiguous
+// derived truth for legacy records that predate effect_applied.
+func (r MutationResult) EffectTruth(operationKind domain.OperationKind) (applied, known bool) {
+	if r.EffectApplied != nil {
+		return *r.EffectApplied, true
+	}
+	if r.BytesWritten > 0 {
+		return true, true
+	}
+	if r.Observation == nil {
+		return false, false
+	}
+	switch operationKind {
+	case "session.open":
+		return true, true
+	case "session.close":
+		return r.Observation.State.IsTerminal(), r.Observation.State.IsTerminal()
+	default:
+		return false, false
+	}
 }
 
 // MutationReservation is a durable pre-effect idempotency marker.

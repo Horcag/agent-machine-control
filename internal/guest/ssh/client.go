@@ -22,7 +22,7 @@ type Transport interface {
 type Channel interface {
 	io.Reader
 	Write(ctx context.Context, p []byte) (int, error)
-	SendControl(ctx context.Context, key domain.ControlKey) error
+	SendControl(ctx context.Context, key domain.ControlKey) (int, error)
 	Resize(cols, rows uint16) error
 	Close(ctx context.Context) error
 	Wait() (exitCode int, err error)
@@ -304,17 +304,16 @@ func (c *sshChannel) Write(ctx context.Context, p []byte) (int, error) {
 	return n, err
 }
 
-func (c *sshChannel) SendControl(ctx context.Context, key domain.ControlKey) error {
+func (c *sshChannel) SendControl(ctx context.Context, key domain.ControlKey) (int, error) {
 	norm, err := domain.NormalizeControlKey(string(key))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	bytes := norm.ToBytes()
 	if len(bytes) == 0 {
-		return domain.ErrInvalidControlKey
+		return 0, domain.ErrInvalidControlKey
 	}
-	_, err = c.Write(ctx, bytes)
-	return err
+	return c.Write(ctx, bytes)
 }
 
 func (c *sshChannel) Resize(cols, rows uint16) error {

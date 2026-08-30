@@ -244,12 +244,12 @@ func extractEvidenceRefs(op domain.Operation, obs *domain.SessionObservation) []
 	return nil
 }
 
-func waitForInFlight(ctx context.Context, entry *inFlightSessionCall) (int, *domain.SessionObservation, *domain.Receipt, error) {
+func waitForInFlight(ctx context.Context, entry *inFlightSessionCall) (sessionMutationResult, *domain.Receipt, error) {
 	select {
 	case <-entry.done:
-		return entry.n, entry.obs, &entry.rcpt, entry.err
+		return entry.result, &entry.rcpt, entry.err
 	case <-ctx.Done():
-		return 0, nil, nil, ctx.Err()
+		return sessionMutationResult{}, nil, ctx.Err()
 	}
 }
 
@@ -281,14 +281,13 @@ func (s *SessionService) executeMutation(
 	fp, idFp domain.Fingerprint,
 	decision policy.Decision,
 	safetyRes SafetyResolution,
-	execute func(context.Context) (int, *domain.SessionObservation, int, error),
-) (int, *domain.SessionObservation, domain.Receipt, error) {
+	execute func(context.Context) (sessionMutationResult, error),
+) (sessionMutationResult, domain.Receipt, error) {
 	startedAt := s.now()
-	var n, exitCode int
-	var obs *domain.SessionObservation
+	var result sessionMutationResult
 	runErr := execCtx.Err()
 	if runErr == nil {
-		n, obs, exitCode, runErr = execute(execCtx)
+		result, runErr = execute(execCtx)
 	}
 	completedAt := s.now()
 	if !completedAt.After(startedAt) {
@@ -296,29 +295,34 @@ func (s *SessionService) executeMutation(
 	}
 
 	rollbackRef := ""
-	if (runErr == nil || n > 0) && op.Classification == domain.ClassReversibleMutation {
+	if result.EffectApplied && op.Classification == domain.ClassReversibleMutation {
 		rollbackRef = safetyRes.RollbackRef
 	}
 
-	evidenceRefs := extractEvidenceRefs(op, obs)
-	rcpt, persistErr := s.persistOutcome(op, fp, idFp, decision, startedAt, completedAt, runErr, rollbackRef, evidenceRefs, exitCode, n > 0)
+	var evidenceRefs []string
+	if result.EffectApplied {
+		evidenceRefs = extractEvidenceRefs(op, result.Observation)
+	}
+	rcpt, persistErr := s.persistOutcome(op, fp, idFp, decision, startedAt, completedAt, runErr, rollbackRef, evidenceRefs, result.ExitCode, result.EffectApplied)
 	if persistErr == nil {
 		if s.mutationJournal == nil {
 			persistErr = errors.New("app: session mutation journal is unavailable")
 		} else {
+			effectApplied := result.EffectApplied
 			persistErr = s.mutationJournal.Finalize(op, rcpt.ReceiptID, sessions.MutationResult{
-				BytesWritten: n,
-				Observation:  obs,
+				BytesWritten:  result.BytesWritten,
+				Observation:   result.Observation,
+				EffectApplied: &effectApplied,
 			}, completedAt)
 		}
 	}
 	if runErr != nil {
-		return n, obs, rcpt, errors.Join(runErr, persistErr)
+		return result, rcpt, errors.Join(runErr, persistErr)
 	}
 	if persistErr != nil {
-		return n, obs, rcpt, fmt.Errorf("app: session mutation succeeded but durable finalization failed: %w", persistErr)
+		return result, rcpt, fmt.Errorf("app: session mutation succeeded but durable finalization failed: %w", persistErr)
 	}
-	return n, obs, rcpt, nil
+	return result, rcpt, nil
 }
 
 type admittedSessionMutation struct {
@@ -391,15 +395,15 @@ func (s *SessionService) coordinateSessionMutation(
 	flightKey string,
 	approval *domain.Approval,
 	timeout time.Duration,
-	execute func(context.Context) (int, *domain.SessionObservation, int, error),
-) (int, *domain.SessionObservation, *domain.Receipt, error) {
+	execute func(context.Context) (sessionMutationResult, error),
+) (sessionMutationResult, *domain.Receipt, error) {
 	initialFP, idFp, err := s.validateAndFingerprint(op)
 	if err != nil {
-		return 0, nil, nil, err
+		return sessionMutationResult{}, nil, err
 	}
 
 	if n, obs, rcpt, handled, retryErr := s.lookupSessionRetry(op); handled {
-		return n, obs, rcpt, retryErr
+		return sessionMutationResult{BytesWritten: n, Observation: obs}, rcpt, retryErr
 	}
 	if approval != nil && !op.Actor.HasScope(domain.ScopeSessionAdmin) {
 		now := s.now()
@@ -409,12 +413,12 @@ func (s *SessionService) coordinateSessionMutation(
 		}
 		decision := policy.Decision{Type: policy.DecisionDeny, EffectiveClass: op.Classification}
 		rcpt, persistErr := s.persistOutcome(op, initialFP, idFp, decision, now, now, denial, "", nil, 7, false)
-		return 0, nil, &rcpt, errors.Join(denial, persistErr)
+		return sessionMutationResult{}, &rcpt, errors.Join(denial, persistErr)
 	}
 
 	entry, isWaiting, err := s.acquireFlight(flightKey, idFp)
 	if err != nil {
-		return 0, nil, nil, err
+		return sessionMutationResult{}, nil, err
 	}
 	if isWaiting {
 		return waitForInFlight(ctx, entry)
@@ -427,25 +431,24 @@ func (s *SessionService) coordinateSessionMutation(
 		if denialRcpt != nil {
 			entry.rcpt = *denialRcpt
 		}
-		return 0, nil, denialRcpt, err
+		return sessionMutationResult{}, denialRcpt, err
 	}
 	if err := s.reserveAndPrepareMutation(admitted, approval); err != nil {
 		entry.err = err
-		return 0, nil, nil, err
+		return sessionMutationResult{}, nil, err
 	}
 
-	n, obs, rcpt, mutErr := s.executeMutation(ctx, admitted.op, admitted.fp, admitted.idFp, admitted.decision, admitted.safety, execute)
+	result, rcpt, mutErr := s.executeMutation(ctx, admitted.op, admitted.fp, admitted.idFp, admitted.decision, admitted.safety, execute)
 	releaseErr := admitted.releaseLease()
 
-	entry.n = n
-	entry.obs = obs
+	entry.result = result
 	entry.rcpt = rcpt
 
 	if mutErr != nil || releaseErr != nil {
 		finalErr := errors.Join(mutErr, releaseErr)
 		entry.err = finalErr
-		return n, obs, &rcpt, finalErr
+		return result, &rcpt, finalErr
 	}
 
-	return n, obs, &rcpt, nil
+	return result, &rcpt, nil
 }

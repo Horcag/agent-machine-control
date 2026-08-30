@@ -30,12 +30,18 @@ type SessionService struct {
 }
 
 type inFlightSessionCall struct {
-	done chan struct{}
-	err  error
-	rcpt domain.Receipt
-	obs  *domain.SessionObservation
-	n    int
-	idFp domain.Fingerprint
+	done   chan struct{}
+	err    error
+	rcpt   domain.Receipt
+	result sessionMutationResult
+	idFp   domain.Fingerprint
+}
+
+type sessionMutationResult struct {
+	BytesWritten  int
+	Observation   *domain.SessionObservation
+	ExitCode      int
+	EffectApplied bool
 }
 
 // SessionOption configures SessionService.

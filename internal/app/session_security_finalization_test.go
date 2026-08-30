@@ -157,8 +157,8 @@ func (c *diagnosticCloseErrorChannel) Write(context.Context, []byte) (int, error
 	return 0, nil
 }
 
-func (c *diagnosticCloseErrorChannel) SendControl(context.Context, domain.ControlKey) error {
-	return nil
+func (c *diagnosticCloseErrorChannel) SendControl(context.Context, domain.ControlKey) (int, error) {
+	return 1, nil
 }
 
 func (c *diagnosticCloseErrorChannel) Resize(uint16, uint16) error {

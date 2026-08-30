@@ -60,6 +60,8 @@ type Server struct {
 	semaphore        chan struct{}
 	identityProvider lease.IdentityProvider
 
+	afterEarlyMutationAdmissionCheck func()
+
 	serveErrMu sync.Mutex
 	serveErr   error
 }
@@ -194,46 +196,6 @@ func (s *Server) setupHTTPServer() {
 		MaxHeaderBytes:    16 * 1024,
 		TLSNextProto:      make(map[string]func(*http.Server, *tls.Conn, http.Handler)),
 	}
-}
-
-func (s *Server) authMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Reject browser Origin
-		if r.Header.Get("Origin") != "" {
-			writeError(w, http.StatusForbidden, "forbidden", "browser Origin headers are forbidden")
-			return
-		}
-
-		// Require Bearer auth
-		authHeader := r.Header.Get("Authorization")
-		if !strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
-			writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid authorization header")
-			return
-		}
-
-		token := strings.TrimSpace(authHeader[7:])
-		caller, _, ok := s.authStore.Authenticate(token)
-		if !ok || caller == nil {
-			writeError(w, http.StatusUnauthorized, "unauthorized", "invalid bearer token")
-			return
-		}
-		if s.admissionClosed.Load() && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
-			writeError(w, http.StatusServiceUnavailable, "shutting_down", "mutation admission is closed")
-			return
-		}
-
-		// Concurrency limit
-		select {
-		case s.semaphore <- struct{}{}:
-			defer func() { <-s.semaphore }()
-		default:
-			writeError(w, http.StatusTooManyRequests, "concurrency_limit_exceeded", "server is busy")
-			return
-		}
-
-		ctx := context.WithValue(r.Context(), callerContextKey, *caller)
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
 }
 
 func (s *Server) dispatchV1(w http.ResponseWriter, r *http.Request) {

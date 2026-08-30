@@ -45,8 +45,10 @@ func (c *daemonLifecycleChannel) Read([]byte) (int, error) { <-c.readRelease; re
 func (c *daemonLifecycleChannel) Write(_ context.Context, data []byte) (int, error) {
 	return len(data), nil
 }
-func (c *daemonLifecycleChannel) SendControl(context.Context, domain.ControlKey) error { return nil }
-func (c *daemonLifecycleChannel) Resize(uint16, uint16) error                          { return nil }
+func (c *daemonLifecycleChannel) SendControl(context.Context, domain.ControlKey) (int, error) {
+	return 1, nil
+}
+func (c *daemonLifecycleChannel) Resize(uint16, uint16) error { return nil }
 func (c *daemonLifecycleChannel) Wait() (int, error) {
 	<-c.waitRelease
 	return 19, c.waitErr

@@ -99,6 +99,10 @@ func (s *SessionService) handleReservedRetry(op domain.Operation, reservation *s
 	}
 
 	result := reservation.Result
+	_, effectKnown := result.EffectTruth(reservation.OperationKind)
+	if rcpt.Outcome.Status == domain.OutcomeSuccess && !effectKnown {
+		return result.BytesWritten, result.Observation, rcpt, errors.New("app: legacy session mutation result has ambiguous effect truth")
+	}
 	switch rcpt.Outcome.Status {
 	case domain.OutcomeDenied:
 		return result.BytesWritten, result.Observation, rcpt, &PolicyDeniedError{Reason: policy.DenialReason(rcpt.Outcome.ErrorCategory), Message: rcpt.Outcome.ErrorMessage}

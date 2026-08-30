@@ -43,11 +43,11 @@ func (s *SessionService) WriteSession(ctx context.Context, params SessionWritePa
 	}
 
 	flightKey := fmt.Sprintf("%s:%s:%s", params.Caller.EffectiveActor, target, params.IdempotencyKey)
-	n, _, rcpt, err := s.coordinateSessionMutation(ctx, op, flightKey, params.Approval, timeout, func(execCtx context.Context) (int, *domain.SessionObservation, int, error) {
+	result, rcpt, err := s.coordinateSessionMutation(ctx, op, flightKey, params.Approval, timeout, func(execCtx context.Context) (sessionMutationResult, error) {
 		bytesWritten, err := s.sessionMgr.Write(execCtx, params.SessionID, params.Caller, params.Data, params.Reason, params.IdempotencyKey)
-		return bytesWritten, nil, 0, err
+		return sessionMutationResult{BytesWritten: bytesWritten, EffectApplied: bytesWritten > 0}, err
 	})
-	return n, rcpt, err
+	return result.BytesWritten, rcpt, err
 }
 
 // ControlSession coordinates policy, audit, and receipt for session.control.
@@ -80,9 +80,9 @@ func (s *SessionService) ControlSession(ctx context.Context, params SessionContr
 	}
 
 	flightKey := fmt.Sprintf("%s:%s:%s", params.Caller.EffectiveActor, target, params.IdempotencyKey)
-	_, _, rcpt, err := s.coordinateSessionMutation(ctx, op, flightKey, params.Approval, timeout, func(execCtx context.Context) (int, *domain.SessionObservation, int, error) {
-		err := s.sessionMgr.Control(execCtx, params.SessionID, params.Caller, params.Key, params.Reason, params.IdempotencyKey)
-		return 0, nil, 0, err
+	_, rcpt, err := s.coordinateSessionMutation(ctx, op, flightKey, params.Approval, timeout, func(execCtx context.Context) (sessionMutationResult, error) {
+		bytesWritten, err := s.sessionMgr.Control(execCtx, params.SessionID, params.Caller, params.Key, params.Reason, params.IdempotencyKey)
+		return sessionMutationResult{BytesWritten: bytesWritten, EffectApplied: bytesWritten > 0}, err
 	})
 	return rcpt, err
 }
@@ -117,13 +117,17 @@ func (s *SessionService) CloseSession(ctx context.Context, params SessionClosePa
 	}
 
 	flightKey := fmt.Sprintf("%s:%s:%s", params.Caller.EffectiveActor, target, params.IdempotencyKey)
-	_, obs, rcpt, err := s.coordinateSessionMutation(ctx, op, flightKey, params.Approval, timeout, func(execCtx context.Context) (int, *domain.SessionObservation, int, error) {
+	result, rcpt, err := s.coordinateSessionMutation(ctx, op, flightKey, params.Approval, timeout, func(execCtx context.Context) (sessionMutationResult, error) {
 		closedObs, err := s.sessionMgr.Close(execCtx, params.SessionID, params.Caller, params.Reason, params.Force)
 		exitCode := 0
 		if closedObs != nil && closedObs.ExitCode != nil {
 			exitCode = *closedObs.ExitCode
 		}
-		return 0, closedObs, exitCode, err
+		return sessionMutationResult{
+			Observation:   closedObs,
+			ExitCode:      exitCode,
+			EffectApplied: closedObs != nil && closedObs.State.IsTerminal(),
+		}, err
 	})
-	return obs, rcpt, err
+	return result.Observation, rcpt, err
 }

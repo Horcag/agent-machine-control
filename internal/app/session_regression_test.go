@@ -86,9 +86,9 @@ func (c *trackingChannel) Write(ctx context.Context, p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (c *trackingChannel) SendControl(_ context.Context, _ domain.ControlKey) error {
+func (c *trackingChannel) SendControl(_ context.Context, _ domain.ControlKey) (int, error) {
 	atomic.AddInt32(&c.parent.controlCalls, 1)
-	return nil
+	return 1, nil
 }
 
 func (c *trackingChannel) Resize(_, _ uint16) error {

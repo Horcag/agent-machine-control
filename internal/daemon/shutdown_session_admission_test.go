@@ -37,10 +37,12 @@ type shutdownAdmissionChannel struct {
 	doneOnce     sync.Once
 }
 
-func (c *shutdownAdmissionChannel) Read([]byte) (int, error)                             { <-c.done; return 0, io.EOF }
-func (c *shutdownAdmissionChannel) Write(context.Context, []byte) (int, error)           { return 0, nil }
-func (c *shutdownAdmissionChannel) SendControl(context.Context, domain.ControlKey) error { return nil }
-func (c *shutdownAdmissionChannel) Resize(uint16, uint16) error                          { return nil }
+func (c *shutdownAdmissionChannel) Read([]byte) (int, error)                   { <-c.done; return 0, io.EOF }
+func (c *shutdownAdmissionChannel) Write(context.Context, []byte) (int, error) { return 0, nil }
+func (c *shutdownAdmissionChannel) SendControl(context.Context, domain.ControlKey) (int, error) {
+	return 1, nil
+}
+func (c *shutdownAdmissionChannel) Resize(uint16, uint16) error { return nil }
 func (c *shutdownAdmissionChannel) Close(ctx context.Context) error {
 	c.startOnce.Do(func() { close(c.closeStarted) })
 	select {

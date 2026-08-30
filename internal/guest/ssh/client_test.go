@@ -83,7 +83,7 @@ func TestSSHTransport_FullSessionLifecycle(t *testing.T) {
 	}
 
 	// Send Control Key (Ctrl+C)
-	if err := channel.SendControl(ctx, domain.ControlKeyCtrlC); err != nil {
+	if _, err := channel.SendControl(ctx, domain.ControlKeyCtrlC); err != nil {
 		t.Fatalf("SendControl failed: %v", err)
 	}
 
@@ -233,7 +233,7 @@ func TestSSHTransport_ChannelMethods(t *testing.T) {
 	}
 
 	// Invalid control key
-	if err := channel.SendControl(ctx, "invalid-control-key"); err == nil {
+	if _, err := channel.SendControl(ctx, "invalid-control-key"); err == nil {
 		t.Errorf("expected error on invalid control key")
 	}
 

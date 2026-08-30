@@ -80,7 +80,8 @@ func TestSSHChannelConcurrentWriteControlAndCloseRemainSerialized(t *testing.T) 
 	controlDone := make(chan error, 1)
 	go func() {
 		close(controlStarted)
-		controlDone <- channel.SendControl(context.Background(), domain.ControlKeyCtrlC)
+		_, err := channel.SendControl(context.Background(), domain.ControlKeyCtrlC)
+		controlDone <- err
 	}()
 	awaitSignal(t, controlStarted, "control call to start")
 
@@ -142,7 +143,7 @@ func TestSSHChannelWriteAndControlLaneAcquisitionHonorContext(t *testing.T) {
 
 	controlCtx, cancelControl := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancelControl()
-	if err := channel.SendControl(controlCtx, domain.ControlKeyCtrlC); !errors.Is(err, context.DeadlineExceeded) {
+	if _, err := channel.SendControl(controlCtx, domain.ControlKeyCtrlC); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("waiting SendControl error = %v, want context deadline exceeded", err)
 	}
 
@@ -153,6 +154,21 @@ func TestSSHChannelWriteAndControlLaneAcquisitionHonorContext(t *testing.T) {
 	time.Sleep(30 * time.Millisecond)
 	if got := stdin.writeCount.Load(); got != 1 {
 		t.Fatalf("stdin write count = %d, want 1 with no late write or control", got)
+	}
+}
+
+func TestSSHChannelSendControlPreservesAcceptedBytesWhenContextCancelsAfterWrite(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	stdin := &cancelAfterWriteCloser{cancel: cancel}
+	channel := &sshChannel{
+		stdin:     stdin,
+		writeLane: make(chan struct{}, 1),
+		closeLane: make(chan struct{}, 1),
+	}
+
+	n, err := channel.SendControl(ctx, domain.ControlKeyCtrlC)
+	if n != 1 || !errors.Is(err, context.Canceled) {
+		t.Fatalf("SendControl() = (%d, %v), want (1, context canceled)", n, err)
 	}
 }
 
@@ -253,6 +269,15 @@ type blockingWriteCloser struct {
 
 	closeWithoutDeadline atomic.Bool
 }
+
+type cancelAfterWriteCloser struct{ cancel context.CancelFunc }
+
+func (w *cancelAfterWriteCloser) Write(p []byte) (int, error) {
+	w.cancel()
+	return len(p), nil
+}
+
+func (*cancelAfterWriteCloser) Close() error { return nil }
 
 func newBlockingWriteCloser() *blockingWriteCloser {
 	return &blockingWriteCloser{

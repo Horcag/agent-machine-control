@@ -52,9 +52,9 @@ func (c *deadlineGuardChannel) Write(context.Context, []byte) (int, error) {
 	c.writeCalls.Add(1)
 	return 0, nil
 }
-func (c *deadlineGuardChannel) SendControl(context.Context, domain.ControlKey) error {
+func (c *deadlineGuardChannel) SendControl(context.Context, domain.ControlKey) (int, error) {
 	c.controlCalls.Add(1)
-	return nil
+	return 1, nil
 }
 func (c *deadlineGuardChannel) Resize(uint16, uint16) error { return nil }
 func (c *deadlineGuardChannel) Close(ctx context.Context) error {
@@ -138,7 +138,7 @@ func TestManagerExpiredContextsNeverReachSessionEffects(t *testing.T) {
 	if _, err := mgr.Write(ctx, obs.ID, actor, "x", "expired write", "expired-write"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Write error = %v, want context canceled", err)
 	}
-	if err := mgr.Control(ctx, obs.ID, actor, domain.ControlKeyCtrlC, "expired control", "expired-control"); !errors.Is(err, context.Canceled) {
+	if _, err := mgr.Control(ctx, obs.ID, actor, domain.ControlKeyCtrlC, "expired control", "expired-control"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Control error = %v, want context canceled", err)
 	}
 	if _, err := mgr.Close(ctx, obs.ID, actor, "expired close", false); !errors.Is(err, context.Canceled) {
@@ -261,7 +261,7 @@ func testManagerWriteAndControl(t *testing.T, mgr *sessions.Manager, actorCtx do
 		t.Fatalf("Write failed: %v", err)
 	}
 
-	if err := mgr.Control(ctx, obs.ID, actorCtx, domain.ControlKeyCtrlC, "interrupt", "key-ctrl-1"); err != nil {
+	if _, err := mgr.Control(ctx, obs.ID, actorCtx, domain.ControlKeyCtrlC, "interrupt", "key-ctrl-1"); err != nil {
 		t.Fatalf("Control failed: %v", err)
 	}
 
@@ -416,7 +416,7 @@ func TestManager_NotFoundAndClosedErrors(t *testing.T) {
 	if _, err := mgr.Write(ctx, badID, actorCtx, "data", "reason", "key"); !errors.Is(err, domain.ErrSessionNotFound) {
 		t.Errorf("expected ErrSessionNotFound on Write, got: %v", err)
 	}
-	if err := mgr.Control(ctx, badID, actorCtx, domain.ControlKeyCtrlC, "reason", "key"); !errors.Is(err, domain.ErrSessionNotFound) {
+	if _, err := mgr.Control(ctx, badID, actorCtx, domain.ControlKeyCtrlC, "reason", "key"); !errors.Is(err, domain.ErrSessionNotFound) {
 		t.Errorf("expected ErrSessionNotFound on Control, got: %v", err)
 	}
 	if _, _, _, _, _, err := mgr.Wait(ctx, badID, actorCtx, 10*time.Millisecond, "", 0, 100*time.Millisecond); !errors.Is(err, domain.ErrSessionNotFound) {
@@ -542,8 +542,10 @@ func (c *shutdownFailureChannel) Read([]byte) (int, error) { return 0, io.EOF }
 func (c *shutdownFailureChannel) Write(context.Context, []byte) (int, error) {
 	return 0, nil
 }
-func (c *shutdownFailureChannel) SendControl(context.Context, domain.ControlKey) error { return nil }
-func (c *shutdownFailureChannel) Resize(uint16, uint16) error                          { return nil }
+func (c *shutdownFailureChannel) SendControl(context.Context, domain.ControlKey) (int, error) {
+	return 1, nil
+}
+func (c *shutdownFailureChannel) Resize(uint16, uint16) error { return nil }
 func (c *shutdownFailureChannel) Close(context.Context) error {
 	c.once.Do(func() { close(c.waitCh) })
 	return errors.New("synthetic shutdown close failure")
@@ -627,7 +629,7 @@ func TestManager_WaitRegexAndDiskLoadingFilters(t *testing.T) {
 	if _, err := mgr.Write(ctx, obs.ID, noWriteActor, "data", "r", "k"); !errors.Is(err, domain.ErrSessionAccessDenied) {
 		t.Errorf("expected ErrSessionAccessDenied on Write without write scope, got: %v", err)
 	}
-	if err := mgr.Control(ctx, obs.ID, noWriteActor, domain.ControlKeyCtrlC, "r", "k"); !errors.Is(err, domain.ErrSessionAccessDenied) {
+	if _, err := mgr.Control(ctx, obs.ID, noWriteActor, domain.ControlKeyCtrlC, "r", "k"); !errors.Is(err, domain.ErrSessionAccessDenied) {
 		t.Errorf("expected ErrSessionAccessDenied on Control without write scope, got: %v", err)
 	}
 

@@ -33,11 +33,13 @@ type retryCloseChannel struct {
 	calls    atomic.Int32
 }
 
-func (c *retryCloseChannel) Read([]byte) (int, error)                             { <-c.done; return 0, io.EOF }
-func (c *retryCloseChannel) Write(_ context.Context, data []byte) (int, error)    { return len(data), nil }
-func (c *retryCloseChannel) SendControl(context.Context, domain.ControlKey) error { return nil }
-func (c *retryCloseChannel) Resize(uint16, uint16) error                          { return nil }
-func (c *retryCloseChannel) Wait() (int, error)                                   { <-c.done; return 0, nil }
+func (c *retryCloseChannel) Read([]byte) (int, error)                          { <-c.done; return 0, io.EOF }
+func (c *retryCloseChannel) Write(_ context.Context, data []byte) (int, error) { return len(data), nil }
+func (c *retryCloseChannel) SendControl(context.Context, domain.ControlKey) (int, error) {
+	return 1, nil
+}
+func (c *retryCloseChannel) Resize(uint16, uint16) error { return nil }
+func (c *retryCloseChannel) Wait() (int, error)          { <-c.done; return 0, nil }
 
 func (c *retryCloseChannel) Close(_ context.Context) error {
 	if c.calls.Add(1) == 1 {
@@ -104,6 +106,9 @@ func assertAbortedClose(t *testing.T, obs *domain.SessionObservation, rcpt *doma
 	t.Helper()
 	if !errors.Is(err, context.DeadlineExceeded) || rcpt == nil || rcpt.Outcome.Status != domain.OutcomeAborted || obs == nil || obs.State != domain.SessionStateClosing {
 		t.Fatalf("aborted close = obs %+v receipt %+v err %v", obs, rcpt, err)
+	}
+	if rcpt.RollbackRef != "" || len(rcpt.EvidenceRefs) != 0 {
+		t.Fatalf("zero-effect aborted close exposed rollback/evidence: %+v", rcpt)
 	}
 }
 

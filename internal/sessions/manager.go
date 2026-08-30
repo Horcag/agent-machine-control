@@ -336,42 +336,41 @@ func (m *Manager) Write(ctx context.Context, id domain.SessionID, caller domain.
 }
 
 // Control sends a whitelisted terminal control key or escape sequence.
-func (m *Manager) Control(ctx context.Context, id domain.SessionID, caller domain.ActorContext, key domain.ControlKey, _, _ string) error {
+func (m *Manager) Control(ctx context.Context, id domain.SessionID, caller domain.ActorContext, key domain.ControlKey, _, _ string) (int, error) {
 	if !caller.HasScope(domain.ScopeSessionWrite) {
-		return domain.ErrSessionAccessDenied
+		return 0, domain.ErrSessionAccessDenied
 	}
 	if err := domain.ValidateSessionID(string(id)); err != nil {
-		return err
+		return 0, err
 	}
 
 	m.mu.RLock()
 	s, ok := m.sessions[id]
 	m.mu.RUnlock()
 	if !ok || !m.authorize(caller, s) {
-		return domain.ErrSessionNotFound
+		return 0, domain.ErrSessionNotFound
 	}
 
 	s.mu.RLock()
 	state := s.obs.State
 	s.mu.RUnlock()
 	if state.IsTerminal() {
-		return domain.ErrSessionClosed
+		return 0, domain.ErrSessionClosed
 	}
 
 	if err := acquireSessionLane(ctx, s.writeSem); err != nil {
-		return err
+		return 0, err
 	}
 	defer func() { <-s.writeSem }()
 
-	if err := s.channel.SendControl(ctx, key); err != nil {
-		return err
+	n, controlErr := s.channel.SendControl(ctx, key)
+	if n == 0 {
+		return 0, controlErr
 	}
-
 	s.mu.Lock()
 	s.obs.LastActivityAt = m.now()
 	s.mu.Unlock()
-
-	return m.persistSession(s)
+	return n, errors.Join(controlErr, m.persistSession(s))
 }
 
 // Close terminates the session and returns its final observation.

@@ -115,6 +115,34 @@ func TestMutationJournalCancelAndMissingReservation(t *testing.T) {
 	}
 }
 
+func TestMutationResultLegacyEffectTruthIsOnlyDerivedWhenUnambiguous(t *testing.T) {
+	active := &domain.SessionObservation{State: domain.SessionStateActive}
+	terminal := &domain.SessionObservation{State: domain.SessionStateFailed}
+	falseValue := false
+	tests := []struct {
+		name       string
+		kind       domain.OperationKind
+		result     sessions.MutationResult
+		wantEffect bool
+		wantKnown  bool
+	}{
+		{name: "explicit false", kind: "session.control", result: sessions.MutationResult{EffectApplied: &falseValue}, wantKnown: true},
+		{name: "accepted bytes", kind: "session.control", result: sessions.MutationResult{BytesWritten: 1}, wantEffect: true, wantKnown: true},
+		{name: "published open", kind: "session.open", result: sessions.MutationResult{Observation: active}, wantEffect: true, wantKnown: true},
+		{name: "terminal close", kind: "session.close", result: sessions.MutationResult{Observation: terminal}, wantEffect: true, wantKnown: true},
+		{name: "incomplete close", kind: "session.close", result: sessions.MutationResult{Observation: active}},
+		{name: "ambiguous control", kind: "session.control", result: sessions.MutationResult{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotEffect, gotKnown := tt.result.EffectTruth(tt.kind)
+			if gotEffect != tt.wantEffect || gotKnown != tt.wantKnown {
+				t.Fatalf("EffectTruth() = (%v, %v), want (%v, %v)", gotEffect, gotKnown, tt.wantEffect, tt.wantKnown)
+			}
+		})
+	}
+}
+
 func TestMutationJournalHooksFailClosed(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "mutations")
 	op := journalOperation(t, "idem-journal-hooks")
