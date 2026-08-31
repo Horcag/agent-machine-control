@@ -1,6 +1,7 @@
 package lease
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -55,5 +56,48 @@ func TestStateFilePathPreservesValidLeaseAndGenerationNames(t *testing.T) {
 	}
 	if want := filepath.Join(dir, machineID+".gen.json"); genPath != want {
 		t.Errorf("genPath() = %q, want %q", genPath, want)
+	}
+}
+
+func TestLockPathPreservesValidLockName(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewManager(dir)
+	machineID := "a0b1c2d3-e4f5-6789-abcd-ef0123456789"
+
+	lockPath, err := mgr.lockPath(machineID)
+	if err != nil {
+		t.Fatalf("lockPath() error = %v", err)
+	}
+	if want := filepath.Join(dir, machineID+".lock"); lockPath != want {
+		t.Errorf("lockPath() = %q, want %q", lockPath, want)
+	}
+}
+
+func TestWithLockRejectsUnsafeMachineIDsBeforeFilesystemEffects(t *testing.T) {
+	for _, machineID := range []string{"../outside", "/outside", "nested/child", `nested\\child`} {
+		t.Run(machineID, func(t *testing.T) {
+			dir := t.TempDir()
+			mgr := NewManager(dir)
+			called := false
+
+			err := mgr.withLock(context.Background(), machineID, func() error {
+				called = true
+				return nil
+			})
+			if err == nil {
+				t.Fatalf("withLock(%q) unexpectedly succeeded", machineID)
+			}
+			if called {
+				t.Fatalf("withLock(%q) called its operation", machineID)
+			}
+
+			entries, readErr := os.ReadDir(dir)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("withLock(%q) created state: %v", machineID, entries)
+			}
+		})
 	}
 }

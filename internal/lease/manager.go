@@ -111,8 +111,11 @@ func (m *Manager) stateFilePath(machineID, suffix string) (string, error) {
 	return filepath.Join(m.dir, filename), nil
 }
 
-func (m *Manager) lockPath(machineID string) string {
-	return filepath.Join(m.dir, fmt.Sprintf("%s.lock", machineID))
+func (m *Manager) lockPath(machineID string) (string, error) {
+	if _, err := validatedStateMachineID(machineID); err != nil {
+		return "", err
+	}
+	return m.stateFilePath(machineID, ".lock")
 }
 
 func validatedStateMachineID(machineID string) (string, error) {

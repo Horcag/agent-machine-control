@@ -16,7 +16,10 @@ func (m *Manager) withLock(ctx context.Context, machineID string, fn func() erro
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	lockDir := m.lockPath(machineID)
+	lockDir, err := m.lockPath(machineID)
+	if err != nil {
+		return err
+	}
 	ownerPath := filepath.Join(lockDir, "owner.json")
 	runtimeID, pid, startTime := m.identityProvider.CurrentIdentity()
 	now := m.now()

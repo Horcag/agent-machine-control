@@ -29,16 +29,17 @@ func (m *Manager) ReclaimStaleLeases(ctx context.Context) ([]string, error) {
 		}
 
 		machineID := strings.TrimSuffix(entry.Name(), ".lease.json")
-		if machineID == "" {
+		validatedMachineID, validationErr := validatedStateMachineID(machineID)
+		if validationErr != nil {
 			continue
 		}
 
-		didReclaim, err := m.tryReclaimSingle(ctx, machineID, runtimeID, now)
+		didReclaim, err := m.tryReclaimSingle(ctx, validatedMachineID, runtimeID, now)
 		if err != nil {
 			return reclaimed, err
 		}
 		if didReclaim {
-			reclaimed = append(reclaimed, machineID)
+			reclaimed = append(reclaimed, validatedMachineID)
 		}
 	}
 
