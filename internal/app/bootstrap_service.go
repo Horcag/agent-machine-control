@@ -17,7 +17,9 @@ import (
 const (
 	bootstrapTarget            = domain.MachineRef("local-host")
 	bootstrapStopGraceInterval = 5 * time.Second
-	bootstrapPollInterval      = 25 * time.Millisecond
+	// bootstrapPostEffectFinalizationGrace bounds post-effect observation and durable terminal evidence.
+	bootstrapPostEffectFinalizationGrace = 15 * time.Second
+	bootstrapPollInterval                = 25 * time.Millisecond
 )
 
 type bootstrapPoller func(context.Context, time.Duration, func(context.Context) (bool, error)) (bool, error)
@@ -118,7 +120,7 @@ func (s *BootstrapService) mutate(ctx context.Context, kind string, req Bootstra
 	}
 	startedAt := s.now().UTC()
 	effectOutcome, effectErr := effect(ctx, spec)
-	finalizationCtx, cancelFinalization := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	finalizationCtx, cancelFinalization := context.WithTimeout(context.WithoutCancel(ctx), bootstrapPostEffectFinalizationGrace)
 	defer cancelFinalization()
 	result, observeErr := s.observe(finalizationCtx, spec)
 	result.TaskStopApplied = effectOutcome.taskStopApplied

@@ -520,6 +520,7 @@ type fakeBootstrapAdapter struct {
 	startChangesState bool
 	removeErr         error
 	onInspect         func(int)
+	onInspectContext  func(context.Context, int)
 }
 
 func newFakeBootstrapAdapter() *fakeBootstrapAdapter {
@@ -534,10 +535,13 @@ func (f *fakeBootstrapAdapter) Desired(context.Context, string, BootstrapIdentit
 	return syntheticBootstrapSpec(), f.desiredErr
 }
 
-func (f *fakeBootstrapAdapter) Inspect(context.Context, BootstrapSpec) (BootstrapObservation, error) {
+func (f *fakeBootstrapAdapter) Inspect(ctx context.Context, _ BootstrapSpec) (BootstrapObservation, error) {
 	f.inspectCalls++
 	if f.onInspect != nil {
 		f.onInspect(f.inspectCalls)
+	}
+	if f.onInspectContext != nil {
+		f.onInspectContext(ctx, f.inspectCalls)
 	}
 	return f.observation, f.inspectErr
 }
