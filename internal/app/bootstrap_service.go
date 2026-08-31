@@ -17,21 +17,25 @@ import (
 const (
 	bootstrapTarget            = domain.MachineRef("local-host")
 	bootstrapStopGraceInterval = 5 * time.Second
-	// bootstrapPostEffectFinalizationGrace bounds post-effect observation and durable terminal evidence.
-	bootstrapPostEffectFinalizationGrace = 15 * time.Second
-	bootstrapPollInterval                = 25 * time.Millisecond
+	// bootstrapPostEffectObservationGrace leaves headroom for a live Windows task inspection.
+	bootstrapPostEffectObservationGrace = 20 * time.Second
+	// bootstrapDurableEvidenceGrace reserves time to persist terminal receipt and audit evidence.
+	bootstrapDurableEvidenceGrace = 5 * time.Second
+	bootstrapPollInterval         = 25 * time.Millisecond
 )
 
 type bootstrapPoller func(context.Context, time.Duration, func(context.Context) (bool, error)) (bool, error)
 
 type BootstrapService struct {
-	adapter      BootstrapAdapter
-	daemon       BootstrapDaemon
-	auditStore   *audit.Store
-	receiptStore *receipt.Store
-	now          func() time.Time
-	stopGrace    time.Duration
-	poll         bootstrapPoller
+	adapter          BootstrapAdapter
+	daemon           BootstrapDaemon
+	auditStore       *audit.Store
+	receiptStore     *receipt.Store
+	now              func() time.Time
+	stopGrace        time.Duration
+	observationGrace time.Duration
+	evidenceGrace    time.Duration
+	poll             bootstrapPoller
 }
 
 type BootstrapServiceOption func(*BootstrapService)
@@ -47,7 +51,9 @@ func WithBootstrapClock(now func() time.Time) BootstrapServiceOption {
 func NewBootstrapService(adapter BootstrapAdapter, daemon BootstrapDaemon, auditStore *audit.Store, receiptStore *receipt.Store, options ...BootstrapServiceOption) *BootstrapService {
 	service := &BootstrapService{
 		adapter: adapter, daemon: daemon, auditStore: auditStore, receiptStore: receiptStore,
-		now: time.Now, stopGrace: bootstrapStopGraceInterval, poll: pollBootstrapCondition,
+		now: time.Now, stopGrace: bootstrapStopGraceInterval,
+		observationGrace: bootstrapPostEffectObservationGrace, evidenceGrace: bootstrapDurableEvidenceGrace,
+		poll: pollBootstrapCondition,
 	}
 	for _, option := range options {
 		option(service)
@@ -120,15 +126,17 @@ func (s *BootstrapService) mutate(ctx context.Context, kind string, req Bootstra
 	}
 	startedAt := s.now().UTC()
 	effectOutcome, effectErr := effect(ctx, spec)
-	finalizationCtx, cancelFinalization := context.WithTimeout(context.WithoutCancel(ctx), bootstrapPostEffectFinalizationGrace)
-	defer cancelFinalization()
-	result, observeErr := s.observe(finalizationCtx, spec)
+	observationCtx, cancelObservation := context.WithTimeout(context.WithoutCancel(ctx), s.observationGrace)
+	result, observeErr := s.observe(observationCtx, spec)
+	cancelObservation()
 	result.TaskStopApplied = effectOutcome.taskStopApplied
 	if effectErr == nil {
 		effectErr = observeErr
 	}
 	result = normalizeBootstrapMutationResult(kind, result, effectErr)
-	receiptRecord, receiptErr := s.finalize(finalizationCtx, op, startedAt, result, effectErr)
+	evidenceCtx, cancelEvidence := context.WithTimeout(context.WithoutCancel(ctx), s.evidenceGrace)
+	defer cancelEvidence()
+	receiptRecord, receiptErr := s.finalize(evidenceCtx, op, startedAt, result, effectErr)
 	if receiptRecord != nil {
 		result.ReceiptID = string(receiptRecord.ReceiptID)
 	}
