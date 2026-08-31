@@ -13,6 +13,8 @@ import (
 
 const stateDirectoryFullAccess = 0x001f01ff
 
+func ensurePlatformStateDirectories([]string, string) (bool, error) { return false, nil }
+
 // createPlatformPrivateDirectory creates a directory with its final owner and protected DACL.
 // It intentionally never re-opens the pathname to establish the initial security contract.
 func createPlatformPrivateDirectory(path string, allowTargetInheritance bool) error {
@@ -45,6 +47,8 @@ func validatePlatformPrivateDirectory(path string, allowTargetInheritance bool) 
 	}
 	return validatePlatformPrivateDirectoryOwner(path, user.User.Sid, allowTargetInheritance)
 }
+
+func isWindowsHostBackedStatePath(string) (bool, error) { return false, nil }
 
 func currentStateDirUser() (*windows.Tokenuser, error) {
 	token, err := windows.OpenCurrentProcessToken()

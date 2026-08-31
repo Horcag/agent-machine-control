@@ -3,17 +3,16 @@
 package target
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/Horcag/agent-machine-control/internal/wslruntime"
 )
 
 const windowsGuardScript = `$ErrorActionPreference = 'Stop'
@@ -274,54 +273,5 @@ func boundedCommandOutput(command *exec.Cmd) ([]byte, error) {
 }
 
 func detectWindowsHostPath(path string) (bool, error) {
-	cleaned := filepath.Clean(path)
-	parts := strings.FieldsFunc(filepath.ToSlash(cleaned), func(r rune) bool { return r == '/' })
-	if len(parts) >= 2 && parts[0] == "mnt" && len(parts[1]) == 1 && isASCIILetter(parts[1][0]) {
-		return true, nil
-	}
-	file, err := os.Open("/proc/self/mountinfo")
-	if err != nil {
-		return false, nil
-	}
-	defer file.Close()
-	bestMount := ""
-	bestHostBacked := false
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		fields := strings.Fields(scanner.Text())
-		separator := indexOf(fields, "-")
-		if separator < 0 || separator+2 >= len(fields) || len(fields) < 5 {
-			continue
-		}
-		mountPoint := strings.ReplaceAll(fields[4], `\040`, " ")
-		if !pathWithin(cleaned, mountPoint) || len(mountPoint) <= len(bestMount) {
-			continue
-		}
-		fsType := fields[separator+1]
-		sourceAndOptions := strings.Join(fields[separator+2:], " ")
-		bestMount = mountPoint
-		bestHostBacked = fsType == "drvfs" || fsType == "9p" && strings.Contains(sourceAndOptions, "drvfs")
-	}
-	if err := scanner.Err(); err != nil {
-		return false, fmt.Errorf("inspect mount table: %w", err)
-	}
-	return bestHostBacked, nil
-}
-
-func indexOf(values []string, needle string) int {
-	for index, value := range values {
-		if value == needle {
-			return index
-		}
-	}
-	return -1
-}
-
-func pathWithin(path, root string) bool {
-	relative, err := filepath.Rel(root, path)
-	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
-}
-
-func isASCIILetter(value byte) bool {
-	return value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z'
+	return wslruntime.IsWindowsHostPath(path)
 }

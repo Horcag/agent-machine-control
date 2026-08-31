@@ -109,6 +109,11 @@ func (s *StateDir) EnsureDirs() error {
 		s.MachinesDir(),
 		s.TargetsDir(),
 	}
+	if handled, err := ensurePlatformStateDirectories(subdirs, s.TargetsDir()); err != nil {
+		return err
+	} else if handled {
+		return nil
+	}
 
 	for _, dir := range subdirs {
 		if err := ensureSingleDir(dir, dir == s.TargetsDir()); err != nil {
@@ -178,7 +183,11 @@ func validateExistingDir(dir string, fi os.FileInfo, allowTargetInheritance bool
 	if !fi.IsDir() {
 		return fmt.Errorf("state path %q exists and is not a directory", dir)
 	}
-	if runtime.GOOS != "windows" {
+	hostBacked, err := isWindowsHostBackedStatePath(dir)
+	if err != nil {
+		return fmt.Errorf("%w: determine state-directory filesystem: %v", ErrInsecurePermissions, err)
+	}
+	if runtime.GOOS != "windows" && !hostBacked {
 		if fi.Mode().Perm() != DirPerm {
 			if err := os.Chmod(dir, DirPerm); err != nil {
 				return fmt.Errorf("%w: directory %q has mode %04o and chmod failed: %v", ErrInsecurePermissions, dir, fi.Mode().Perm(), err)

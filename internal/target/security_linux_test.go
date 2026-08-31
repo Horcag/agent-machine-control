@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Horcag/agent-machine-control/internal/wslruntime"
 )
 
 type recordingWindowsGuard struct {
@@ -214,7 +216,10 @@ func TestHostBackedSaveRejectsSymlinkComponentBeforeCreatingTemporaryState(t *te
 	}
 }
 
-func TestHostPathDetectorRecognizesDriveMountShape(t *testing.T) {
+func TestHostPathDetectorRecognizesLiveWindowsDriveMount(t *testing.T) {
+	if !wslruntime.IsWSL() {
+		t.Skip("live Windows-drive mount is only available under WSL")
+	}
 	hostBacked, err := detectWindowsHostPath("/mnt/c/ProgramData/amc/targets")
 	if err != nil || !hostBacked {
 		t.Fatalf("detectWindowsHostPath = %t, %v", hostBacked, err)
