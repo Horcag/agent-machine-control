@@ -36,6 +36,7 @@ func TestPowerShellAdapterIdentityDesiredAndLifecycleActions(t *testing.T) {
 		},
 		executable:  func() (string, error) { return binary, nil },
 		currentUser: func() (*user.User, error) { return &user.User{Username: "operator"}, nil },
+		wslRuntime:  func() bool { return true },
 	}
 	identity, err := adapter.Identity(context.Background())
 	if err != nil {
@@ -66,12 +67,64 @@ func TestPowerShellAdapterIdentityDesiredAndLifecycleActions(t *testing.T) {
 	}
 }
 
+func TestPowerShellAdapterDesiredUsesEnvironmentDistroBeforeDefault(t *testing.T) {
+	t.Parallel()
+
+	adapter := newTestPowerShellAdapter(t, "Environment-WSL", "Registry-WSL")
+	identity, err := adapter.Identity(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := adapter.Desired(t.Context(), t.TempDir(), identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Distro != "Environment-WSL" {
+		t.Fatalf("distro = %q, want environment distro", spec.Distro)
+	}
+}
+
+func TestPowerShellAdapterDesiredUsesTrustedDefaultDistroWhenEnvironmentIsStripped(t *testing.T) {
+	t.Parallel()
+
+	adapter := newTestPowerShellAdapter(t, "", "Ubuntu-24.04")
+	identity, err := adapter.Identity(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := adapter.Desired(t.Context(), t.TempDir(), identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Distro != "Ubuntu-24.04" {
+		t.Fatalf("distro = %q, want trusted default", spec.Distro)
+	}
+}
+
+func TestPowerShellAdapterDesiredRejectsMissingOrMalformedDefaultDistro(t *testing.T) {
+	t.Parallel()
+
+	for _, distro := range []string{"", "Ubuntu 24.04"} {
+		t.Run(distro, func(t *testing.T) {
+			adapter := newTestPowerShellAdapter(t, "", distro)
+			identity, err := adapter.Identity(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := adapter.Desired(t.Context(), t.TempDir(), identity); !errors.Is(err, app.ErrBootstrapUnsupported) {
+				t.Fatalf("Desired() error = %v, want unsupported", err)
+			}
+		})
+	}
+}
+
 func TestPowerShellAdapterFailsClosedOnUnsupportedOrMalformedHost(t *testing.T) {
 	t.Parallel()
 
 	adapter := &PowerShellAdapter{
-		runner: &fakeCommandRunner{raw: []byte(`{"account":"only"}`)},
-		getenv: func(string) string { return "" },
+		runner:     &fakeCommandRunner{raw: []byte(`{"account":"only"}`)},
+		getenv:     func(string) string { return "" },
+		wslRuntime: func() bool { return false },
 	}
 	if _, err := adapter.Desired(context.Background(), "/state", app.BootstrapIdentity{}); !errors.Is(err, app.ErrBootstrapUnsupported) {
 		t.Fatalf("Desired() error = %v, want unsupported", err)
@@ -81,6 +134,23 @@ func TestPowerShellAdapterFailsClosedOnUnsupportedOrMalformedHost(t *testing.T) 
 	}
 	if err := decodeSingleJSON([]byte(`{} {}`), &hostContext{}); err == nil {
 		t.Fatal("decodeSingleJSON() accepted trailing JSON")
+	}
+}
+
+func TestHostContextScriptReadsOneCurrentUserDefaultDistro(t *testing.T) {
+	t.Parallel()
+
+	for _, required := range []string{
+		`HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss`,
+		"DefaultDistribution",
+		"PSChildName",
+		"DistributionName",
+		"$matches.Count -eq 1",
+		"default_distro = $defaultDistro",
+	} {
+		if !strings.Contains(hostContextScript, required) {
+			t.Errorf("host context script missing %q", required)
+		}
 	}
 }
 
@@ -98,6 +168,7 @@ func TestPowerShellAdapterPropagatesDependencyAndSchedulerFailures(t *testing.T)
 		getenv:      func(string) string { return "Synthetic-WSL" },
 		currentUser: func() (*user.User, error) { return nil, errors.New("user lookup failed") },
 		executable:  func() (string, error) { return "", errors.New("executable lookup failed") },
+		wslRuntime:  func() bool { return true },
 	}
 	if _, err := base.Desired(context.Background(), "/state", identity); err == nil {
 		t.Fatal("Desired() ignored current-user lookup failure")
@@ -253,6 +324,32 @@ type fakeCommandRunner struct {
 	raw          []byte
 	schedulerRaw []byte
 	actions      []string
+}
+
+func newTestPowerShellAdapter(t *testing.T, environmentDistro, defaultDistro string) *PowerShellAdapter {
+	t.Helper()
+	binary := filepath.Join(t.TempDir(), "amcd")
+	if err := os.WriteFile(binary, []byte("synthetic-amcd"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	host := hostContext{
+		Account: `SYNTHETIC\operator`, SID: "S-1-5-21-1000",
+		LocalAppData: `C:\Users\operator\AppData\Local`, SystemRoot: `C:\Windows`,
+		WSLExecutable: `C:\Windows\System32\wsl.exe`, CmdExecutable: `C:\Windows\System32\cmd.exe`,
+		DefaultDistro: defaultDistro,
+	}
+	return &PowerShellAdapter{
+		runner: &fakeCommandRunner{host: host},
+		getenv: func(name string) string {
+			if name == "WSL_DISTRO_NAME" {
+				return environmentDistro
+			}
+			return ""
+		},
+		executable:  func() (string, error) { return binary, nil },
+		currentUser: func() (*user.User, error) { return &user.User{Username: "operator"}, nil },
+		wslRuntime:  func() bool { return true },
+	}
 }
 
 func containsString(values []string, wanted string) bool {

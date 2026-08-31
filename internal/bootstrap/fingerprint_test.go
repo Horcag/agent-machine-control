@@ -35,20 +35,32 @@ func TestPowerShellFingerprintRegressions(t *testing.T) {
 func TestPowerShellSchedulerScriptParses(t *testing.T) {
 	t.Parallel()
 
+	assertPowerShellParses(t, taskSchedulerScript, "scheduler")
+}
+
+func TestPowerShellHostContextScriptParses(t *testing.T) {
+	t.Parallel()
+
+	assertPowerShellParses(t, hostContextScript, "host context")
+}
+
+func assertPowerShellParses(t *testing.T, script, name string) {
+	t.Helper()
+
 	path, err := exec.LookPath("powershell.exe")
 	if err != nil {
-		t.Skip("powershell.exe is required for scheduler parser validation")
+		t.Skipf("powershell.exe is required for %s parser validation", name)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
-	command := "$source = [Console]::In.ReadToEnd(); [scriptblock]::Create($source) | Out-Null; 'bootstrap scheduler parser: passed'"
+	command := "$source = [Console]::In.ReadToEnd(); [scriptblock]::Create($source) | Out-Null; 'bootstrap parser: passed'"
 	cmd := exec.CommandContext(ctx, path, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command)
-	cmd.Stdin = strings.NewReader(taskSchedulerScript)
+	cmd.Stdin = strings.NewReader(script)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("PowerShell scheduler parser failed: %v\n%s", err, out)
+		t.Fatalf("PowerShell %s parser failed: %v\n%s", name, err, out)
 	}
-	if !strings.Contains(string(out), "bootstrap scheduler parser: passed") {
-		t.Fatalf("PowerShell scheduler parser did not report success:\n%s", out)
+	if !strings.Contains(string(out), "bootstrap parser: passed") {
+		t.Fatalf("PowerShell %s parser did not report success:\n%s", name, out)
 	}
 }

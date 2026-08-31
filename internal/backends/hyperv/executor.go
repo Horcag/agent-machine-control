@@ -6,10 +6,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"runtime"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/Horcag/agent-machine-control/internal/wslruntime"
 )
 
 const (
@@ -30,7 +31,9 @@ type Executor interface {
 }
 
 // DefaultExecutor executes commands using the operating system's process runner.
-type DefaultExecutor struct{}
+type DefaultExecutor struct {
+	wslRuntime func() bool
+}
 
 // LookPath searches for an executable in the system PATH.
 func (e *DefaultExecutor) LookPath(file string) (string, error) {
@@ -48,7 +51,7 @@ func (e *DefaultExecutor) Execute(ctx context.Context, name string, args []strin
 
 	cmd := exec.CommandContext(execCtx, name, args...)
 	if len(env) > 0 {
-		cmd.Env = commandEnvironment(os.Environ(), env, runningUnderWSL())
+		cmd.Env = commandEnvironment(os.Environ(), env, e.runningUnderWSL())
 	}
 
 	stdoutBuf := newBoundedBuffer(MaxStdoutBytes)
@@ -68,11 +71,11 @@ func (e *DefaultExecutor) Execute(ctx context.Context, name string, args []strin
 	return stdoutBuf.Bytes(), stderrBuf.Bytes(), runErr
 }
 
-func runningUnderWSL() bool {
-	if runtime.GOOS != "linux" {
-		return false
+func (e *DefaultExecutor) runningUnderWSL() bool {
+	if e.wslRuntime != nil {
+		return e.wslRuntime()
 	}
-	return os.Getenv("WSL_INTEROP") != "" || os.Getenv("WSL_DISTRO_NAME") != ""
+	return wslruntime.IsWSL()
 }
 
 func commandEnvironment(base, explicit []string, wslInterop bool) []string {

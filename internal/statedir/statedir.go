@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/Horcag/agent-machine-control/internal/wslruntime"
 )
 
 const (
@@ -299,22 +301,7 @@ func isWSL() bool {
 	if os.Getenv("AMC_TEST_NON_WSL") == "1" {
 		return false
 	}
-	if os.Getenv("WSL_DISTRO_NAME") != "" || os.Getenv("WSL_INTEROP") != "" {
-		return true
-	}
-	if data, err := os.ReadFile("/proc/sys/kernel/osrelease"); err == nil {
-		s := strings.ToLower(string(data))
-		if strings.Contains(s, "microsoft") || strings.Contains(s, "wsl") {
-			return true
-		}
-	}
-	if data, err := os.ReadFile("/proc/version"); err == nil {
-		s := strings.ToLower(string(data))
-		if strings.Contains(s, "microsoft") || strings.Contains(s, "wsl") {
-			return true
-		}
-	}
-	return false
+	return wslruntime.IsWSL()
 }
 
 func resolveWSLHostStateDir() (string, error) {

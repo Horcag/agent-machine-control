@@ -19,6 +19,7 @@ import (
 
 	"github.com/Horcag/agent-machine-control/internal/app"
 	"github.com/Horcag/agent-machine-control/internal/statedir"
+	"github.com/Horcag/agent-machine-control/internal/wslruntime"
 )
 
 const (
@@ -43,6 +44,7 @@ type PowerShellAdapter struct {
 	getenv      func(string) string
 	executable  func() (string, error)
 	currentUser func() (*user.User, error)
+	wslRuntime  func() bool
 }
 
 func NewPowerShellAdapter() *PowerShellAdapter {
@@ -59,6 +61,7 @@ type hostContext struct {
 	SystemRoot    string `json:"system_root"`
 	WSLExecutable string `json:"wsl_executable"`
 	CmdExecutable string `json:"cmd_executable"`
+	DefaultDistro string `json:"default_distro"`
 }
 
 func (a *PowerShellAdapter) Identity(ctx context.Context) (app.BootstrapIdentity, error) {
@@ -85,6 +88,9 @@ func (a *PowerShellAdapter) Desired(ctx context.Context, stateDir string, identi
 		return app.BootstrapSpec{}, fmt.Errorf("%w: Windows identity changed during bootstrap", app.ErrBootstrapDrift)
 	}
 	distro := strings.TrimSpace(a.getenv("WSL_DISTRO_NAME"))
+	if distro == "" {
+		distro = strings.TrimSpace(host.DefaultDistro)
+	}
 	currentUser, err := a.currentUser()
 	if err != nil {
 		return app.BootstrapSpec{}, fmt.Errorf("%w: current Linux user unavailable", app.ErrBootstrapUnsupported)
@@ -141,7 +147,10 @@ func (a *PowerShellAdapter) readHostContext(ctx context.Context) (hostContext, e
 }
 
 func (a *PowerShellAdapter) isWSL() bool {
-	return strings.TrimSpace(a.getenv("WSL_DISTRO_NAME")) != "" || strings.TrimSpace(a.getenv("WSL_INTEROP")) != ""
+	if a.wslRuntime != nil {
+		return a.wslRuntime()
+	}
+	return wslruntime.IsWSL()
 }
 
 func (a *PowerShellAdapter) invoke(ctx context.Context, action string, spec app.BootstrapSpec) (app.BootstrapObservation, error) {
@@ -229,6 +238,20 @@ func runPowerShellCommand(ctx context.Context, path string, args, env []string) 
 const hostContextScript = `$ErrorActionPreference = 'Stop'
 $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
 $root = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+$defaultDistro = $null
+try {
+  $lxssPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss'
+  $defaultDistribution = (Get-ItemProperty -LiteralPath $lxssPath -Name DefaultDistribution -ErrorAction Stop).DefaultDistribution
+  $matches = @(Get-ChildItem -LiteralPath $lxssPath -ErrorAction Stop | ForEach-Object {
+    $distribution = Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction Stop
+    if ([string]$_.PSChildName -eq [string]$defaultDistribution) {
+      [string]$distribution.DistributionName
+    }
+  } | Where-Object { $_ })
+  if ($matches.Count -eq 1) {
+    $defaultDistro = $matches[0]
+  }
+} catch {}
 [pscustomobject]@{
   account = $identity.Name
   sid = $identity.User.Value
@@ -236,6 +259,7 @@ $root = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicati
   system_root = $env:SystemRoot
   wsl_executable = [IO.Path]::Combine($env:SystemRoot, 'System32', 'wsl.exe')
   cmd_executable = [IO.Path]::Combine($env:SystemRoot, 'System32', 'cmd.exe')
+  default_distro = $defaultDistro
 } | ConvertTo-Json -Compress
 `
 
