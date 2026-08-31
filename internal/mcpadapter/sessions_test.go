@@ -111,6 +111,7 @@ func setupMCPSessionTest(t *testing.T) (*Adapter, func()) {
 
 	cl := client.New(server.URL, tokenStr)
 	adapter := NewAdapter(tempDir)
+	adapter.allowUnscopedTestTargetFallback = true
 	adapter.client = cl
 
 	return adapter, func() {
@@ -209,7 +210,7 @@ func TestMCPSessions_SubSecondTimeoutsReachClientAsMilliseconds(t *testing.T) {
 	captured := make(map[string]map[string]any)
 	server := newSubSecondSessionCaptureServer(t, captured, sessID, machGUID)
 	defer server.Close()
-	adapter := &Adapter{client: client.New(server.URL, strings.Repeat("a", 64))}
+	adapter := &Adapter{client: client.New(server.URL, strings.Repeat("a", 64)), allowUnscopedTestTargetFallback: true}
 	ctx := context.Background()
 
 	approvalID := "app-mcp-session-reference"
@@ -452,6 +453,7 @@ func TestMCPSessions_ClientFailures(t *testing.T) {
 
 	// Unconfigured client
 	adapterUnconfigured := NewAdapter(t.TempDir())
+	adapterUnconfigured.allowUnscopedTestTargetFallback = true
 	testMCPMutationsError(ctx, t, adapterUnconfigured, machGUID, sessID, "unconfigured client")
 	testMCPReadsError(ctx, t, adapterUnconfigured, sessID, "unconfigured client")
 
@@ -464,6 +466,7 @@ func TestMCPSessions_ClientFailures(t *testing.T) {
 
 	clFailing := client.New(failingServer.URL, "token")
 	adapterFailing := NewAdapter(t.TempDir())
+	adapterFailing.allowUnscopedTestTargetFallback = true
 	adapterFailing.client = clFailing
 
 	testMCPMutationsError(ctx, t, adapterFailing, machGUID, sessID, "server 500 error")

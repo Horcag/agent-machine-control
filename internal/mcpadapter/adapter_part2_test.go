@@ -221,8 +221,9 @@ func TestHandlersErrorPaths(t *testing.T) {
 		chkListErr: errors.New("chklist failed"),
 	}
 	a := &Adapter{
-		discoveryService: app.NewDiscoveryService(mockObs),
-		recoveryService:  app.NewRecoveryService(mockObs, nil, nil, nil, nil),
+		allowUnscopedTestTargetFallback: true,
+		discoveryService:                app.NewDiscoveryService(mockObs),
+		recoveryService:                 app.NewRecoveryService(mockObs, nil, nil, nil, nil),
 	}
 
 	// 1. Discovery/Recovery Errors
@@ -346,7 +347,7 @@ func TestHandlersClientErrors(t *testing.T) {
 	defer server.Close()
 
 	cl := client.New(server.URL, "token")
-	a := &Adapter{client: cl}
+	a := &Adapter{client: cl, allowUnscopedTestTargetFallback: true}
 
 	// Stdio/client error cases where handlers return mcpToolError
 	if res, _, _ := a.MachineStart(ctx, nil, MachineStartInput{ID: "c4a523d4-6b99-4d62-a5e2-4752c0f20001", Reason: "reason", IdempotencyKey: "key", Timeout: "30s"}); res == nil || !res.IsError {

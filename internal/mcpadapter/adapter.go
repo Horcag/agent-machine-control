@@ -29,13 +29,16 @@ const SchemaVersion = "1"
 
 // Adapter contains dependencies to handle MCP requests.
 type Adapter struct {
-	stateDir         string
-	client           *client.Client
-	discoveryService *app.DiscoveryService
-	recoveryService  *app.RecoveryService
-	targetService    *app.TargetService
+	stateDir                        string
+	client                          *client.Client
+	discoveryService                *app.DiscoveryService
+	recoveryService                 *app.RecoveryService
+	targetService                   *app.TargetService
+	allowUnscopedTestTargetFallback bool
 }
 
+// NewAdapter constructs the production MCP adapter. Production handlers require
+// protected target state before they can reach a provider or daemon mutation.
 func NewAdapter(stateDir string) *Adapter {
 	return &Adapter{stateDir: stateDir}
 }
@@ -136,47 +139,6 @@ func NewInputError(reason string) error {
 	return &InputError{Reason: reason}
 }
 
-func mcpToolError(err error) *mcp.CallToolResult {
-	if err == nil {
-		return &mcp.CallToolResult{
-			IsError: true,
-			Content: []mcp.Content{
-				&mcp.TextContent{Text: "unknown error"},
-			},
-		}
-	}
-	var inputErr *InputError
-	var cleanMsg string
-	if errors.As(err, &inputErr) {
-		cleanMsg = inputErr.Error()
-	} else {
-		msg := err.Error()
-		switch {
-		case strings.Contains(msg, "connection refused") || strings.Contains(msg, "dial tcp"):
-			cleanMsg = "service connection failed: daemon is unreachable"
-		case strings.Contains(msg, "unauthorized") || strings.Contains(msg, "token"):
-			cleanMsg = "authentication failed"
-		case strings.Contains(msg, "not found") || strings.Contains(msg, "404"):
-			cleanMsg = "requested resource not found"
-		case strings.Contains(msg, "timeout") || strings.Contains(msg, "deadline exceeded"):
-			cleanMsg = "operation timeout exceeded"
-		case strings.Contains(msg, "domain:"):
-			cleanMsg = msg
-		default:
-			cleanMsg = "an internal daemon error occurred"
-		}
-	}
-	if len(cleanMsg) > 200 {
-		cleanMsg = cleanMsg[:197] + "..."
-	}
-	return &mcp.CallToolResult{
-		IsError: true,
-		Content: []mcp.Content{
-			&mcp.TextContent{Text: cleanMsg},
-		},
-	}
-}
-
 func parseTimeout(timeoutStr string, required bool) (time.Duration, error) {
 	if timeoutStr == "" {
 		if required {
@@ -200,22 +162,6 @@ func parseTimeout(timeoutStr string, required bool) (time.Duration, error) {
 func validateMutationParams(targetID, reason, idempotencyKey string) error {
 	if err := domain.ValidateMachineGUID(targetID); err != nil {
 		return NewInputError("invalid target GUID")
-	}
-	if err := domain.ValidateReason(reason); err != nil {
-		return NewInputError("invalid reason")
-	}
-	if err := domain.ValidateIdempotencyKey(idempotencyKey); err != nil {
-		return NewInputError("invalid idempotency key")
-	}
-	return nil
-}
-
-func (a *Adapter) validateMutationTarget(targetID, reason, idempotencyKey string) error {
-	if a.stateDir == "" && a.targetService == nil {
-		return validateMutationParams(targetID, reason, idempotencyKey)
-	}
-	if targetID != "" && strings.TrimSpace(targetID) != targetID {
-		return NewInputError("invalid target reference")
 	}
 	if err := domain.ValidateReason(reason); err != nil {
 		return NewInputError("invalid reason")
@@ -480,7 +426,12 @@ func runHTTPListener(
 
 // Run executes the MCP adapter server according to the configuration.
 func Run(stateDir string, listenAddr string, _, stderr io.Writer) int {
-	a := NewAdapter(stateDir)
+	state, err := statedir.Resolve(stateDir)
+	if err != nil {
+		fmt.Fprintf(stderr, "amc-mcp: failed to resolve state directory: %v\n", err)
+		return 2
+	}
+	a := NewAdapter(state.Root())
 	server := a.BuildServer()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -493,5 +444,5 @@ func Run(stateDir string, listenAddr string, _, stderr io.Writer) int {
 	if listenAddr == "" {
 		return runStdio(ctx, server, sigChan, cancel, stderr)
 	}
-	return runHTTP(ctx, server, stateDir, listenAddr, sigChan, stderr)
+	return runHTTP(ctx, server, state.Root(), listenAddr, sigChan, stderr)
 }

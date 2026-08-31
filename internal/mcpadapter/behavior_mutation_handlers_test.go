@@ -46,7 +46,7 @@ func TestMachineStopCarriesServerIssuedApprovalReference(t *testing.T) {
 	}))
 	defer server.Close()
 
-	adapter := &Adapter{client: client.New(server.URL, "token")}
+	adapter := &Adapter{client: client.New(server.URL, "token"), allowUnscopedTestTargetFallback: true}
 	toolError, result, err := adapter.MachineStop(t.Context(), nil, MachineStopInput{
 		ID: "c4a523d4-6b99-4d62-a5e2-4752c0f20001", Mode: "turn-off",
 		Reason: "approved MCP stop", IdempotencyKey: "approved-mcp-stop", Timeout: "1m",
@@ -74,7 +74,8 @@ func TestMachineList_EmptyAndSorting(t *testing.T) {
 		machines: []domain.MachineObservation{},
 	}
 	a := &Adapter{
-		discoveryService: app.NewDiscoveryService(mockObs),
+		allowUnscopedTestTargetFallback: true,
+		discoveryService:                app.NewDiscoveryService(mockObs),
 	}
 	res, listRes, err := a.MachineList(ctx, nil, MachineListInput{})
 	if err != nil {
@@ -163,7 +164,7 @@ func TestMutation_TerminalDenial(t *testing.T) {
 	}))
 	defer serverDenial.Close()
 
-	aDenial := &Adapter{client: client.New(serverDenial.URL, "token")}
+	aDenial := &Adapter{client: client.New(serverDenial.URL, "token"), allowUnscopedTestTargetFallback: true}
 	resDenial, _, _ := aDenial.MachineStart(ctx, nil, MachineStartInput{
 		ID:             "c4a523d4-6b99-4d62-a5e2-4752c0f20001",
 		Reason:         "test",
@@ -193,7 +194,7 @@ func TestMutation_MissingReceipt(t *testing.T) {
 	}))
 	defer serverNoReceipt.Close()
 
-	aNoRcpt := &Adapter{client: client.New(serverNoReceipt.URL, "token")}
+	aNoRcpt := &Adapter{client: client.New(serverNoReceipt.URL, "token"), allowUnscopedTestTargetFallback: true}
 	resNoRcpt, _, _ := aNoRcpt.MachineStart(ctx, nil, MachineStartInput{
 		ID:             "c4a523d4-6b99-4d62-a5e2-4752c0f20001",
 		Reason:         "test",
@@ -226,7 +227,7 @@ func TestMutation_ReceiptFetchFailure(t *testing.T) {
 	}))
 	defer serverFetchErr.Close()
 
-	aFetchErr := &Adapter{client: client.New(serverFetchErr.URL, "token")}
+	aFetchErr := &Adapter{client: client.New(serverFetchErr.URL, "token"), allowUnscopedTestTargetFallback: true}
 	resFetchErr, _, _ := aFetchErr.MachineStart(ctx, nil, MachineStartInput{
 		ID:             "c4a523d4-6b99-4d62-a5e2-4752c0f20001",
 		Reason:         "test",

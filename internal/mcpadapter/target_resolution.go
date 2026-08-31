@@ -2,7 +2,10 @@ package mcpadapter
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/Horcag/agent-machine-control/internal/app"
 	"github.com/Horcag/agent-machine-control/internal/backends/hyperv"
@@ -11,24 +14,33 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/target"
 )
 
+var errProtectedTargetUnavailable = errors.New("mcp: protected target state is unavailable")
+
 func (a *Adapter) getTargetService() (*app.TargetService, error) {
 	if a.targetService != nil {
 		return a.targetService, nil
 	}
-	if a.stateDir == "" {
+	if a.allowUnscopedTestTargetFallback {
 		return nil, nil
+	}
+	if strings.TrimSpace(a.stateDir) == "" {
+		return nil, errProtectedTargetUnavailable
 	}
 	sd, err := statedir.Resolve(a.stateDir)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", errProtectedTargetUnavailable, err)
+	}
+	info, err := os.Stat(sd.Root())
+	if err != nil || !info.IsDir() {
+		return nil, errProtectedTargetUnavailable
 	}
 	inventory, err := app.NewTrustedInventory(nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", errProtectedTargetUnavailable, err)
 	}
 	store, err := target.NewStore(sd.TargetsDir())
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", errProtectedTargetUnavailable, err)
 	}
 	backend := hyperv.New()
 	service, err := app.NewTargetService(inventory, store, app.WithTargetRefresh(func(ctx context.Context) error {
@@ -41,7 +53,7 @@ func (a *Adapter) getTargetService() (*app.TargetService, error) {
 		return refreshErr
 	}))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", errProtectedTargetUnavailable, err)
 	}
 	a.targetService = service
 	return service, nil
@@ -49,14 +61,34 @@ func (a *Adapter) getTargetService() (*app.TargetService, error) {
 
 func (a *Adapter) resolveTarget(ctx context.Context, reference string) (*app.TargetResolution, error) {
 	service, err := a.getTargetService()
-	if err != nil || service == nil {
-		return nil, err
-	}
-	resolution, err := service.ResolveTarget(ctx, reference)
 	if err != nil {
 		return nil, err
 	}
+	if service == nil {
+		if a.allowUnscopedTestTargetFallback {
+			return nil, nil
+		}
+		return nil, errProtectedTargetUnavailable
+	}
+	resolution, err := service.ResolveTarget(ctx, reference)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errProtectedTargetUnavailable, err)
+	}
 	return &resolution, nil
+}
+
+func (a *Adapter) validateMutationTarget(ctx context.Context, targetID, reason, idempotencyKey string) error {
+	if targetID != "" && strings.TrimSpace(targetID) != targetID {
+		return NewInputError("invalid target reference")
+	}
+	if err := domain.ValidateReason(reason); err != nil {
+		return NewInputError("invalid reason")
+	}
+	if err := domain.ValidateIdempotencyKey(idempotencyKey); err != nil {
+		return NewInputError("invalid idempotency key")
+	}
+	_, err := a.resolveTarget(ctx, targetID)
+	return err
 }
 
 func (a *Adapter) observeTargetMachine(ctx context.Context, reference string, fallback MachineDTO) (MachineDTO, error) {

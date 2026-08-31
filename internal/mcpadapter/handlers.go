@@ -39,7 +39,7 @@ func (a *Adapter) Doctor(ctx context.Context, _ *mcp.CallToolRequest, _ DoctorIn
 }
 
 func (a *Adapter) MachineStart(ctx context.Context, _ *mcp.CallToolRequest, in MachineStartInput) (*mcp.CallToolResult, MachineMutationResult, error) {
-	if err := a.validateMutationTarget(in.ID, in.Reason, in.IdempotencyKey); err != nil {
+	if err := a.validateMutationTarget(ctx, in.ID, in.Reason, in.IdempotencyKey); err != nil {
 		return mcpToolError(err), MachineMutationResult{}, nil
 	}
 	if err := domain.ValidateOperationParameters("machine.start", nil); err != nil {
@@ -106,7 +106,7 @@ func (a *Adapter) MachineStart(ctx context.Context, _ *mcp.CallToolRequest, in M
 
 //nolint:dupl
 func (a *Adapter) MachineStop(ctx context.Context, _ *mcp.CallToolRequest, in MachineStopInput) (*mcp.CallToolResult, MachineMutationResult, error) {
-	if err := a.validateMutationTarget(in.ID, in.Reason, in.IdempotencyKey); err != nil {
+	if err := a.validateMutationTarget(ctx, in.ID, in.Reason, in.IdempotencyKey); err != nil {
 		return mcpToolError(err), MachineMutationResult{}, nil
 	}
 	if err := domain.ValidateOperationParameters("machine.stop", map[string]any{"mode": in.Mode}); err != nil {
@@ -173,7 +173,7 @@ func (a *Adapter) MachineStop(ctx context.Context, _ *mcp.CallToolRequest, in Ma
 }
 
 func (a *Adapter) CheckpointCreate(ctx context.Context, _ *mcp.CallToolRequest, in CheckpointCreateInput) (*mcp.CallToolResult, CheckpointMutationResult, error) {
-	if err := a.validateMutationTarget(in.ID, in.Reason, in.IdempotencyKey); err != nil {
+	if err := a.validateMutationTarget(ctx, in.ID, in.Reason, in.IdempotencyKey); err != nil {
 		return mcpToolError(err), CheckpointMutationResult{}, nil
 	}
 	if err := domain.ValidateOperationParameters("checkpoint.create", map[string]any{"name": in.Name}); err != nil {
@@ -236,7 +236,7 @@ func (a *Adapter) CheckpointCreate(ctx context.Context, _ *mcp.CallToolRequest, 
 
 //nolint:dupl
 func (a *Adapter) CheckpointRestore(ctx context.Context, _ *mcp.CallToolRequest, in CheckpointRestoreInput) (*mcp.CallToolResult, MachineMutationResult, error) {
-	if err := a.validateMutationTarget(in.ID, in.Reason, in.IdempotencyKey); err != nil {
+	if err := a.validateMutationTarget(ctx, in.ID, in.Reason, in.IdempotencyKey); err != nil {
 		return mcpToolError(err), MachineMutationResult{}, nil
 	}
 	if err := domain.ValidateOperationParameters("checkpoint.restore", map[string]any{"checkpoint_id": in.CheckpointID}); err != nil {
