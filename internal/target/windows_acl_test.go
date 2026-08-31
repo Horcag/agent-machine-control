@@ -5,6 +5,10 @@ import "testing"
 const testOwnerSID = "S-1-5-21-1000"
 
 func exactWindowsACLProof(kind PathKind) windowsACLProof {
+	return exactWindowsACLProofForCurrent(kind, testOwnerSID)
+}
+
+func exactWindowsACLProofForCurrent(kind PathKind, currentSID string) windowsACLProof {
 	flags := uint8(0)
 	protected := true
 	if kind == PathDirectory {
@@ -14,16 +18,18 @@ func exactWindowsACLProof(kind PathKind) windowsACLProof {
 		flags = windowsACEInherited
 		protected = false
 	}
+	entries := make([]windowsACEProof, 0, 3)
+	for _, sid := range windowsAllowedTrusteeSIDs(currentSID) {
+		entries = append(entries, windowsACEProof{
+			Type: windowsACEAllow, Flags: flags, Mask: windowsFullControl, SID: sid,
+		})
+	}
 	return windowsACLProof{
-		Owner:       testOwnerSID,
-		CurrentUser: testOwnerSID,
+		Owner:       currentSID,
+		CurrentUser: currentSID,
 		Protected:   protected,
 		Kind:        kind,
-		Entries: []windowsACEProof{
-			{Type: windowsACEAllow, Flags: flags, Mask: windowsFullControl, SID: testOwnerSID},
-			{Type: windowsACEAllow, Flags: flags, Mask: windowsFullControl, SID: windowsLocalSystemSID},
-			{Type: windowsACEAllow, Flags: flags, Mask: windowsFullControl, SID: windowsAdministratorsSID},
-		},
+		Entries:     entries,
 	}
 }
 
@@ -86,6 +92,45 @@ func TestValidateWindowsACLProofAcceptsOnlyExactDirectoryAndFileForms(t *testing
 		t.Run(name, func(t *testing.T) {
 			if err := validateWindowsACLProof(proof); err == nil {
 				t.Fatalf("wrong ACL shape unexpectedly accepted: %+v", proof)
+			}
+		})
+	}
+}
+
+func TestValidateWindowsACLProofAcceptsExactLocalSystemForms(t *testing.T) {
+	for _, kind := range []PathKind{PathDirectory, PathFile, PathInheritedFile} {
+		t.Run(string(kind), func(t *testing.T) {
+			proof := exactWindowsACLProofForCurrent(kind, windowsLocalSystemSID)
+			if len(proof.Entries) != 2 {
+				t.Fatalf("LocalSystem entries = %d, want exactly 2", len(proof.Entries))
+			}
+			if proof.Entries[0].SID != windowsLocalSystemSID || proof.Entries[1].SID != windowsAdministratorsSID {
+				t.Fatalf("LocalSystem trustees = %+v, want ordered SYSTEM and Administrators", proof.Entries)
+			}
+			if err := validateWindowsACLProof(proof); err != nil {
+				t.Fatalf("exact LocalSystem proof rejected: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateWindowsACLProofRejectsDuplicateAndExtraLocalSystemEntries(t *testing.T) {
+	tests := map[string]windowsACLProof{
+		"duplicate": func() windowsACLProof {
+			proof := exactWindowsACLProofForCurrent(PathFile, windowsLocalSystemSID)
+			proof.Entries[1] = proof.Entries[0]
+			return proof
+		}(),
+		"extra": func() windowsACLProof {
+			proof := exactWindowsACLProofForCurrent(PathFile, windowsLocalSystemSID)
+			proof.Entries[1].SID = "S-1-1-0"
+			return proof
+		}(),
+	}
+	for name, proof := range tests {
+		t.Run(name, func(t *testing.T) {
+			if err := validateWindowsACLProof(proof); err == nil {
+				t.Fatalf("invalid LocalSystem proof unexpectedly accepted: %+v", proof)
 			}
 		})
 	}

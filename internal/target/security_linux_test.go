@@ -121,6 +121,10 @@ func TestHostPathDetectorRecognizesDriveMountShape(t *testing.T) {
 }
 
 func TestWindowsGuardScriptParses(t *testing.T) {
+	wantDistinctSet := "$allowed = @($identity.User.Value, 'S-1-5-18', 'S-1-5-32-544') | Select-Object -Unique"
+	if !strings.Contains(windowsGuardScript, wantDistinctSet) {
+		t.Fatal("PowerShell guard does not preserve the ordered distinct trustee set")
+	}
 	powerShell, err := exec.LookPath("powershell.exe")
 	if err != nil {
 		t.Skip("powershell.exe unavailable")
@@ -184,6 +188,41 @@ printf '{"owner":"S-1-5-21-1000","current_user":"S-1-5-21-1000","protected":%s,"
 			t.Fatal("conversion failure unexpectedly accepted")
 		}
 	})
+}
+
+func TestPowerShellWindowsGuardLocalSystemProofs(t *testing.T) {
+	commandDir := t.TempDir()
+	writeGuardExecutable(t, commandDir, "wslpath", "#!/bin/sh\nprintf 'C:\\\\fake\\\\target\\n'\n")
+	writeGuardExecutable(t, commandDir, "powershell.exe", `#!/bin/sh
+case "$AMC_TARGET_GUARD_KIND:$AMC_TARGET_GUARD_ACTION" in
+  directory:validate|directory:protect) flags=3; protected=true ;;
+  file:validate|file:protect) flags=0; protected=true ;;
+  inherited_file:validate) flags=16; protected=false ;;
+  *) exit 1 ;;
+esac
+printf '{"owner":"S-1-5-18","current_user":"S-1-5-18","protected":%s,"kind":"%s","entries":[{"type":0,"flags":%s,"mask":2032127,"sid":"S-1-5-18"},{"type":0,"flags":%s,"mask":2032127,"sid":"S-1-5-32-544"}]}\n' "$protected" "$AMC_TARGET_GUARD_KIND" "$flags" "$flags"
+`)
+	t.Setenv("PATH", commandDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	guard := powerShellWindowsGuard{}
+	checks := []struct {
+		kind    PathKind
+		protect bool
+	}{
+		{kind: PathDirectory, protect: true},
+		{kind: PathFile, protect: true},
+		{kind: PathInheritedFile},
+	}
+	for _, check := range checks {
+		var err error
+		if check.protect {
+			err = guard.Protect(context.Background(), "/mnt/c/fake", check.kind)
+		} else {
+			err = guard.Validate(context.Background(), "/mnt/c/fake", check.kind)
+		}
+		if err != nil {
+			t.Fatalf("LocalSystem %s proof: %v", check.kind, err)
+		}
+	}
 }
 
 func TestBoundedGuardContextHonorsShorterCallerDeadline(t *testing.T) {

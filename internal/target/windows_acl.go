@@ -43,15 +43,11 @@ func validateWindowsACLProof(proof windowsACLProof) error {
 	if proof.Protected != expectedProtected {
 		return errors.New("target: protected path has unexpected DACL inheritance protection")
 	}
-	if len(proof.Entries) != 3 {
-		return fmt.Errorf("target: protected path has %d ACEs, want exactly 3", len(proof.Entries))
+	allowed := windowsAllowedTrusteeSIDs(proof.CurrentUser)
+	if len(proof.Entries) != len(allowed) {
+		return fmt.Errorf("target: protected path has %d ACEs, want exactly %d", len(proof.Entries), len(allowed))
 	}
-	allowed := map[string]bool{
-		proof.CurrentUser:        false,
-		windowsLocalSystemSID:    false,
-		windowsAdministratorsSID: false,
-	}
-	for _, entry := range proof.Entries {
+	for index, entry := range proof.Entries {
 		if entry.Type != windowsACEAllow {
 			return fmt.Errorf("target: protected path has unsupported or deny ACE type %d", entry.Type)
 		}
@@ -61,21 +57,25 @@ func validateWindowsACLProof(proof windowsACLProof) error {
 		if entry.Mask != windowsFullControl {
 			return fmt.Errorf("target: protected path ACE for %q has mask %#x, want FullControl", entry.SID, entry.Mask)
 		}
-		seen, ok := allowed[entry.SID]
-		if !ok {
-			return fmt.Errorf("target: protected path grants an unexpected SID %q", entry.SID)
-		}
-		if seen {
-			return fmt.Errorf("target: protected path duplicates SID %q", entry.SID)
-		}
-		allowed[entry.SID] = true
-	}
-	for sid, seen := range allowed {
-		if !seen {
-			return fmt.Errorf("target: protected path is missing SID %q", sid)
+		if entry.SID != allowed[index] {
+			return fmt.Errorf("target: protected path ACE %d grants SID %q, want %q", index, entry.SID, allowed[index])
 		}
 	}
 	return nil
+}
+
+func windowsAllowedTrusteeSIDs(currentSID string) []string {
+	candidates := [...]string{currentSID, windowsLocalSystemSID, windowsAdministratorsSID}
+	allowed := make([]string, 0, len(candidates))
+	seen := make(map[string]struct{}, len(candidates))
+	for _, sid := range candidates {
+		if _, duplicate := seen[sid]; duplicate {
+			continue
+		}
+		seen[sid] = struct{}{}
+		allowed = append(allowed, sid)
+	}
+	return allowed
 }
 
 func expectedWindowsACLShape(kind PathKind) (uint8, bool, error) {

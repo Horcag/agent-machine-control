@@ -49,11 +49,17 @@ func protectTargetWindowsACL(path string, kind PathKind) error {
 	if kind == PathDirectory {
 		inheritance = windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT
 	}
-	sids := []*windows.SID{current, system, administrators}
+	sidsByText := map[string]*windows.SID{
+		current.String():         current,
+		windowsLocalSystemSID:    system,
+		windowsAdministratorsSID: administrators,
+	}
+	allowed := windowsAllowedTrusteeSIDs(current.String())
 	var pinner runtime.Pinner
 	defer pinner.Unpin()
-	entries := make([]windows.EXPLICIT_ACCESS, 0, len(sids))
-	for _, sid := range sids {
+	entries := make([]windows.EXPLICIT_ACCESS, 0, len(allowed))
+	for _, sidText := range allowed {
+		sid := sidsByText[sidText]
 		pinner.Pin(sid)
 		entries = append(entries, windows.EXPLICIT_ACCESS{
 			AccessPermissions: windows.ACCESS_MASK(windowsFullControl),

@@ -30,7 +30,7 @@ if ($kind -eq 'directory' -and -not $item.PSIsContainer) { throw 'directory requ
 if (($kind -eq 'file' -or $kind -eq 'inherited_file') -and $item.PSIsContainer) { throw 'regular file required' }
 if ($kind -ne 'directory' -and $kind -ne 'file' -and $kind -ne 'inherited_file') { throw 'unsupported path kind' }
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-$allowed = @($identity.User.Value, 'S-1-5-18', 'S-1-5-32-544')
+$allowed = @($identity.User.Value, 'S-1-5-18', 'S-1-5-32-544') | Select-Object -Unique
 $initialAcl = Get-Acl -LiteralPath $path
 $initialOwner = (New-Object Security.Principal.NTAccount($initialAcl.Owner)).Translate([Security.Principal.SecurityIdentifier]).Value
 if ($action -eq 'protect') {

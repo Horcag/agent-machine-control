@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"unsafe"
 
@@ -174,6 +175,36 @@ func TestTargetFileRenameInfoExPostCommitFlushFailurePreservesEffectTruth(t *tes
 	result := fileRenameInfoExReplaceWith(context.Background(), "source", "target", operations)
 	if !result.Committed || !errors.Is(result.Err, flushErr) {
 		t.Fatalf("result = %+v, want committed flush anomaly", result)
+	}
+}
+
+func TestTargetFileRenameInfoExPostCommitCloseFailurePreservesEffectTruth(t *testing.T) {
+	closeErr := errors.New("injected post-commit close failure")
+	setCalls := 0
+	flushCalls := 0
+	closeCalls := 0
+	operations := validTargetWindowsReplaceOperations()
+	operations.setFileInformation = func(windows.Handle, uint32, *byte, uint32) error {
+		setCalls++
+		return nil
+	}
+	operations.flushFileBuffers = func(windows.Handle) error {
+		flushCalls++
+		return nil
+	}
+	operations.closeHandle = func(windows.Handle) error {
+		closeCalls++
+		return closeErr
+	}
+	result := fileRenameInfoExReplaceWith(context.Background(), `C:\\private\\source.tmp`, `C:\\private\\target.json`, operations)
+	if !result.Committed || !errors.Is(result.Err, closeErr) {
+		t.Fatalf("result = %+v, want committed close anomaly", result)
+	}
+	if setCalls != 1 || flushCalls != 1 || closeCalls != 1 {
+		t.Fatalf("calls = set:%d flush:%d close:%d, want 1/1/1", setCalls, flushCalls, closeCalls)
+	}
+	if strings.Contains(result.Err.Error(), `C:\\private`) {
+		t.Fatalf("close anomaly exposed a private path: %v", result.Err)
 	}
 }
 

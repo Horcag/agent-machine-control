@@ -106,6 +106,11 @@ func fileRenameInfoExReplaceWith(ctx context.Context, oldPath, newPath string, o
 			Err:       fmt.Errorf("target: FileRenameInfoEx committed but FlushFileBuffers failed: %w", err),
 		}
 	}
-	_ = operations.closeHandle(handle)
+	if err := operations.closeHandle(handle); err != nil {
+		return CommitResult{
+			Committed: true,
+			Err:       fmt.Errorf("target: FileRenameInfoEx committed but source handle close failed: %w", err),
+		}
+	}
 	return CommitResult{Committed: true}
 }

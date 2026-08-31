@@ -465,14 +465,16 @@ func TestStoreRestartRepairSyncFailureFailsClosed(t *testing.T) {
 	}
 }
 
-func TestStoreCommittedReplaceErrorPreservesEffectTruth(t *testing.T) {
+func TestStoreCommittedCloseErrorRequiresExactRepairWithoutSecondReplace(t *testing.T) {
 	dir := testDirectory(t)
 	var inject atomic.Bool
+	var replaceCalls atomic.Int32
 	store := testStore(t, dir, WithOperations(Operations{
 		Replace: func(ctx context.Context, oldPath, newPath string) CommitResult {
+			replaceCalls.Add(1)
 			result := atomicReplace(ctx, oldPath, newPath)
 			if result.Committed && !inject.Swap(true) {
-				result.Err = errors.New("injected post-replace failure")
+				result.Err = errors.New("target: FileRenameInfoEx committed but source handle close failed: injected close failure")
 			}
 			return result
 		},
@@ -482,8 +484,14 @@ func TestStoreCommittedReplaceErrorPreservesEffectTruth(t *testing.T) {
 	if !errors.Is(err, ErrCommittedNotDurable) || !publication.Committed || publication.Durable {
 		t.Fatalf("Save = %+v, %v", publication, err)
 	}
+	if publication, err := store.Save(context.Background(), testDefault(t, vmB)); !errors.Is(err, ErrDurabilityPending) || publication.Committed {
+		t.Fatalf("non-exact retry = %+v, %v", publication, err)
+	}
 	publication, err = store.Save(context.Background(), want)
-	requireDurablePublication(t, "exact replacement repair", publication, err)
+	requireDurablePublication(t, "exact close-anomaly repair", publication, err)
+	if replaceCalls.Load() != 1 {
+		t.Fatalf("replace calls = %d, want one namespace commit and no fallback", replaceCalls.Load())
+	}
 }
 
 func TestStoreCommittedRemoveErrorPreservesEffectTruth(t *testing.T) {
