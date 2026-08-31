@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,19 +65,24 @@ func TestCLI_GlobalDirectAndStateDir(t *testing.T) {
 }
 
 func TestCLI_DefaultRun_Direct_ExecutableMissing(t *testing.T) {
-	// When powershell.exe is not in PATH or hyperv is missing, returns ExitBackendUnavailable
+	// Target authority must reject before the unavailable Hyper-V executable is consulted.
 	oldPath := os.Getenv("PATH")
 	t.Setenv("PATH", "")
 	defer func() { _ = os.Setenv("PATH", oldPath) }()
 
 	targetID := "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
+	stateDir := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	code := cli.Run([]string{
+		"--state-dir", stateDir,
 		"--direct", "checkpoint", "list", targetID,
 	}, &stdout, &stderr)
 
-	if code != cli.ExitBackendUnavailable {
-		t.Fatalf("expected ExitBackendUnavailable when powershell.exe is missing, got %d. stderr: %s", code, stderr.String())
+	if code != cli.ExitConflict {
+		t.Fatalf("expected ExitConflict (8) for the missing enrolled target, got %d. stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "no target is enrolled; enroll a local target first") {
+		t.Errorf("expected sanitized target message on stderr, got %q", stderr.String())
 	}
 }
 
