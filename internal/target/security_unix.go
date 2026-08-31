@@ -160,15 +160,37 @@ func validatePOSIXOwnerAndType(path string, wantDir bool) error {
 }
 
 func validateNoSymlinkComponents(path string) error {
+	return validateNoSymlinkComponentsWith(path, func(path string) (os.FileMode, error) {
+		info, err := os.Lstat(path)
+		if err != nil {
+			return 0, err
+		}
+		return info.Mode(), nil
+	}, allowedSystemPathAlias)
+}
+
+type componentMode func(string) (os.FileMode, error)
+
+type systemPathAlias func(string) (string, bool, error)
+
+func validateNoSymlinkComponentsWith(path string, lstat componentMode, allowedAlias systemPathAlias) error {
 	cleaned := filepath.Clean(path)
 	current := string(filepath.Separator)
 	for _, part := range splitPath(cleaned) {
 		current = filepath.Join(current, part)
-		info, err := os.Lstat(current)
+		mode, err := lstat(current)
 		if err != nil {
 			return err
 		}
-		if info.Mode()&os.ModeSymlink != 0 {
+		if mode&os.ModeSymlink != 0 {
+			canonical, allowed, aliasErr := allowedAlias(current)
+			if aliasErr != nil {
+				return aliasErr
+			}
+			if allowed {
+				current = canonical
+				continue
+			}
 			return fmt.Errorf("protected path component %q is a symlink", current)
 		}
 	}
