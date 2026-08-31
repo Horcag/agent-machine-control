@@ -60,6 +60,10 @@ func TestDirectRecoveryRollbackDeadlinePersistsAbortAndSkipsProvider(t *testing.
 }
 
 func TestDirectRecoveryProviderReceivesRemainingLifecycleBudget(t *testing.T) {
+	const (
+		lifecycleBudget = 30 * time.Second
+		admissionDelay  = 100 * time.Millisecond
+	)
 	var admissionDeadline time.Time
 	var providerDeadline time.Time
 	var providerRemaining time.Duration
@@ -72,7 +76,7 @@ func TestDirectRecoveryProviderReceivesRemainingLifecycleBudget(t *testing.T) {
 		},
 		capabilitiesFn: func(ctx context.Context, _ string) (domain.CapabilitySet, error) {
 			admissionDeadline, _ = ctx.Deadline()
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(admissionDelay)
 			return domain.DirectMachineCapabilities(), nil
 		},
 		startMachineFn: func(ctx context.Context, id string) (domain.MachineObservation, error) {
@@ -82,7 +86,7 @@ func TestDirectRecoveryProviderReceivesRemainingLifecycleBudget(t *testing.T) {
 		},
 	}
 	service, _ := setupTestRecovery(t, backend)
-	request := directDeadlineRequest("direct-remaining-budget", 2*time.Second, 5*time.Second)
+	request := directDeadlineRequest("direct-remaining-budget", lifecycleBudget, lifecycleBudget)
 
 	if _, _, err := service.StartMachine(context.Background(), request); err != nil {
 		t.Fatal(err)
@@ -90,7 +94,7 @@ func TestDirectRecoveryProviderReceivesRemainingLifecycleBudget(t *testing.T) {
 	if admissionDeadline.IsZero() || providerDeadline.IsZero() || !providerDeadline.Equal(admissionDeadline) {
 		t.Fatalf("admission deadline = %v provider deadline = %v", admissionDeadline, providerDeadline)
 	}
-	if providerRemaining <= 0 || providerRemaining >= 1950*time.Millisecond {
+	if providerRemaining <= 0 || providerRemaining >= lifecycleBudget-admissionDelay/2 {
 		t.Fatalf("provider remaining budget = %s, want consumed lifecycle budget", providerRemaining)
 	}
 }

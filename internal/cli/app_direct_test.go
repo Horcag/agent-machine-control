@@ -122,7 +122,11 @@ func TestCLI_DefaultRun_Direct_MutatingCommand(t *testing.T) {
 	// Test failed state-dir resolution
 	stdout.Reset()
 	stderr.Reset()
-	t.Setenv("AMC_STATE_DIR", "/dev/null/impossible")
+	blockedStateParent := filepath.Join(tempDir, "state-file")
+	if err := os.WriteFile(blockedStateParent, []byte("not a directory"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AMC_STATE_DIR", filepath.Join(blockedStateParent, "impossible"))
 	code = cli.Run([]string{
 		"--direct", "machine", "start", targetID,
 		"--reason", "test invalid state dir",

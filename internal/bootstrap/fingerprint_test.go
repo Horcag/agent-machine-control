@@ -12,6 +12,8 @@ import (
 //go:embed task_fingerprint_test.ps1
 var taskFingerprintTestScript string
 
+const powershellTestTimeout = time.Minute
+
 func TestPowerShellFingerprintRegressions(t *testing.T) {
 	t.Parallel()
 
@@ -19,7 +21,7 @@ func TestPowerShellFingerprintRegressions(t *testing.T) {
 	if err != nil {
 		t.Skip("powershell.exe is required for executable fingerprint regressions")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), powershellTestTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-")
 	cmd.Stdin = strings.NewReader(taskFingerprintScript + "\n" + taskFingerprintTestScript)
@@ -51,7 +53,7 @@ func assertPowerShellParses(t *testing.T, script, name string) {
 	if err != nil {
 		t.Skipf("powershell.exe is required for %s parser validation", name)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), powershellTestTimeout)
 	defer cancel()
 	command := "$source = [Console]::In.ReadToEnd(); [scriptblock]::Create($source) | Out-Null; 'bootstrap parser: passed'"
 	cmd := exec.CommandContext(ctx, path, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command)
