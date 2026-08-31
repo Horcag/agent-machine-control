@@ -57,17 +57,22 @@ func (s *Store) CheckWritableContext(ctx context.Context) error {
 }
 
 func (s *Store) approvalPath(id string) (string, error) {
-	if err := domain.ValidateApprovalID(id); err != nil {
-		return "", fmt.Errorf("approval: invalid approval ID: %w", err)
-	}
-	return filepath.Join(s.dir, fmt.Sprintf("%s.json", id)), nil
+	return s.approvalStatePath(id, ".json")
 }
 
 func (s *Store) issuedApprovalPath(id string) (string, error) {
+	return s.approvalStatePath(id, ".issued.json")
+}
+
+func (s *Store) approvalStatePath(id, suffix string) (string, error) {
 	if err := domain.ValidateApprovalID(id); err != nil {
 		return "", fmt.Errorf("approval: invalid approval ID: %w", err)
 	}
-	return filepath.Join(s.dir, fmt.Sprintf("%s.issued.json", id)), nil
+	filename := id + suffix
+	if !filepath.IsLocal(filename) || filepath.Base(filename) != filename {
+		return "", errors.New("approval: approval record path escapes the store")
+	}
+	return filepath.Join(s.dir, filename), nil
 }
 
 // Issue persists immutable server-side provenance for an approval.

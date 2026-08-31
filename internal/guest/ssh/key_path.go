@@ -31,17 +31,13 @@ func keyMaterialPath(keysDir, alias, extension string) (string, error) {
 	if err := validateKeyAlias(alias); err != nil {
 		return "", err
 	}
+	filename := alias + extension
+	if !filepath.IsLocal(filename) || filepath.Base(filename) != filename {
+		return "", errors.New("ssh: key path escapes the key store")
+	}
 	root, err := filepath.Abs(filepath.Clean(keysDir))
 	if err != nil {
 		return "", errors.New("ssh: key store path is invalid")
 	}
-	candidate, err := filepath.Abs(filepath.Join(root, alias+extension))
-	if err != nil {
-		return "", errors.New("ssh: key path is invalid")
-	}
-	rel, err := filepath.Rel(root, candidate)
-	if err != nil || rel == "." || filepath.Dir(rel) != "." || filepath.IsAbs(rel) {
-		return "", errors.New("ssh: key path escapes the key store")
-	}
-	return candidate, nil
+	return filepath.Join(root, filename), nil
 }

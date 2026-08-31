@@ -3,12 +3,15 @@ package app_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/app"
 	"github.com/Horcag/agent-machine-control/internal/domain"
+	"github.com/Horcag/agent-machine-control/internal/lease"
 	"github.com/Horcag/agent-machine-control/internal/receipt"
 	"github.com/Horcag/agent-machine-control/internal/sessions"
 	"github.com/Horcag/agent-machine-control/internal/target"
@@ -94,6 +97,43 @@ func TestSessionOpenCanonicalizesEquivalentReferencesBeforeAnyEffect(t *testing.
 	assertTransportEffects(t, h.transport, 1)
 	if h.transport.lastDialTarget != domain.MachineRef(h.target) {
 		t.Fatalf("transport target = %q, want provider GUID %q", h.transport.lastDialTarget, h.target)
+	}
+}
+
+func TestSessionOpenSharesPhysicalLeaseWithCanonicalLocator(t *testing.T) {
+	h := newDynamicClassRetryHarness(t, reversibleSafetyResolution())
+	locator, err := domain.NewMachineLocator(domain.LocalHostID, h.target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaseDir := t.TempDir()
+	leaseManager := lease.NewManager(leaseDir)
+	h.svc = app.NewSessionService(h.manager, h.safety, leaseManager, h.audits, h.receipts, h.approvals,
+		app.WithSessionClock(func() time.Time { return h.now }),
+		app.WithSessionTargetResolver(&fixedSessionTargetResolver{
+			resolution: app.TargetResolution{Locator: locator, ProviderVMID: h.target},
+		}),
+	)
+
+	recoveryLease, err := leaseManager.Acquire(context.Background(), h.target, "machine.start", "recovery-fingerprint", time.Minute)
+	if err != nil {
+		t.Fatalf("acquire recovery lease: %v", err)
+	}
+	defer func() { _ = leaseManager.Release(context.Background(), recoveryLease) }()
+
+	obs, rcpt, err := h.svc.OpenSession(context.Background(), app.SessionOpenParams{
+		Target: "default", Caller: h.actor, Reason: "open while recovery owns the VM lease", IdempotencyKey: "locator-lease-conflict",
+		Timeout: time.Minute, Cols: 80, Rows: 24,
+	})
+	if !errors.Is(err, lease.ErrLeaseConflict) || obs != nil || rcpt != nil {
+		t.Fatalf("OpenSession under recovery lease = obs=%+v receipt=%+v err=%v", obs, rcpt, err)
+	}
+	assertTransportEffects(t, h.transport, 0)
+	if _, err := os.Stat(filepath.Join(leaseDir, h.target+".lease.json")); err != nil {
+		t.Fatalf("physical recovery lease disappeared: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(leaseDir, locator.String()+".lease.json")); !os.IsNotExist(err) {
+		t.Fatalf("locator-derived lease path exists or is unreadable: %v", err)
 	}
 }
 

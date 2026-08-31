@@ -11,7 +11,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Horcag/agent-machine-control/internal/statedir"
 )
@@ -105,11 +107,26 @@ func (m *Manager) lockPath(machineID string) string {
 	return filepath.Join(m.dir, fmt.Sprintf("%s.lock", machineID))
 }
 
+func validatedStateMachineID(machineID string) (string, error) {
+	if machineID == "" {
+		return "", errors.New("lease: machineID cannot be empty")
+	}
+	if machineID == "." || machineID == ".." || strings.ContainsAny(machineID, `/\\:`) || strings.IndexFunc(machineID, unicode.IsSpace) >= 0 || strings.IndexFunc(machineID, unicode.IsControl) >= 0 {
+		return "", errors.New("lease: machineID must be a single local state path component")
+	}
+	if !filepath.IsLocal(machineID) || filepath.Base(machineID) != machineID {
+		return "", errors.New("lease: machineID must be a single local state path component")
+	}
+	return machineID, nil
+}
+
 // Acquire attempts to acquire a host-visible lease on a machine.
 func (m *Manager) Acquire(ctx context.Context, machineID string, opKind string, fingerprint string, ttl time.Duration) (*Lease, error) {
-	if machineID == "" {
-		return nil, errors.New("lease: machineID cannot be empty")
+	validatedMachineID, err := validatedStateMachineID(machineID)
+	if err != nil {
+		return nil, err
 	}
+	machineID = validatedMachineID
 	if ttl <= 0 {
 		ttl = DefaultLeaseTTL
 	}
@@ -175,9 +192,13 @@ func (m *Manager) Release(ctx context.Context, l *Lease) error {
 	if l == nil {
 		return nil
 	}
+	validatedMachineID, err := validatedStateMachineID(l.MachineID)
+	if err != nil {
+		return err
+	}
 
-	return m.withLock(ctx, l.MachineID, func() error {
-		path := m.leasePath(l.MachineID)
+	return m.withLock(ctx, validatedMachineID, func() error {
+		path := m.leasePath(validatedMachineID)
 		existing, err := m.readLeaseFile(path)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -191,7 +212,7 @@ func (m *Manager) Release(ctx context.Context, l *Lease) error {
 		}
 
 		now := m.now()
-		if err := m.writeGeneration(l.MachineID, existing.FencingGeneration, now); err != nil {
+		if err := m.writeGeneration(validatedMachineID, existing.FencingGeneration, now); err != nil {
 			return fmt.Errorf("lease: failed to persist generation tombstone: %w", err)
 		}
 

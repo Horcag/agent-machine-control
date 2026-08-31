@@ -88,8 +88,12 @@ func (s *SessionService) acquireMutationLease(
 	if s.leaseMgr == nil {
 		return func() error { return nil }, nil
 	}
+	machineID := string(op.Target)
+	if locator, err := domain.ParseMachineLocator(machineID); err == nil {
+		machineID = locator.VMID
+	}
 	leaseTTL := timeout + 15*time.Second
-	l, err := s.leaseMgr.Acquire(ctx, string(op.Target), string(op.Kind), string(fp), leaseTTL)
+	l, err := s.leaseMgr.Acquire(ctx, machineID, string(op.Kind), string(fp), leaseTTL)
 	if err != nil {
 		return nil, err
 	}

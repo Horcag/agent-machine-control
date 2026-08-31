@@ -288,6 +288,33 @@ func TestManager_EdgeCases(t *testing.T) {
 	_ = mgr.Release(ctx, l)
 }
 
+func TestManager_RejectsUnsafeMachineIDsBeforeCreatingState(t *testing.T) {
+	dir := t.TempDir()
+	mgr := lease.NewManager(dir)
+
+	for _, machineID := range []string{
+		"/absolute", "../outside", `..\\outside`, "nested/child", `nested\\child`,
+		" has-space", "has-space ", "control\n", ".", "..",
+	} {
+		t.Run(machineID, func(t *testing.T) {
+			if _, err := mgr.Acquire(context.Background(), machineID, "machine.start", "fp", time.Minute); err == nil {
+				t.Fatalf("Acquire(%q) unexpectedly succeeded", machineID)
+			}
+			if err := mgr.Release(context.Background(), &lease.Lease{MachineID: machineID}); err == nil {
+				t.Fatalf("Release(%q) unexpectedly succeeded", machineID)
+			}
+		})
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("unsafe machine IDs created state: %v", entries)
+	}
+}
+
 func TestManager_DeadLockOwner_Reclaimed(t *testing.T) {
 	dir := t.TempDir()
 	machineID := "a0b1c2d3-e4f5-6789-abcd-ef0123456789"
