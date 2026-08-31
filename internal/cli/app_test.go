@@ -241,8 +241,8 @@ func TestCli_DefaultRun_ExecutableMissing_MachineList(t *testing.T) {
 	if code != cli.ExitBackendUnavailable {
 		t.Fatalf("expected ExitBackendUnavailable (4), got %d", code)
 	}
-	if !strings.Contains(stderr.String(), "powershell.exe") {
-		t.Errorf("expected powershell.exe message on stderr, got %q", stderr.String())
+	if !strings.Contains(stderr.String(), "Hyper-V host management is unavailable") {
+		t.Errorf("expected sanitized provider message on stderr, got %q", stderr.String())
 	}
 }
 
@@ -253,7 +253,7 @@ func TestCli_DefaultRun_ExecutableMissing_MachineInspect(t *testing.T) {
 	if code != cli.ExitBackendUnavailable {
 		t.Fatalf("expected ExitBackendUnavailable (4), got %d", code)
 	}
-	if !strings.Contains(stderr.String(), "powershell.exe") {
-		t.Errorf("expected powershell.exe message on stderr, got %q", stderr.String())
+	if !strings.Contains(stderr.String(), "Hyper-V host management is unavailable") {
+		t.Errorf("expected sanitized provider message on stderr, got %q", stderr.String())
 	}
 }

@@ -38,13 +38,17 @@ capabilities are identical.
 amc doctor
 amc doctor --json
 
-# List discovered virtual machines
+# Discover candidates before an operator enrolls one local target
+amc target candidates
+amc target candidates --json
+
+# After enrollment, ordinary reads expose only that target
 amc machine list
 amc machine list --json
 
-# Inspect a single virtual machine by GUID
-amc machine inspect c4a523d4-6b99-4d62-a5e2-4752c0f20001
-amc machine inspect c4a523d4-6b99-4d62-a5e2-4752c0f20001 --json
+# Inspect the enrolled target by default, exact alias, GUID, or canonical locator
+amc machine inspect
+amc machine inspect local --json
 
 # Direct recovery mutations (in-process fallback when daemon is down)
 amc --direct machine start <guid> --reason "recovering vm" --idempotency-key "k-1"
@@ -52,6 +56,16 @@ amc --direct machine stop <guid> --mode shutdown --reason "stopping vm" --idempo
 amc --direct checkpoint list <guid>
 amc --direct checkpoint create <guid> --name "pre-maintenance" --reason "snapshotting" --idempotency-key "k-3"
 amc --direct checkpoint restore <guid> <checkpoint-guid> --reason "reverting vm" --idempotency-key "k-4"
+```
+
+Target enrollment and clearing are separate operator-only, approval-bound authority mutations. In
+normal mode they use `amcd`; `--direct` uses the same protected local store and coordinator:
+
+```sh
+amc target approve enroll <guid> --alias local --reason "select recovery target" \
+  --idempotency-key "target-enroll-1" --valid-for 1m
+amc target enroll <guid> --alias local --reason "select recovery target" \
+  --idempotency-key "target-enroll-1" --approval-id <approval-id> --deadline <exact-deadline>
 ```
 
 Daemon-backed CLI commands and the MCP adapter expose the same application service for managed
@@ -82,9 +96,11 @@ local confirmation and server-owned approval store.
 
 Every command supports `--json` for machine-readable automation. Output envelopes conform to schema version `1`, emitting sorted arrays for `capabilities`, `machines`, `network_adapters`, and `ip_addresses`.
 
-### VM-GUID inspect requirement
+### Enrolled-target references
 
-The `amc machine inspect <guid>` command requires a valid 36-character Hyper-V VM GUID (for example `c4a523d4-6b99-4d62-a5e2-4752c0f20001`). Non-GUID inputs or missing arguments are rejected before invoking the provider.
+Before enrollment, ordinary machine and checkpoint reads and mutations fail closed. After enrollment,
+they accept only the omitted/default target, the stored exact alias, the exact enrolled GUID, or its
+canonical `local:<guid>` locator. Display names and fuzzy matching never select a target.
 
 ### Hyper-V and PowerShell prerequisites
 

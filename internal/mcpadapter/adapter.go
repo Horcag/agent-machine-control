@@ -33,6 +33,7 @@ type Adapter struct {
 	client           *client.Client
 	discoveryService *app.DiscoveryService
 	recoveryService  *app.RecoveryService
+	targetService    *app.TargetService
 }
 
 func NewAdapter(stateDir string) *Adapter {
@@ -199,6 +200,22 @@ func parseTimeout(timeoutStr string, required bool) (time.Duration, error) {
 func validateMutationParams(targetID, reason, idempotencyKey string) error {
 	if err := domain.ValidateMachineGUID(targetID); err != nil {
 		return NewInputError("invalid target GUID")
+	}
+	if err := domain.ValidateReason(reason); err != nil {
+		return NewInputError("invalid reason")
+	}
+	if err := domain.ValidateIdempotencyKey(idempotencyKey); err != nil {
+		return NewInputError("invalid idempotency key")
+	}
+	return nil
+}
+
+func (a *Adapter) validateMutationTarget(targetID, reason, idempotencyKey string) error {
+	if a.stateDir == "" && a.targetService == nil {
+		return validateMutationParams(targetID, reason, idempotencyKey)
+	}
+	if targetID != "" && strings.TrimSpace(targetID) != targetID {
+		return NewInputError("invalid target reference")
 	}
 	if err := domain.ValidateReason(reason); err != nil {
 		return NewInputError("invalid reason")

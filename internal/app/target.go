@@ -52,6 +52,26 @@ type TargetService struct {
 	refresh   TargetRefresh
 }
 
+// ListLocalCandidates returns fresh eligible local targets without changing authority state.
+func (s *TargetService) ListLocalCandidates(ctx context.Context) ([]TargetResolution, error) {
+	if err := s.refreshInventory(ctx); err != nil {
+		return nil, err
+	}
+	entries, err := s.inventory.CurrentLocalMachines()
+	if err != nil {
+		return nil, err
+	}
+	resolutions := make([]TargetResolution, len(entries))
+	for index, entry := range entries {
+		resolution, err := resolutionFromEntry(entry)
+		if err != nil {
+			return nil, err
+		}
+		resolutions[index] = resolution
+	}
+	return resolutions, nil
+}
+
 // NewTargetService constructs the shared non-transport target seam.
 func NewTargetService(inventory *TrustedInventory, store *target.Store, options ...TargetOption) (*TargetService, error) {
 	if inventory == nil || store == nil {
@@ -173,11 +193,11 @@ func (s *TargetService) EnrollDefaultTarget(
 
 // ResolveTarget resolves default, stored alias, or an exact inventory reference to the enrolled identity.
 func (s *TargetService) ResolveTarget(ctx context.Context, reference string) (TargetResolution, error) {
-	if err := s.refreshInventory(ctx); err != nil {
-		return TargetResolution{}, err
-	}
 	value, err := s.store.Load(ctx)
 	if err != nil {
+		return TargetResolution{}, err
+	}
+	if err := s.refreshInventory(ctx); err != nil {
 		return TargetResolution{}, err
 	}
 

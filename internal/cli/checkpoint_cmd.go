@@ -19,6 +19,7 @@ import (
 func runCheckpoint(
 	ctx context.Context,
 	recoverySvc *app.RecoveryService,
+	targetSvc *app.TargetService,
 	actor domain.ActorContext,
 	prompter Prompter,
 	nowFn func() time.Time,
@@ -34,7 +35,7 @@ func runCheckpoint(
 
 	switch args[0] {
 	case "list":
-		return runCheckpointList(ctx, recoverySvc, args[1:], stdout, stderr)
+		return runCheckpointList(ctx, recoverySvc, targetSvc, args[1:], stdout, stderr)
 	case "create":
 		return runCheckpointCreate(ctx, recoverySvc, actor, prompter, nowFn, directMode, stateDir, args[1:], stdout, stderr)
 	case "restore":
@@ -48,7 +49,7 @@ func runCheckpoint(
 	}
 }
 
-func runCheckpointList(ctx context.Context, recoverySvc *app.RecoveryService, args []string, stdout, stderr io.Writer) int {
+func runCheckpointList(ctx context.Context, recoverySvc *app.RecoveryService, targetSvc *app.TargetService, args []string, stdout, stderr io.Writer) int {
 	var jsonOutput bool
 	var positional []string
 
@@ -64,16 +65,10 @@ func runCheckpointList(ctx context.Context, recoverySvc *app.RecoveryService, ar
 		}
 	}
 
-	if len(positional) == 0 {
-		fmt.Fprintln(stderr, "amc checkpoint list: missing required machine reference")
-		return ExitUsage
+	targetID, exitCode := resolveCheckpointListTarget(ctx, targetSvc, positional, stderr)
+	if exitCode != ExitSuccess {
+		return exitCode
 	}
-	if len(positional) > 1 {
-		fmt.Fprintf(stderr, "amc checkpoint list: unexpected argument %q\n", positional[1])
-		return ExitUsage
-	}
-
-	targetID := positional[0]
 	checkpoints, err := recoverySvc.ListCheckpoints(ctx, targetID)
 	if err != nil {
 		return mapCLIError(err, stderr, "checkpoint list")
@@ -118,6 +113,29 @@ func runCheckpointList(ctx context.Context, recoverySvc *app.RecoveryService, ar
 	_ = w.Flush()
 
 	return ExitSuccess
+}
+
+func resolveCheckpointListTarget(ctx context.Context, targetSvc *app.TargetService, positional []string, stderr io.Writer) (string, int) {
+	if len(positional) == 0 && targetSvc == nil {
+		fmt.Fprintln(stderr, "amc checkpoint list: missing required machine reference")
+		return "", ExitUsage
+	}
+	if len(positional) > 1 {
+		fmt.Fprintf(stderr, "amc checkpoint list: unexpected argument %q\n", positional[1])
+		return "", ExitUsage
+	}
+	reference := ""
+	if len(positional) == 1 {
+		reference = positional[0]
+	}
+	if targetSvc == nil {
+		return reference, ExitSuccess
+	}
+	resolution, err := targetSvc.ResolveTarget(ctx, reference)
+	if err != nil {
+		return "", mapCLIError(err, stderr, "checkpoint list")
+	}
+	return resolution.ProviderVMID, ExitSuccess
 }
 
 func runCheckpointCreate(

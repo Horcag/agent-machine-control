@@ -22,13 +22,15 @@ import (
 
 // App is the main CLI orchestrator.
 type App struct {
-	discoveryService *app.DiscoveryService
-	recoveryService  *app.RecoveryService
-	actor            domain.ActorContext
-	prompter         Prompter
-	directDefault    bool
-	stateDirDefault  string
-	nowFn            func() time.Time
+	discoveryService  *app.DiscoveryService
+	recoveryService   *app.RecoveryService
+	targetService     *app.TargetService
+	targetCoordinator *app.TargetCoordinator
+	actor             domain.ActorContext
+	prompter          Prompter
+	directDefault     bool
+	stateDirDefault   string
+	nowFn             func() time.Time
 }
 
 // AppOption configures App dependencies.
@@ -58,6 +60,16 @@ func WithRecoveryService(s *app.RecoveryService) AppOption {
 	return func(a *App) {
 		a.recoveryService = s
 	}
+}
+
+// WithTargetService configures protected target resolution for CLI user surfaces.
+func WithTargetService(s *app.TargetService) AppOption {
+	return func(a *App) { a.targetService = s }
+}
+
+// WithTargetCoordinator configures operator-only target authority mutations.
+func WithTargetCoordinator(c *app.TargetCoordinator) AppOption {
+	return func(a *App) { a.targetCoordinator = c }
 }
 
 // WithActor configures an authenticated local actor context on App.
@@ -112,7 +124,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	adapter := hyperv.New()
 	discoveryService := app.NewDiscoveryService(adapter)
 
-	if !isDirectTargetCommand(norm) {
+	if !requiresTargetRuntime(norm) {
 		readOnlyRecoverySvc := app.NewRecoveryService(adapter, nil, nil, nil, nil)
 		appInstance := NewApp(
 			discoveryService,
@@ -162,6 +174,23 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "amc: failed to initialize target service: %v\n", err)
 		return ExitBackendUnavailable
 	}
+	var targetCoordinator *app.TargetCoordinator
+	if norm.Direct && norm.CommandArgs[0] == "target" {
+		targetJournal, journalErr := target.NewMutationJournal(sd.TargetsDir())
+		if journalErr != nil {
+			fmt.Fprintf(stderr, "amc: failed to initialize target mutation journal: %v\n", journalErr)
+			return ExitBackendUnavailable
+		}
+		targetCoordinator, err = app.NewTargetCoordinator(targetService, targetJournal, auditStore, receiptStore, approvalStore)
+		if err != nil {
+			fmt.Fprintf(stderr, "amc: failed to initialize target coordinator: %v\n", err)
+			return ExitBackendUnavailable
+		}
+		if _, err := targetCoordinator.ReconcileStartup(context.Background()); err != nil {
+			fmt.Fprintf(stderr, "amc: failed to reconcile target authority: %v\n", err)
+			return ExitBackendUnavailable
+		}
+	}
 
 	recoveryService := app.NewRecoveryService(
 		adapter,
@@ -182,6 +211,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	appInstance := NewApp(
 		discoveryService,
 		WithRecoveryService(recoveryService),
+		WithTargetService(targetService),
+		WithTargetCoordinator(targetCoordinator),
 		WithActor(actCtx),
 		WithPrompter(&DefaultPrompter{Stdin: os.Stdin, Stdout: stderr}),
 		WithDirectMode(norm.Direct),
@@ -191,22 +222,13 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	return appInstance.Run(args, stdout, stderr)
 }
 
-func isDirectTargetCommand(norm NormalizedCLI) bool {
-	if !norm.Direct || len(norm.CommandArgs) < 2 {
+func requiresTargetRuntime(norm NormalizedCLI) bool {
+	if len(norm.CommandArgs) == 0 {
 		return false
 	}
-	if norm.CommandArgs[0] == "checkpoint" && norm.CommandArgs[1] == "list" {
+	switch norm.CommandArgs[0] {
+	case "machine", "checkpoint", "target":
 		return true
-	}
-	return isMutatingSubcommand(norm.CommandArgs[0], norm.CommandArgs[1])
-}
-
-func isMutatingSubcommand(cmd, sub string) bool {
-	switch cmd {
-	case "machine":
-		return sub == "start" || sub == "stop"
-	case "checkpoint":
-		return sub == "create" || sub == "restore"
 	default:
 		return false
 	}
@@ -218,6 +240,8 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) int {
 }
 
 // RunWithContext parses arguments and executes with a caller-supplied context.
+//
+//nolint:cyclop // Explicit top-level command dispatch keeps public command ownership visible.
 func (a *App) RunWithContext(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	norm, err := NormalizeGlobalFlags(args)
 	if err != nil {
@@ -258,6 +282,7 @@ func (a *App) RunWithContext(ctx context.Context, args []string, stdout, stderr 
 			ctx,
 			a.discoveryService,
 			a.recoveryService,
+			a.targetService,
 			a.actor,
 			a.prompter,
 			a.now,
@@ -272,6 +297,7 @@ func (a *App) RunWithContext(ctx context.Context, args []string, stdout, stderr 
 		return runCheckpoint(
 			ctx,
 			a.recoveryService,
+			a.targetService,
 			a.actor,
 			a.prompter,
 			a.now,
@@ -281,6 +307,9 @@ func (a *App) RunWithContext(ctx context.Context, args []string, stdout, stderr 
 			stdout,
 			stderr,
 		)
+
+	case "target":
+		return runTarget(ctx, a.targetService, a.targetCoordinator, a.actor, a.prompter, directMode, stateDir, cmdArgs, stdout, stderr)
 
 	case "operation":
 		return runOperation(
@@ -330,6 +359,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  checkpoint list <guid>                   List virtual machine checkpoints")
 	fmt.Fprintln(w, "  checkpoint create <guid> --name <name>   Create checkpoint (routes to amcd by default)")
 	fmt.Fprintln(w, "  checkpoint restore <guid> <chk-guid>     Restore checkpoint (routes to amcd by default)")
+	fmt.Fprintln(w, "  target candidates|show|approve|enroll|clear  Manage the one enrolled local target")
 	fmt.Fprintln(w, "  session <subcommand>                     Manage persistent SSH pseudo-terminal sessions (routes to amcd)")
 	fmt.Fprintln(w, "  operation approve <kind> <target> ...   Issue an exact server-owned approval")
 	fmt.Fprintln(w, "  operation list                           List operations")

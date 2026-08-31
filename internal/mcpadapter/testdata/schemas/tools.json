@@ -13,7 +13,7 @@
           "type": "string"
         },
         "id": {
-          "description": "The machine GUID to checkpoint",
+          "description": "Optional enrolled target reference (default, exact alias, GUID, or local locator)",
           "type": "string"
         },
         "idempotency_key": {
@@ -34,7 +34,6 @@
         }
       },
       "required": [
-        "id",
         "name",
         "reason",
         "idempotency_key",
@@ -304,13 +303,10 @@
       "additionalProperties": false,
       "properties": {
         "id": {
-          "description": "The machine GUID to list checkpoints for",
+          "description": "Optional enrolled target reference (default, exact alias, GUID, or local locator)",
           "type": "string"
         }
       },
-      "required": [
-        "id"
-      ],
       "type": "object"
     },
     "name": "checkpoint_list",
@@ -394,7 +390,7 @@
           "type": "string"
         },
         "id": {
-          "description": "The machine GUID to restore",
+          "description": "Optional enrolled target reference (default, exact alias, GUID, or local locator)",
           "type": "string"
         },
         "idempotency_key": {
@@ -411,7 +407,6 @@
         }
       },
       "required": [
-        "id",
         "checkpoint_id",
         "reason",
         "idempotency_key",
@@ -689,13 +684,10 @@
       "additionalProperties": false,
       "properties": {
         "id": {
-          "description": "The machine GUID to inspect",
+          "description": "Optional enrolled target reference (default, exact alias, GUID, or local locator)",
           "type": "string"
         }
       },
-      "required": [
-        "id"
-      ],
       "type": "object"
     },
     "name": "machine_inspect",
@@ -970,7 +962,7 @@
           "type": "string"
         },
         "id": {
-          "description": "The machine GUID to start",
+          "description": "Optional enrolled target reference (default, exact alias, GUID, or local locator)",
           "type": "string"
         },
         "idempotency_key": {
@@ -987,7 +979,6 @@
         }
       },
       "required": [
-        "id",
         "reason",
         "idempotency_key",
         "timeout"
@@ -1223,7 +1214,7 @@
           "type": "string"
         },
         "id": {
-          "description": "The machine GUID to stop",
+          "description": "Optional enrolled target reference (default, exact alias, GUID, or local locator)",
           "type": "string"
         },
         "idempotency_key": {
@@ -1244,7 +1235,6 @@
         }
       },
       "required": [
-        "id",
         "mode",
         "reason",
         "idempotency_key",

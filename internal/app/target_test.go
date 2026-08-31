@@ -121,6 +121,25 @@ func TestTargetServiceEnrollRestartAndResolveExactReferences(t *testing.T) {
 	}
 }
 
+func TestTargetServiceListsFreshLocalCandidatesWithoutAuthorityMutation(t *testing.T) {
+	first := targetObservation(t, domain.LocalHostID, targetVMA, "vm-alpha")
+	second := targetObservation(t, domain.LocalHostID, targetVMB, "vm-bravo")
+	inventory := targetInventory(t, nil, second, first)
+	store, _ := targetStore(t)
+	service := targetService(t, inventory, store)
+
+	candidates, err := service.ListLocalCandidates(context.Background())
+	if err != nil {
+		t.Fatalf("ListLocalCandidates: %v", err)
+	}
+	if len(candidates) != 2 || candidates[0].Locator.String() != first.Locator.String() || candidates[1].Locator.String() != second.Locator.String() {
+		t.Fatalf("candidates = %+v", candidates)
+	}
+	if _, err := store.Load(context.Background()); !errors.Is(err, target.ErrNoDefault) {
+		t.Fatalf("candidate listing changed target authority: %v", err)
+	}
+}
+
 func TestTargetServiceRefreshesAndPreparesZeroReferenceWithoutStoreEffect(t *testing.T) {
 	observation := targetObservation(t, domain.LocalHostID, targetVMA, "vm-alpha")
 	inventory := targetInventory(t, nil)

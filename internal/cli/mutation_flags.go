@@ -105,6 +105,8 @@ var knownValueFlags = map[string]bool{
 	"-regex":            true,
 	"--machine":         true,
 	"-machine":          true,
+	"--alias":           true,
+	"-alias":            true,
 }
 
 func splitPositionalAndFlags(args []string) ([]string, []string) {

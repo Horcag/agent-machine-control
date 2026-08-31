@@ -205,9 +205,9 @@ AMC exposes exactly 20 Model Context Protocol (MCP) tools for agent integration:
 ### Machine, Operation & Receipt Management Tools (12)
 
 1. `doctor`: Run preflight health checks and report environment capabilities.
-2. `machine_list`: List discovered Hyper-V virtual machines.
-3. `machine_inspect`: Inspect detailed state and configuration of a virtual machine.
-4. `checkpoint_list`: List checkpoints for a virtual machine.
+2. `machine_list`: List only the enrolled local virtual machine.
+3. `machine_inspect`: Inspect the enrolled target through an exact target reference.
+4. `checkpoint_list`: List checkpoints only for the enrolled target.
 5. `machine_start`: Start or resume a virtual machine.
 6. `machine_stop`: Stop, power off, or save a virtual machine.
 7. `checkpoint_create`: Create a VM checkpoint / snapshot.

@@ -52,7 +52,7 @@ type MachineListResult struct {
 }
 
 type MachineInspectInput struct {
-	ID string `json:"id" jsonschema:"The machine GUID to inspect"`
+	ID string `json:"id,omitempty" jsonschema:"Optional enrolled target reference (default, exact alias, GUID, or local locator)"`
 }
 
 type MachineInspectResult struct {
@@ -62,7 +62,7 @@ type MachineInspectResult struct {
 }
 
 type CheckpointListInput struct {
-	ID string `json:"id" jsonschema:"The machine GUID to list checkpoints for"`
+	ID string `json:"id,omitempty" jsonschema:"Optional enrolled target reference (default, exact alias, GUID, or local locator)"`
 }
 
 type CheckpointDTO struct {
@@ -83,7 +83,7 @@ type CheckpointListResult struct {
 }
 
 type MachineStartInput struct {
-	ID             string `json:"id" jsonschema:"The machine GUID to start"`
+	ID             string `json:"id,omitempty" jsonschema:"Optional enrolled target reference (default, exact alias, GUID, or local locator)"`
 	Reason         string `json:"reason" jsonschema:"Reason for starting the machine"`
 	IdempotencyKey string `json:"idempotency_key" jsonschema:"Idempotency key for the operation"`
 	Timeout        string `json:"timeout" jsonschema:"Explicit timeout duration (e.g. 5m)"`
@@ -98,7 +98,7 @@ type MachineMutationResult struct {
 }
 
 type MachineStopInput struct {
-	ID             string `json:"id" jsonschema:"The machine GUID to stop"`
+	ID             string `json:"id,omitempty" jsonschema:"Optional enrolled target reference (default, exact alias, GUID, or local locator)"`
 	Mode           string `json:"mode" jsonschema:"Stop mode (e.g. shutdown, save, or turn-off)"`
 	Reason         string `json:"reason" jsonschema:"Reason for stopping the machine"`
 	IdempotencyKey string `json:"idempotency_key" jsonschema:"Idempotency key for the operation"`
@@ -108,7 +108,7 @@ type MachineStopInput struct {
 }
 
 type CheckpointCreateInput struct {
-	ID             string `json:"id" jsonschema:"The machine GUID to checkpoint"`
+	ID             string `json:"id,omitempty" jsonschema:"Optional enrolled target reference (default, exact alias, GUID, or local locator)"`
 	Name           string `json:"name" jsonschema:"Name of the new checkpoint"`
 	Reason         string `json:"reason" jsonschema:"Reason for creating the checkpoint"`
 	IdempotencyKey string `json:"idempotency_key" jsonschema:"Idempotency key for the operation"`
@@ -125,7 +125,7 @@ type CheckpointMutationResult struct {
 }
 
 type CheckpointRestoreInput struct {
-	ID             string `json:"id" jsonschema:"The machine GUID to restore"`
+	ID             string `json:"id,omitempty" jsonschema:"Optional enrolled target reference (default, exact alias, GUID, or local locator)"`
 	CheckpointID   string `json:"checkpoint_id" jsonschema:"The checkpoint GUID to restore"`
 	Reason         string `json:"reason" jsonschema:"Reason for restoring the checkpoint"`
 	IdempotencyKey string `json:"idempotency_key" jsonschema:"Idempotency key for the operation"`

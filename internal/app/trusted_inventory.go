@@ -362,6 +362,27 @@ func (i *TrustedInventory) ResolveSingleLocal() (MachineIndexEntry, error) {
 	return i.selectOne(matches)
 }
 
+// CurrentLocalMachines returns every current enabled local machine in stable canonical order.
+func (i *TrustedInventory) CurrentLocalMachines() ([]MachineIndexEntry, error) {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	matches := make([]MachineIndexEntry, 0)
+	for _, entry := range i.machines {
+		if entry.Locator.HostID != domain.LocalHostID || entry.LastStatus != MachineIndexObserved {
+			continue
+		}
+		host, ok := i.hosts[entry.Locator.HostID]
+		if !ok || !host.Enabled {
+			continue
+		}
+		entry.Aliases = cloneStrings(entry.Aliases)
+		entry.Observation = entry.Observation.Clone()
+		matches = append(matches, entry)
+	}
+	sort.Slice(matches, func(a, b int) bool { return matches[a].Locator.String() < matches[b].Locator.String() })
+	return matches, nil
+}
+
 func (i *TrustedInventory) resolveCanonical(locator domain.MachineLocator) (MachineIndexEntry, error) {
 	i.mu.RLock()
 	defer i.mu.RUnlock()

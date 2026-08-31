@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"strconv"
 	"time"
 
@@ -39,79 +38,8 @@ func (a *Adapter) Doctor(ctx context.Context, _ *mcp.CallToolRequest, _ DoctorIn
 	}, nil
 }
 
-func (a *Adapter) MachineList(ctx context.Context, _ *mcp.CallToolRequest, _ MachineListInput) (*mcp.CallToolResult, MachineListResult, error) {
-	svc := a.getDiscoveryService()
-	machines, err := svc.List(ctx)
-	if err != nil {
-		return mcpToolError(err), MachineListResult{}, nil
-	}
-
-	sort.Slice(machines, func(i, j int) bool {
-		if machines[i].Name == machines[j].Name {
-			return machines[i].ID < machines[j].ID
-		}
-		return machines[i].Name < machines[j].Name
-	})
-
-	dtos := make([]MachineDTO, len(machines))
-	for i, m := range machines {
-		dtos[i] = convertToMachineDTO(m)
-	}
-
-	return nil, MachineListResult{
-		SchemaVersion:   SchemaVersion,
-		ObservationType: string(domain.ObservationObserved),
-		Machines:        dtos,
-	}, nil
-}
-
-func (a *Adapter) MachineInspect(ctx context.Context, _ *mcp.CallToolRequest, in MachineInspectInput) (*mcp.CallToolResult, MachineInspectResult, error) {
-	if err := domain.ValidateMachineGUID(in.ID); err != nil {
-		return mcpToolError(NewInputError("invalid machine GUID")), MachineInspectResult{}, nil
-	}
-
-	svc := a.getDiscoveryService()
-	m, err := svc.Inspect(ctx, in.ID)
-	if err != nil {
-		return mcpToolError(err), MachineInspectResult{}, nil
-	}
-
-	return nil, MachineInspectResult{
-		SchemaVersion:   SchemaVersion,
-		ObservationType: string(domain.ObservationObserved),
-		Machine:         convertToMachineDTO(m),
-	}, nil
-}
-
-func (a *Adapter) CheckpointList(ctx context.Context, _ *mcp.CallToolRequest, in CheckpointListInput) (*mcp.CallToolResult, CheckpointListResult, error) {
-	if err := domain.ValidateMachineGUID(in.ID); err != nil {
-		return mcpToolError(NewInputError("invalid machine GUID")), CheckpointListResult{}, nil
-	}
-
-	svc := a.getRecoveryService()
-	checkpoints, err := svc.ListCheckpoints(ctx, in.ID)
-	if err != nil {
-		return mcpToolError(err), CheckpointListResult{}, nil
-	}
-
-	sort.Slice(checkpoints, func(i, j int) bool {
-		return checkpoints[i].CreatedAt.Before(checkpoints[j].CreatedAt)
-	})
-
-	dtos := make([]CheckpointDTO, len(checkpoints))
-	for i, c := range checkpoints {
-		dtos[i] = convertToCheckpointDTO(c)
-	}
-
-	return nil, CheckpointListResult{
-		SchemaVersion:   SchemaVersion,
-		ObservationType: string(domain.ObservationObserved),
-		Checkpoints:     dtos,
-	}, nil
-}
-
 func (a *Adapter) MachineStart(ctx context.Context, _ *mcp.CallToolRequest, in MachineStartInput) (*mcp.CallToolResult, MachineMutationResult, error) {
-	if err := validateMutationParams(in.ID, in.Reason, in.IdempotencyKey); err != nil {
+	if err := a.validateMutationTarget(in.ID, in.Reason, in.IdempotencyKey); err != nil {
 		return mcpToolError(err), MachineMutationResult{}, nil
 	}
 	if err := domain.ValidateOperationParameters("machine.start", nil); err != nil {
@@ -164,6 +92,10 @@ func (a *Adapter) MachineStart(ctx context.Context, _ *mcp.CallToolRequest, in M
 		State:           string(domain.MachineStateRunning),
 		ObservationType: string(domain.ObservationInferred),
 	}
+	obsDTO, err = a.observeTargetMachine(ctx, in.ID, obsDTO)
+	if err != nil {
+		return mcpToolError(err), MachineMutationResult{}, nil
+	}
 
 	return nil, MachineMutationResult{
 		SchemaVersion: SchemaVersion,
@@ -174,7 +106,7 @@ func (a *Adapter) MachineStart(ctx context.Context, _ *mcp.CallToolRequest, in M
 
 //nolint:dupl
 func (a *Adapter) MachineStop(ctx context.Context, _ *mcp.CallToolRequest, in MachineStopInput) (*mcp.CallToolResult, MachineMutationResult, error) {
-	if err := validateMutationParams(in.ID, in.Reason, in.IdempotencyKey); err != nil {
+	if err := a.validateMutationTarget(in.ID, in.Reason, in.IdempotencyKey); err != nil {
 		return mcpToolError(err), MachineMutationResult{}, nil
 	}
 	if err := domain.ValidateOperationParameters("machine.stop", map[string]any{"mode": in.Mode}); err != nil {
@@ -228,6 +160,10 @@ func (a *Adapter) MachineStop(ctx context.Context, _ *mcp.CallToolRequest, in Ma
 		State:           string(domain.MachineStateOff),
 		ObservationType: string(domain.ObservationInferred),
 	}
+	obsDTO, err = a.observeTargetMachine(ctx, in.ID, obsDTO)
+	if err != nil {
+		return mcpToolError(err), MachineMutationResult{}, nil
+	}
 
 	return nil, MachineMutationResult{
 		SchemaVersion: SchemaVersion,
@@ -237,7 +173,7 @@ func (a *Adapter) MachineStop(ctx context.Context, _ *mcp.CallToolRequest, in Ma
 }
 
 func (a *Adapter) CheckpointCreate(ctx context.Context, _ *mcp.CallToolRequest, in CheckpointCreateInput) (*mcp.CallToolResult, CheckpointMutationResult, error) {
-	if err := validateMutationParams(in.ID, in.Reason, in.IdempotencyKey); err != nil {
+	if err := a.validateMutationTarget(in.ID, in.Reason, in.IdempotencyKey); err != nil {
 		return mcpToolError(err), CheckpointMutationResult{}, nil
 	}
 	if err := domain.ValidateOperationParameters("checkpoint.create", map[string]any{"name": in.Name}); err != nil {
@@ -286,11 +222,9 @@ func (a *Adapter) CheckpointCreate(ctx context.Context, _ *mcp.CallToolRequest, 
 		return mcpToolError(fmt.Errorf("failed to retrieve operation receipt: %w", err)), CheckpointMutationResult{}, nil
 	}
 
-	snapDTO := CheckpointDTO{
-		ID:              rcpt.RollbackRef,
-		Name:            in.Name,
-		VMID:            in.ID,
-		ObservationType: string(domain.ObservationInferred),
+	snapDTO, err := a.observeTargetCheckpoint(ctx, in.ID, rcpt.RollbackRef, in.Name)
+	if err != nil {
+		return mcpToolError(err), CheckpointMutationResult{}, nil
 	}
 
 	return nil, CheckpointMutationResult{
@@ -302,7 +236,7 @@ func (a *Adapter) CheckpointCreate(ctx context.Context, _ *mcp.CallToolRequest, 
 
 //nolint:dupl
 func (a *Adapter) CheckpointRestore(ctx context.Context, _ *mcp.CallToolRequest, in CheckpointRestoreInput) (*mcp.CallToolResult, MachineMutationResult, error) {
-	if err := validateMutationParams(in.ID, in.Reason, in.IdempotencyKey); err != nil {
+	if err := a.validateMutationTarget(in.ID, in.Reason, in.IdempotencyKey); err != nil {
 		return mcpToolError(err), MachineMutationResult{}, nil
 	}
 	if err := domain.ValidateOperationParameters("checkpoint.restore", map[string]any{"checkpoint_id": in.CheckpointID}); err != nil {
@@ -355,6 +289,10 @@ func (a *Adapter) CheckpointRestore(ctx context.Context, _ *mcp.CallToolRequest,
 		ID:              in.ID,
 		State:           string(domain.MachineStateOff),
 		ObservationType: string(domain.ObservationInferred),
+	}
+	obsDTO, err = a.observeTargetMachine(ctx, in.ID, obsDTO)
+	if err != nil {
+		return mcpToolError(err), MachineMutationResult{}, nil
 	}
 
 	return nil, MachineMutationResult{
