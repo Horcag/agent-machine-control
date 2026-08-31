@@ -37,10 +37,6 @@ func newTargetCoordinatorHarness(t *testing.T, root string, now time.Time, hook 
 	if err := state.EnsureDirs(); err != nil {
 		t.Fatal(err)
 	}
-	locator, err := domain.NewMachineLocator(domain.LocalHostID, targetVMA)
-	if err != nil {
-		t.Fatal(err)
-	}
 	observation := targetObservation(t, domain.LocalHostID, targetVMA, "private-display-name")
 	inventory, err := NewTrustedInventory(nil)
 	if err != nil {
@@ -226,4 +222,3 @@ func assertDirectoryOmitsText(t *testing.T, dir string, forbidden ...string) {
 		}
 	}
 }
-
