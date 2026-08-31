@@ -379,8 +379,34 @@ $arguments = @(
 )
 $child = Start-Process -FilePath '%s' -ArgumentList $arguments -NoNewWindow -Wait -PassThru
 exit $child.ExitCode
-`, spec.Distro, spec.LinuxUser, spec.BinaryPath, spec.StateDir, spec.ListenAddress, spec.WSLExecutable)
+`, quoteWindowsArgument(spec.Distro), quoteWindowsArgument(spec.LinuxUser), quoteWindowsArgument(spec.BinaryPath), quoteWindowsArgument(spec.StateDir), quoteWindowsArgument(spec.ListenAddress), spec.WSLExecutable)
 	return []byte(launcher), nil
+}
+
+// quoteWindowsArgument preserves one native argv value when Windows PowerShell
+// Start-Process joins ArgumentList entries into a single command line.
+func quoteWindowsArgument(value string) string {
+	var quoted strings.Builder
+	quoted.Grow(len(value) + 2)
+	quoted.WriteByte('"')
+
+	backslashes := 0
+	for _, character := range value {
+		if character == '\\' {
+			backslashes++
+			continue
+		}
+		if character == '"' {
+			quoted.WriteString(strings.Repeat(`\`, backslashes*2+1))
+		} else {
+			quoted.WriteString(strings.Repeat(`\`, backslashes))
+		}
+		quoted.WriteRune(character)
+		backslashes = 0
+	}
+	quoted.WriteString(strings.Repeat(`\`, backslashes*2))
+	quoted.WriteByte('"')
+	return quoted.String()
 }
 
 func metadataBytes(spec app.BootstrapSpec) ([]byte, error) {

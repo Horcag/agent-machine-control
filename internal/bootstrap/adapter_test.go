@@ -373,6 +373,48 @@ func TestWrapperContainsOnlyFixedDaemonBootstrapInputs(t *testing.T) {
 	}
 }
 
+func TestWrapperQuotesDynamicNativeArguments(t *testing.T) {
+	t.Parallel()
+
+	spec := app.BootstrapSpec{
+		WSLExecutable: `C:\Windows\System32\wsl.exe`, Distro: "Synthetic-WSL", LinuxUser: "operator",
+		BinaryPath: "/mnt/c/Example User/bin/amcd", StateDir: "/mnt/c/Example User/amc state", ListenAddress: "127.0.0.1:0",
+	}
+	wrapper, err := wrapperBytes(spec)
+	if err != nil {
+		t.Fatalf("wrapperBytes() error = %v", err)
+	}
+	text := string(wrapper)
+	for _, required := range []string{
+		`'"Synthetic-WSL"'`,
+		`'"operator"'`,
+		`'"/mnt/c/Example User/bin/amcd"'`,
+		`'"/mnt/c/Example User/amc state"'`,
+		`'"127.0.0.1:0"'`,
+	} {
+		if !strings.Contains(text, required) {
+			t.Errorf("wrapper missing quoted native argument %q: %s", required, text)
+		}
+	}
+}
+
+func TestQuoteWindowsArgumentPreservesTrailingBackslashes(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name, value, want string
+	}{
+		{name: "one trailing backslash", value: `/mnt/c/Example User/amc\`, want: `"/mnt/c/Example User/amc\\"`},
+		{name: "two trailing backslashes", value: `/mnt/c/Example User/amc\\`, want: `"/mnt/c/Example User/amc\\\\"`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := quoteWindowsArgument(test.value); got != test.want {
+				t.Errorf("quoteWindowsArgument(%q) = %q, want %q", test.value, got, test.want)
+			}
+		})
+	}
+}
+
 func TestWrapperRejectsPowerShellEscapes(t *testing.T) {
 	t.Parallel()
 
@@ -382,8 +424,11 @@ func TestWrapperRejectsPowerShellEscapes(t *testing.T) {
 	}
 	for name, mutate := range map[string]func(*app.BootstrapSpec){
 		"single quote":             func(spec *app.BootstrapSpec) { spec.StateDir = "/state'" },
+		"double quote":             func(spec *app.BootstrapSpec) { spec.StateDir = `/state"` },
 		"carriage return":          func(spec *app.BootstrapSpec) { spec.BinaryPath = "/bin/amcd" + string([]byte{'\r'}) },
 		"line feed":                func(spec *app.BootstrapSpec) { spec.BinaryPath = "/bin/amcd" + string([]byte{'\n'}) },
+		"PowerShell variable":      func(spec *app.BootstrapSpec) { spec.StateDir = "/state$env:Path" },
+		"PowerShell escape":        func(spec *app.BootstrapSpec) { spec.StateDir = "/state`n" },
 		"PowerShell subexpression": func(spec *app.BootstrapSpec) { spec.StateDir = "/state$(Get-Date)" },
 	} {
 		t.Run(name, func(t *testing.T) {
