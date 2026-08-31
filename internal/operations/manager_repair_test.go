@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -19,6 +18,7 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/lease"
 	"github.com/Horcag/agent-machine-control/internal/operations"
 	"github.com/Horcag/agent-machine-control/internal/receipt"
+	"github.com/Horcag/agent-machine-control/internal/statedir"
 )
 
 type repairBlockingBackend struct {
@@ -27,6 +27,18 @@ type repairBlockingBackend struct {
 	maxCurrent   atomic.Int64
 	blockChannel chan struct{}
 	entered      chan struct{}
+}
+
+func testManagerStateDir(t *testing.T) *statedir.StateDir {
+	t.Helper()
+	state, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	return state
 }
 
 func (b *repairBlockingBackend) Doctor(_ context.Context) (app.DoctorReport, error) {
@@ -98,11 +110,12 @@ func TestManager_PendingAdmittedRunningObservationAndExactRetry(t *testing.T) {
 	blockCh := make(chan struct{})
 	backend := &repairBlockingBackend{blockChannel: blockCh}
 
-	dir := t.TempDir()
-	leasesDir := t.TempDir()
-	auditDir := t.TempDir()
-	rcptDir := t.TempDir()
-	apprDir := t.TempDir()
+	state := testManagerStateDir(t)
+	dir := state.OperationsDir()
+	leasesDir := state.LeasesDir()
+	auditDir := state.AuditDir()
+	rcptDir := state.ReceiptsDir()
+	apprDir := state.ApprovalsDir()
 
 	leaseMgr := lease.NewManager(leasesDir)
 	auditStore := audit.NewStore(auditDir)
@@ -175,11 +188,12 @@ func TestManager_Over100ConcurrentBlockedBackendCapacity(t *testing.T) {
 	blockCh := make(chan struct{})
 	backend := &repairBlockingBackend{blockChannel: blockCh, entered: make(chan struct{}, 100)}
 
-	dir := t.TempDir()
-	leasesDir := t.TempDir()
-	auditDir := t.TempDir()
-	rcptDir := t.TempDir()
-	apprDir := t.TempDir()
+	state := testManagerStateDir(t)
+	dir := state.OperationsDir()
+	leasesDir := state.LeasesDir()
+	auditDir := state.AuditDir()
+	rcptDir := state.ReceiptsDir()
+	apprDir := state.ApprovalsDir()
 
 	leaseMgr := lease.NewManager(leasesDir)
 	auditStore := audit.NewStore(auditDir)
@@ -196,66 +210,60 @@ func TestManager_Over100ConcurrentBlockedBackendCapacity(t *testing.T) {
 
 	actor := makeTestActor("operator:capacity-tester")
 
-	totalSubmitters := 150
-	var wg sync.WaitGroup
-	var acceptedCount atomic.Int64
-	var busyCount atomic.Int64
-	var otherErrCount atomic.Int64
-
-	for i := range totalSubmitters {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-			op := domain.Operation{
-				Kind:                "machine.start",
-				Target:              domain.MachineRef(fmt.Sprintf("c4a523d4-6b99-4d62-a5e2-%012x", idx+1)),
-				Actor:               actor,
-				Reason:              "capacity stress test",
-				Deadline:            time.Now().Add(5 * time.Minute),
-				IdempotencyKey:      fmt.Sprintf("idemp-cap-%04d", idx),
-				RequiredScopes:      []string{"machine:write"},
-				RequiredCapability:  "machine:start",
-				Classification:      domain.ClassReversibleMutation,
-				EvidenceSensitivity: domain.EvidenceSensitivityStandard,
-			}
-			_, _, err := mgr.Submit(context.Background(), op, 5*time.Minute)
-			switch {
-			case err == nil:
-				acceptedCount.Add(1)
-			case errors.Is(err, operations.ErrManagerBusy):
-				busyCount.Add(1)
-			default:
-				otherErrCount.Add(1)
-			}
-		}(i)
-	}
-
-	wg.Wait()
-
-	if otherErrCount.Load() > 0 {
-		t.Errorf("unexpected errors during concurrent submit: %d", otherErrCount.Load())
-	}
-	if got := acceptedCount.Load(); got > 100 {
-		t.Fatalf("accepted backend calls = %d, capacity must not exceed 100", got)
-	}
-	if acceptedCount.Load() != 100 || busyCount.Load() != int64(totalSubmitters-100) {
-		t.Fatalf("capacity outcomes = accepted %d busy %d, want 100/%d", acceptedCount.Load(), busyCount.Load(), totalSubmitters-100)
-	}
-	for range 100 {
-		select {
-		case <-backend.entered:
-		case <-time.After(5 * time.Second):
-			t.Fatal("backend operations did not reach simultaneous blocking barrier")
+	const acceptedCapacity = 100
+	const totalSubmitters = 150
+	const backendEntryWait = 15 * time.Second
+	operationFor := func(idx int) domain.Operation {
+		return domain.Operation{
+			Kind:                "machine.start",
+			Target:              domain.MachineRef(fmt.Sprintf("c4a523d4-6b99-4d62-a5e2-%012x", idx+1)),
+			Actor:               actor,
+			Reason:              "capacity stress test",
+			Deadline:            time.Now().Add(5 * time.Minute),
+			IdempotencyKey:      fmt.Sprintf("idemp-cap-%04d", idx),
+			RequiredScopes:      []string{"machine:write"},
+			RequiredCapability:  "machine:start",
+			Classification:      domain.ClassReversibleMutation,
+			EvidenceSensitivity: domain.EvidenceSensitivityStandard,
 		}
 	}
-	if got := backend.current.Load(); got != 100 {
-		t.Errorf("simultaneous backend concurrency = %d, want 100", got)
+
+	acceptedCount := 0
+	for idx := range acceptedCapacity {
+		if _, wasExisting, err := mgr.Submit(context.Background(), operationFor(idx), 5*time.Minute); err != nil || wasExisting {
+			t.Fatalf("initial capacity submission %d = existing %t, error %v; want accepted new operation", idx, wasExisting, err)
+		}
+		acceptedCount++
+		select {
+		case <-backend.entered:
+		case <-time.After(backendEntryWait):
+			t.Fatalf("initial capacity submission %d did not reach the blocking backend within %s", idx, backendEntryWait)
+		}
 	}
-	if got := backend.maxCurrent.Load(); got != 100 {
-		t.Errorf("maximum backend concurrency = %d, want 100", got)
+
+	if got := backend.current.Load(); got != acceptedCapacity {
+		t.Fatalf("simultaneous backend concurrency = %d, want %d", got, acceptedCapacity)
 	}
-	if acceptedCount.Load()+busyCount.Load() != int64(totalSubmitters) {
-		t.Errorf("expected accepted + busy == %d, got %d + %d", totalSubmitters, acceptedCount.Load(), busyCount.Load())
+	if got := backend.maxCurrent.Load(); got != acceptedCapacity {
+		t.Fatalf("maximum backend concurrency = %d, want %d", got, acceptedCapacity)
+	}
+
+	busyCount := 0
+	var unexpectedErrors []error
+	for idx := acceptedCapacity; idx < totalSubmitters; idx++ {
+		if _, _, err := mgr.Submit(context.Background(), operationFor(idx), 5*time.Minute); errors.Is(err, operations.ErrManagerBusy) {
+			busyCount++
+		} else if err == nil {
+			unexpectedErrors = append(unexpectedErrors, fmt.Errorf("submission %d was accepted, want %v", idx, operations.ErrManagerBusy))
+		} else {
+			unexpectedErrors = append(unexpectedErrors, fmt.Errorf("submission %d: %w", idx, err))
+		}
+	}
+	if acceptedCount != acceptedCapacity || busyCount != totalSubmitters-acceptedCapacity {
+		t.Fatalf("capacity outcomes = accepted %d busy %d, want %d/%d", acceptedCount, busyCount, acceptedCapacity, totalSubmitters-acceptedCapacity)
+	}
+	if len(unexpectedErrors) > 0 {
+		t.Fatalf("unexpected errors during capacity saturation: %v", unexpectedErrors)
 	}
 }
 

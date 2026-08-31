@@ -18,6 +18,13 @@ type WindowsPathGuard interface {
 	ProtectNew(context.Context, string, PathKind) error
 }
 
+// WindowsPrivateDirectoryCreator atomically creates a host-backed directory with its final
+// Windows owner and DACL. It is deliberately separate from ProtectNew so callers cannot repair
+// a newly created host path by name after another actor has had a chance to replace it.
+type WindowsPrivateDirectoryCreator interface {
+	CreatePrivateDirectory(context.Context, string) (bool, error)
+}
+
 // HostPathDetector distinguishes native POSIX state from Windows-host-backed state.
 type HostPathDetector func(string) (bool, error)
 

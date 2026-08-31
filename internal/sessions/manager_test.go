@@ -95,7 +95,7 @@ func TestManagerOpenRejectsExpiredContextAndCleansLateChannel(t *testing.T) {
 
 	t.Run("expired before dial", func(t *testing.T) {
 		transport := &deadlineGuardTransport{channel: newDeadlineGuardChannel()}
-		mgr := sessions.NewManager(t.TempDir(), transport, time.Now)
+		mgr := sessions.NewManager(testSessionsDir(t), transport, time.Now)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		if _, err := mgr.Open(ctx, deadlineGuardOperation(actor, "expired-before-dial"), 80, 24, "xterm"); !errors.Is(err, context.Canceled) {
@@ -110,7 +110,7 @@ func TestManagerOpenRejectsExpiredContextAndCleansLateChannel(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		channel := newDeadlineGuardChannel()
 		transport := &deadlineGuardTransport{cancelOnDial: cancel, channel: channel}
-		mgr := sessions.NewManager(t.TempDir(), transport, time.Now)
+		mgr := sessions.NewManager(testSessionsDir(t), transport, time.Now)
 		if _, err := mgr.Open(ctx, deadlineGuardOperation(actor, "expired-after-dial"), 80, 24, "xterm"); !errors.Is(err, context.Canceled) {
 			t.Fatalf("Open error = %v, want context canceled", err)
 		}
@@ -134,7 +134,7 @@ func TestManagerOpenRetainsCommittedSessionAfterDirectorySyncFailure(t *testing.
 	syncErr := errors.New("synthetic post-rename directory sync failure")
 	var syncCalls atomic.Int32
 	mgr := sessions.NewManager(
-		t.TempDir(),
+		testSessionsDir(t),
 		transport,
 		time.Now,
 		sessions.WithSessionDirectorySync(func(dir string) error {
@@ -176,7 +176,7 @@ func TestManagerExpiredContextsNeverReachSessionEffects(t *testing.T) {
 	actor := deadlineGuardActor(t)
 	channel := newDeadlineGuardChannel()
 	transport := &deadlineGuardTransport{channel: channel}
-	mgr := sessions.NewManager(t.TempDir(), transport, time.Now)
+	mgr := sessions.NewManager(testSessionsDir(t), transport, time.Now)
 	obs, err := mgr.Open(context.Background(), deadlineGuardOperation(actor, "open-for-expired-effects"), 80, 24, "xterm")
 	if err != nil {
 		t.Fatal(err)

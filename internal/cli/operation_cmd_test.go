@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -71,7 +72,7 @@ func (m *mockBackendWithOps) RestoreCheckpoint(_ context.Context, _ string, _ st
 }
 
 func setupDaemonForCLI(t *testing.T) (*daemon.Server, string) {
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "state")
 	state, err := statedir.Resolve(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -269,7 +270,7 @@ func TestCLI_OperationApproveValidationConfirmationAndHumanOutput(t *testing.T) 
 		t.Fatalf("declined code=%d stderr=%s", code, declinedErr.String())
 	}
 
-	unavailable := cli.NewApp(nil, cli.WithStateDir(t.TempDir()), cli.WithPrompter(&testPrompter{confirm: true}))
+	unavailable := cli.NewApp(nil, cli.WithStateDir(filepath.Join(t.TempDir(), "state")), cli.WithPrompter(&testPrompter{confirm: true}))
 	var unavailableOut, unavailableErr bytes.Buffer
 	code = unavailable.Run([]string{
 		"operation", "approve", "machine.stop", cliTestVMID, "--mode", "turn-off",

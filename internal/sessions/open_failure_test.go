@@ -52,7 +52,7 @@ func TestManagerPostEffectOpenFailuresCloseCompletelyWithoutPublication(t *testi
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			channel := newLifecycleChannel(guestssh.CloseOutcome{Complete: true})
-			mgr := sessions.NewManager(t.TempDir(), lifecycleTransport{channel: channel}, time.Now, tt.opts...)
+			mgr := sessions.NewManager(testSessionsDir(t), lifecycleTransport{channel: channel}, time.Now, tt.opts...)
 			op, actor := openFailureOperation(t)
 
 			obs, err := mgr.Open(context.Background(), op, 80, 24, domain.DefaultTermType)
@@ -83,7 +83,7 @@ func TestManagerOwnsCleanupForPostEffectDialFailure(t *testing.T) {
 		guestssh.CloseOutcome{Complete: false, Err: context.DeadlineExceeded},
 		guestssh.CloseOutcome{Complete: true},
 	)
-	mgr := sessions.NewManager(t.TempDir(), dialFailureTransport{channel: channel, cause: errSyntheticOpen}, time.Now)
+	mgr := sessions.NewManager(testSessionsDir(t), dialFailureTransport{channel: channel, cause: errSyntheticOpen}, time.Now)
 	op, actor := openFailureOperation(t)
 
 	obs, err := mgr.Open(context.Background(), op, 80, 24, domain.DefaultTermType)
@@ -109,7 +109,7 @@ func TestManagerPostEffectOpenCleanupUsesRemainingDeadline(t *testing.T) {
 	channel := newLifecycleChannel()
 	channel.allowClose = make(chan struct{})
 	mgr := sessions.NewManager(
-		t.TempDir(),
+		testSessionsDir(t),
 		lifecycleTransport{channel: channel},
 		time.Now,
 		sessions.WithSessionIDGenerator(func() (domain.SessionID, error) { return "", errSyntheticOpen }),
@@ -144,7 +144,7 @@ func TestManagerSupervisedOpenCleanupRemovesOwnershipAfterSuccess(t *testing.T) 
 		guestssh.CloseOutcome{Complete: true},
 	)
 	mgr := sessions.NewManager(
-		t.TempDir(), lifecycleTransport{channel: channel}, time.Now,
+		testSessionsDir(t), lifecycleTransport{channel: channel}, time.Now,
 		sessions.WithSessionIDGenerator(func() (domain.SessionID, error) { return "", errSyntheticOpen }),
 	)
 	op, actor := openFailureOperation(t)
@@ -174,7 +174,7 @@ func TestManagerShutdownRetriesRetainedOpenCleanup(t *testing.T) {
 		guestssh.CloseOutcome{Complete: true},
 	)
 	mgr := sessions.NewManager(
-		t.TempDir(), lifecycleTransport{channel: channel}, time.Now,
+		testSessionsDir(t), lifecycleTransport{channel: channel}, time.Now,
 		sessions.WithSessionIDGenerator(func() (domain.SessionID, error) { return "", errSyntheticOpen }),
 	)
 	op, _ := openFailureOperation(t)
@@ -200,7 +200,7 @@ func TestManagerShutdownReturnsStableErrorForRetainedOpenCleanup(t *testing.T) {
 	failed := guestssh.CloseOutcome{Complete: false, Err: context.DeadlineExceeded}
 	channel := newLifecycleChannel(failed, failed, failed, failed)
 	mgr := sessions.NewManager(
-		t.TempDir(), lifecycleTransport{channel: channel}, time.Now,
+		testSessionsDir(t), lifecycleTransport{channel: channel}, time.Now,
 		sessions.WithSessionIDGenerator(func() (domain.SessionID, error) { return "", errSyntheticOpen }),
 	)
 	op, _ := openFailureOperation(t)

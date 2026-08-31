@@ -14,7 +14,7 @@ import (
 )
 
 func TestAuthenticatedSessionOpenQueuedAcrossShutdownIsRejectedAfterSemaphore(t *testing.T) {
-	dir := t.TempDir()
+	dir := missingDaemonStateRoot(t)
 	srv, err := NewServer(Config{StateDir: dir})
 	if err != nil {
 		t.Fatal(err)

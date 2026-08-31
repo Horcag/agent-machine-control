@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -246,7 +247,7 @@ func TestCLI_Audit_Follow(t *testing.T) {
 
 func TestCLI_Audit_DaemonUnavailable(t *testing.T) {
 	discoverySvc := app.NewDiscoveryService(&mockBackendWithOps{})
-	appInstance := cli.NewApp(discoverySvc, cli.WithStateDir(t.TempDir()))
+	appInstance := cli.NewApp(discoverySvc, cli.WithStateDir(filepath.Join(t.TempDir(), "state")))
 
 	var stdout, stderr bytes.Buffer
 	code := appInstance.Run([]string{"audit", "tail"}, &stdout, &stderr)

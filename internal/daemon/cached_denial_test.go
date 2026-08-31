@@ -204,7 +204,7 @@ func deleteOpFiles(t *testing.T, stateDir string, opID string) {
 }
 
 func TestDaemon_CachedDenialWaitReadable(t *testing.T) {
-	stateDir := t.TempDir()
+	stateDir := missingDaemonStateRoot(t)
 	backend := &countingBackend{}
 
 	srv1, endpoint1 := startServerHelper(t, stateDir, backend)

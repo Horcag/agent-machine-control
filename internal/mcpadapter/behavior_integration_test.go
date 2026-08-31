@@ -50,7 +50,7 @@ func (c *interceptConn) Read(ctx context.Context) (jsonrpc.Message, error) {
 func TestBinaryStdioIntegration(t *testing.T) {
 	binaryPath := resolveTestMCPBinary(t)
 
-	stateDir := t.TempDir()
+	stateDir := filepath.Join(t.TempDir(), "state")
 	createTestAgentToken(t, stateDir)
 
 	cmd := exec.Command(binaryPath, "--state-dir", stateDir)

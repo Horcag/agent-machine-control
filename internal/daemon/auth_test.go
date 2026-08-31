@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -67,7 +68,7 @@ func (m *mockDaemonBackend) RestoreCheckpoint(_ context.Context, _ string, _ str
 }
 
 func setupTestServer(t *testing.T) (*daemon.Server, string, string, string) {
-	dir := t.TempDir()
+	dir := missingDaemonStateRoot(t)
 	seedDaemonTestTarget(t, dir)
 	srv, err := daemon.NewServer(daemon.Config{
 		StateDir:   dir,
@@ -93,6 +94,11 @@ func setupTestServer(t *testing.T) (*daemon.Server, string, string, string) {
 	}
 
 	return srv, authDir, opToken, agToken
+}
+
+func missingDaemonStateRoot(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(t.TempDir(), "state")
 }
 
 func daemonTestObservation(vmID string) domain.MachineObservation {

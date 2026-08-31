@@ -118,7 +118,7 @@ func waitForSSEEventTarget(body io.Reader, target domain.MachineRef) bool {
 }
 
 func TestServer_ListenAddr_LoopbackValidation(t *testing.T) {
-	dir := t.TempDir()
+	dir := missingDaemonStateRoot(t)
 	srv, err := daemon.NewServer(daemon.Config{
 		StateDir:   dir,
 		ListenAddr: "0.0.0.0:8080",

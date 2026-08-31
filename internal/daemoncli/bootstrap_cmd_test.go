@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -18,7 +19,7 @@ func TestBootstrapCLIStatusJSON(t *testing.T) {
 	restoreBootstrapFactory(t, service)
 
 	var stdout, stderr bytes.Buffer
-	code := Run([]string{"bootstrap", "status", "--state-dir", t.TempDir(), "--json"}, &stdout, &stderr)
+	code := Run([]string{"bootstrap", "status", "--state-dir", filepath.Join(t.TempDir(), "state"), "--json"}, &stdout, &stderr)
 	if code != ExitSuccess {
 		t.Fatalf("Run() code = %d, stderr = %s", code, stderr.String())
 	}
@@ -48,7 +49,7 @@ func TestBootstrapCLIInvokesEnsureWithDeadline(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{
-		"bootstrap", "ensure", "--state-dir", t.TempDir(), "--reason", "operator install",
+		"bootstrap", "ensure", "--state-dir", filepath.Join(t.TempDir(), "state"), "--reason", "operator install",
 		"--idempotency-key", "ensure-cli", "--timeout", "5s", "--json",
 	}, &stdout, &stderr)
 	if code != ExitSuccess {
@@ -71,7 +72,7 @@ func TestBootstrapCLIPriorFailureEmitsDurableFailedReplay(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{
-		"bootstrap", "start", "--state-dir", t.TempDir(), "--reason", "retry historical start",
+		"bootstrap", "start", "--state-dir", filepath.Join(t.TempDir(), "state"), "--reason", "retry historical start",
 		"--idempotency-key", "prior-failed-cli", "--timeout", "5s", "--json",
 	}, &stdout, &stderr)
 	if code != ExitConflict {

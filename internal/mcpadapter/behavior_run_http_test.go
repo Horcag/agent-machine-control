@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"syscall"
 	"testing"
 )
@@ -18,7 +19,7 @@ func TestRunHTTP_BindFailure(t *testing.T) {
 	addr := l.Addr().String()
 
 	// Need a valid stateDir to pass the resolution and token checks
-	tempDir := t.TempDir()
+	tempDir := filepath.Join(t.TempDir(), "state")
 	createTestAgentToken(t, tempDir)
 
 	a := NewAdapter("")
@@ -33,7 +34,7 @@ func TestRunHTTP_BindFailure(t *testing.T) {
 }
 
 func TestRunHTTP_CleanContextShutdownAndSignal(t *testing.T) {
-	tempDir := t.TempDir()
+	tempDir := filepath.Join(t.TempDir(), "state")
 	createTestAgentToken(t, tempDir)
 
 	a := NewAdapter("")

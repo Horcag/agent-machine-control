@@ -156,8 +156,15 @@ func TestDaemonSessions_EndToEnd(t *testing.T) {
 		t.Fatal("expected non-empty session ID")
 	}
 
-	// 2. Read initial prompt
-	time.Sleep(50 * time.Millisecond)
+	// 2. Wait for the fake transport's initial prompt instead of relying on scheduler timing.
+	status, data = doJSONReq(t, http.MethodPost, fmt.Sprintf("%s/v1/sessions/%s/wait", endpoint, sessID), token, daemon.SessionWaitRequest{
+		Regex: "PS C:", TimeoutMillis: 1000,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("Wait for initial prompt failed status %d: %s", status, string(data))
+	}
+
+	// 3. Read initial prompt.
 	status, data = doJSONReq(t, http.MethodGet, fmt.Sprintf("%s/v1/sessions/%s/read?after_seq=0", endpoint, sessID), token, nil)
 	if status != http.StatusOK {
 		t.Fatalf("Read failed status %d: %s", status, string(data))
@@ -168,28 +175,28 @@ func TestDaemonSessions_EndToEnd(t *testing.T) {
 		t.Errorf("expected initial prompt chunks")
 	}
 
-	// 3. Write data
+	// 4. Write data
 	writeReq := daemon.SessionWriteRequest{Data: "dir\r\n", Reason: "list files", IdempotencyKey: "key-w-1"}
 	status, data = doJSONReq(t, http.MethodPost, fmt.Sprintf("%s/v1/sessions/%s/write", endpoint, sessID), token, writeReq)
 	if status != http.StatusOK {
 		t.Fatalf("Write failed status %d: %s", status, string(data))
 	}
 
-	// 4. Control key
+	// 5. Control key
 	ctrlReq := daemon.SessionControlRequest{Key: "ctrl-c", Reason: "cancel command", IdempotencyKey: "key-c-1"}
 	status, data = doJSONReq(t, http.MethodPost, fmt.Sprintf("%s/v1/sessions/%s/control", endpoint, sessID), token, ctrlReq)
 	if status != http.StatusOK {
 		t.Fatalf("Control failed status %d: %s", status, string(data))
 	}
 
-	// 5. Wait settle
-	waitReq := daemon.SessionWaitRequest{SettleMs: 100, AfterSeq: readResp.NextSeq}
+	// 6. Wait settle with a test-owned deadline.
+	waitReq := daemon.SessionWaitRequest{SettleMs: 100, AfterSeq: readResp.NextSeq, TimeoutMillis: 1000}
 	status, data = doJSONReq(t, http.MethodPost, fmt.Sprintf("%s/v1/sessions/%s/wait", endpoint, sessID), token, waitReq)
 	if status != http.StatusOK {
 		t.Fatalf("Wait failed status %d: %s", status, string(data))
 	}
 
-	// 6. List and Get
+	// 7. List and Get
 	status, data = doJSONReq(t, http.MethodGet, endpoint+"/v1/sessions", token, nil)
 	if status != http.StatusOK {
 		t.Fatalf("List failed status %d: %s", status, string(data))
@@ -205,7 +212,7 @@ func TestDaemonSessions_EndToEnd(t *testing.T) {
 		t.Fatalf("Get failed status %d: %s", status, string(data))
 	}
 
-	// 7. Close Session
+	// 8. Close Session
 	closeReq := daemon.SessionCloseRequest{Reason: "finished e2e test", IdempotencyKey: "key-close-1"}
 	status, data = doJSONReq(t, http.MethodPost, fmt.Sprintf("%s/v1/sessions/%s/close", endpoint, sessID), token, closeReq)
 	if status != http.StatusOK {
@@ -272,7 +279,7 @@ func TestDaemonSessions_EncodedRoutesFailClosed(t *testing.T) {
 }
 
 func TestDaemonSessions_SubSecondTimeoutsReachAppAndTransport(t *testing.T) {
-	dir := t.TempDir()
+	dir := missingDaemonStateRoot(t)
 	seedDaemonTestTarget(t, dir)
 	target := "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
 	checkpoint := "e4a523d4-6b99-4d62-a5e2-4752c0f20001"

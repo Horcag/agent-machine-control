@@ -5,6 +5,7 @@ package statedir
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -14,12 +15,12 @@ const stateDirectoryFullAccess = 0x001f01ff
 
 // createPlatformPrivateDirectory creates a directory with its final owner and protected DACL.
 // It intentionally never re-opens the pathname to establish the initial security contract.
-func createPlatformPrivateDirectory(path string, _ bool) error {
+func createPlatformPrivateDirectory(path string, allowTargetInheritance bool) error {
 	user, err := currentStateDirUser()
 	if err != nil {
 		return err
 	}
-	descriptor, err := privateStateDirSecurityDescriptor(user.User.Sid)
+	descriptor, err := privateStateDirSecurityDescriptor(user.User.Sid, allowTargetInheritance)
 	if err != nil {
 		return err
 	}
@@ -58,9 +59,31 @@ func currentStateDirUser() (*windows.Tokenuser, error) {
 	return user, nil
 }
 
-func privateStateDirSecurityDescriptor(owner *windows.SID) (*windows.SECURITY_DESCRIPTOR, error) {
-	sddl := "O:" + owner.String() + "D:P(A;;FA;;;" + owner.String() + ")(A;;FA;;;SY)(A;;FA;;;BA)"
-	descriptor, err := windows.SecurityDescriptorFromString(sddl)
+func privateStateDirSecurityDescriptor(owner *windows.SID, allowTargetInheritance bool) (*windows.SECURITY_DESCRIPTOR, error) {
+	system, err := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
+	if err != nil {
+		return nil, fmt.Errorf("%w: cannot resolve LocalSystem SID", ErrInsecurePermissions)
+	}
+	administrators, err := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
+	if err != nil {
+		return nil, fmt.Errorf("%w: cannot resolve Administrators SID", ErrInsecurePermissions)
+	}
+	aceFlags := ""
+	if allowTargetInheritance {
+		aceFlags = "OICI"
+	}
+	var sddl strings.Builder
+	sddl.WriteString("O:")
+	sddl.WriteString(owner.String())
+	sddl.WriteString("D:P")
+	for _, principal := range distinctStateDirSIDs(owner, system, administrators) {
+		sddl.WriteString("(A;")
+		sddl.WriteString(aceFlags)
+		sddl.WriteString(";FA;;;")
+		sddl.WriteString(principal.String())
+		sddl.WriteByte(')')
+	}
+	descriptor, err := windows.SecurityDescriptorFromString(sddl.String())
 	if err != nil {
 		return nil, fmt.Errorf("%w: cannot construct private DACL: %v", ErrInsecurePermissions, err)
 	}

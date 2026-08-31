@@ -47,7 +47,11 @@ func validateWindowsACLProof(proof windowsACLProof) error {
 	if len(proof.Entries) != len(allowed) {
 		return fmt.Errorf("target: protected path has %d ACEs, want exactly %d", len(proof.Entries), len(allowed))
 	}
-	for index, entry := range proof.Entries {
+	expectedTrustees := make(map[string]struct{}, len(allowed))
+	for _, sid := range allowed {
+		expectedTrustees[sid] = struct{}{}
+	}
+	for _, entry := range proof.Entries {
 		if entry.Type != windowsACEAllow {
 			return fmt.Errorf("target: protected path has unsupported or deny ACE type %d", entry.Type)
 		}
@@ -57,9 +61,10 @@ func validateWindowsACLProof(proof windowsACLProof) error {
 		if entry.Mask != windowsFullControl {
 			return fmt.Errorf("target: protected path ACE for %q has mask %#x, want FullControl", entry.SID, entry.Mask)
 		}
-		if entry.SID != allowed[index] {
-			return fmt.Errorf("target: protected path ACE %d grants SID %q, want %q", index, entry.SID, allowed[index])
+		if _, expected := expectedTrustees[entry.SID]; !expected {
+			return fmt.Errorf("target: protected path ACE grants unexpected or duplicate SID %q", entry.SID)
 		}
+		delete(expectedTrustees, entry.SID)
 	}
 	return nil
 }

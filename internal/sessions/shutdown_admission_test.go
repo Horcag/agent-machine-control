@@ -12,7 +12,7 @@ import (
 
 func TestManagerShutdownClosesOpenAdmissionBeforeSnapshot(t *testing.T) {
 	transport := &deadlineGuardTransport{channel: newDeadlineGuardChannel()}
-	mgr := sessions.NewManager(t.TempDir(), transport, time.Now)
+	mgr := sessions.NewManager(testSessionsDir(t), transport, time.Now)
 	if err := mgr.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}

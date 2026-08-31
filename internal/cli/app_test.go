@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -236,7 +237,7 @@ func TestCli_DefaultRun_ExecutableMissing_DoctorJSON(t *testing.T) {
 
 func TestCli_DefaultRun_ExecutableMissing_MachineList(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	stateDir := t.TempDir()
+	stateDir := filepath.Join(t.TempDir(), "state")
 	var stdout, stderr bytes.Buffer
 	code := cli.Run([]string{"--state-dir", stateDir, "machine", "list"}, &stdout, &stderr)
 	if code != cli.ExitConflict {
@@ -249,7 +250,7 @@ func TestCli_DefaultRun_ExecutableMissing_MachineList(t *testing.T) {
 
 func TestCli_DefaultRun_ExecutableMissing_MachineInspect(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	stateDir := t.TempDir()
+	stateDir := filepath.Join(t.TempDir(), "state")
 	var stdout, stderr bytes.Buffer
 	code := cli.Run([]string{"--state-dir", stateDir, "machine", "inspect", "c4a523d4-6b99-4d62-a5e2-4752c0f20001"}, &stdout, &stderr)
 	if code != cli.ExitConflict {

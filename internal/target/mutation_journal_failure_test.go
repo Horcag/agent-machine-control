@@ -124,17 +124,22 @@ func TestMutationJournalProtectsOnlyNewDirectoryBeforeValidation(t *testing.T) {
 		if _, err := NewMutationJournal(t.TempDir(), WithMutationJournalSecurity(security)); err != nil {
 			t.Fatal(err)
 		}
-		if got, want := strings.Join(security.calls, ","), "protect-new,validate"; got != want {
+		if got, want := strings.Join(security.calls, ","), mutationJournalNewDirectorySecurityCalls(); got != want {
 			t.Fatalf("security calls = %q, want %q", got, want)
 		}
 	})
 
 	t.Run("protection failure prevents validation", func(t *testing.T) {
 		security := &recordingMutationJournalSecurity{mutationJournalTestSecurity: mutationJournalTestSecurity{protectErr: errors.New("cannot protect")}}
-		if _, err := NewMutationJournal(t.TempDir(), WithMutationJournalSecurity(security)); !errors.Is(err, ErrInsecureState) {
-			t.Fatalf("NewMutationJournal protection error = %v", err)
+		_, err := NewMutationJournal(t.TempDir(), WithMutationJournalSecurity(security))
+		if mutationJournalUsesPostCreateProtection() {
+			if !errors.Is(err, ErrInsecureState) {
+				t.Fatalf("NewMutationJournal protection error = %v", err)
+			}
+		} else if err != nil {
+			t.Fatalf("NewMutationJournal atomic Windows creation error = %v", err)
 		}
-		if got, want := strings.Join(security.calls, ","), "protect-new"; got != want {
+		if got, want := strings.Join(security.calls, ","), mutationJournalNewDirectoryProtectFailureCalls(); got != want {
 			t.Fatalf("security calls = %q, want %q", got, want)
 		}
 	})
@@ -144,7 +149,7 @@ func TestMutationJournalProtectsOnlyNewDirectoryBeforeValidation(t *testing.T) {
 		if _, err := NewMutationJournal(t.TempDir(), WithMutationJournalSecurity(security)); !errors.Is(err, ErrInsecureState) {
 			t.Fatalf("NewMutationJournal validation error = %v", err)
 		}
-		if got, want := strings.Join(security.calls, ","), "protect-new,validate"; got != want {
+		if got, want := strings.Join(security.calls, ","), mutationJournalNewDirectorySecurityCalls(); got != want {
 			t.Fatalf("security calls = %q, want %q", got, want)
 		}
 	})

@@ -155,7 +155,7 @@ func TestCLISession_DirectModeRejection(t *testing.T) {
 
 func TestCLISession_DaemonUnavailable(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	app := cli.NewApp(nil, cli.WithStateDir(t.TempDir()))
+	app := cli.NewApp(nil, cli.WithStateDir(filepath.Join(t.TempDir(), "state")))
 	code := app.Run([]string{"session", "list"}, &stdout, &stderr)
 	if code != cli.ExitBackendUnavailable {
 		t.Errorf("expected ExitBackendUnavailable, got %d", code)

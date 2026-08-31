@@ -20,7 +20,7 @@ func TestBootstrapServiceStopUsesGracefulThenExactTaskFallback(t *testing.T) {
 	service.poll = pollBootstrapChecks(1)
 
 	result, err := service.Stop(context.Background(), BootstrapMutationRequest{
-		StateDir:       t.TempDir(),
+		StateDir:       testStateDir(t),
 		Reason:         "maintenance",
 		IdempotencyKey: "stop-with-fallback",
 		Deadline:       time.Now().Add(time.Minute),
@@ -51,7 +51,7 @@ func TestBootstrapServiceStopWaitsForGracefulDrainWithoutTaskFallback(t *testing
 	service.poll = pollBootstrapChecks(3)
 
 	result, err := service.Stop(context.Background(), BootstrapMutationRequest{
-		StateDir: t.TempDir(), Reason: "graceful maintenance", IdempotencyKey: "stop-graceful",
+		StateDir: testStateDir(t), Reason: "graceful maintenance", IdempotencyKey: "stop-graceful",
 		Deadline: time.Now().Add(time.Minute),
 	})
 	if err != nil {
@@ -73,7 +73,7 @@ func TestBootstrapServiceStopFallsBackWhenEndpointUnavailable(t *testing.T) {
 	service := newTestBootstrapService(t, adapter, &fakeBootstrapDaemon{})
 
 	result, err := service.Stop(context.Background(), BootstrapMutationRequest{
-		StateDir: t.TempDir(), Reason: "recover unavailable endpoint", IdempotencyKey: "stop-unavailable",
+		StateDir: testStateDir(t), Reason: "recover unavailable endpoint", IdempotencyKey: "stop-unavailable",
 		Deadline: time.Now().Add(time.Minute),
 	})
 	if err != nil {
@@ -101,7 +101,7 @@ func TestBootstrapServiceStopUsesTypedReleaseToRecoverStrictEndpointDrift(t *tes
 	service := newTestBootstrapService(t, adapter, daemon)
 
 	result, err := service.Stop(context.Background(), BootstrapMutationRequest{
-		StateDir: t.TempDir(), Reason: "recover strict unavailable endpoint", IdempotencyKey: "stop-strict-unavailable",
+		StateDir: testStateDir(t), Reason: "recover strict unavailable endpoint", IdempotencyKey: "stop-strict-unavailable",
 		Deadline: time.Now().Add(time.Minute),
 	})
 	if err != nil || result.Status != BootstrapStopped {
@@ -132,7 +132,7 @@ func TestBootstrapServiceStopUsesRecoveredTypedHealthAfterStrictDrift(t *testing
 	service := newTestBootstrapService(t, adapter, daemon)
 
 	result, err := service.Stop(context.Background(), BootstrapMutationRequest{
-		StateDir: t.TempDir(), Reason: "stop recovered owned endpoint", IdempotencyKey: "stop-recovered-owned-endpoint",
+		StateDir: testStateDir(t), Reason: "stop recovered owned endpoint", IdempotencyKey: "stop-recovered-owned-endpoint",
 		Deadline: time.Now().Add(time.Minute),
 	})
 	if err != nil || result.Status != BootstrapStopped {
@@ -153,7 +153,7 @@ func TestBootstrapServiceStopFallsBackWhenEndpointDisappearsDuringRequest(t *tes
 	service.poll = pollBootstrapChecks(1)
 
 	result, err := service.Stop(context.Background(), BootstrapMutationRequest{
-		StateDir: t.TempDir(), Reason: "endpoint race", IdempotencyKey: "stop-endpoint-race",
+		StateDir: testStateDir(t), Reason: "endpoint race", IdempotencyKey: "stop-endpoint-race",
 		Deadline: time.Now().Add(time.Minute),
 	})
 	if err != nil {
@@ -184,7 +184,7 @@ func TestBootstrapServiceStopFallsBackAfterAcknowledgedUnavailableDrain(t *testi
 	service.poll = pollBootstrapChecks(2)
 
 	result, err := service.Stop(context.Background(), BootstrapMutationRequest{
-		StateDir: t.TempDir(), Reason: "fallback after acknowledged drain", IdempotencyKey: "stop-acked-drain",
+		StateDir: testStateDir(t), Reason: "fallback after acknowledged drain", IdempotencyKey: "stop-acked-drain",
 		Deadline: time.Now().Add(time.Minute),
 	})
 	if err != nil || result.Status != BootstrapStopped {
@@ -213,7 +213,7 @@ func TestBootstrapServiceStopBlocksTaskDriftAtFallbackBoundary(t *testing.T) {
 	service.poll = pollBootstrapChecks(1)
 
 	_, err := service.Stop(context.Background(), BootstrapMutationRequest{
-		StateDir: t.TempDir(), Reason: "reject fallback task drift", IdempotencyKey: "stop-fallback-task-drift",
+		StateDir: testStateDir(t), Reason: "reject fallback task drift", IdempotencyKey: "stop-fallback-task-drift",
 		Deadline: time.Now().Add(time.Minute),
 	})
 	if !errors.Is(err, ErrBootstrapDrift) || adapter.stopCalls != 0 {
@@ -230,7 +230,7 @@ func TestBootstrapStopFailsWhenExactTaskRemainsRunning(t *testing.T) {
 	service := newTestBootstrapService(t, adapter, &fakeBootstrapDaemon{healthy: true})
 	service.poll = pollBootstrapChecks(1)
 	result, err := service.Stop(context.Background(), BootstrapMutationRequest{
-		StateDir: t.TempDir(), Reason: "verify task release", IdempotencyKey: "stop-release",
+		StateDir: testStateDir(t), Reason: "verify task release", IdempotencyKey: "stop-release",
 		Deadline: time.Now().Add(time.Minute),
 	})
 	if !errors.Is(err, ErrBootstrapUnhealthy) {
@@ -267,7 +267,7 @@ func TestBootstrapServiceStopSkipsFallbackEffectWhenTaskStopsDuringGrace(t *test
 			service.poll = pollBootstrapChecks(1)
 
 			result, err := service.Stop(context.Background(), BootstrapMutationRequest{
-				StateDir: t.TempDir(), Reason: "observe task stop before fallback", IdempotencyKey: "stop-no-repeat-" + string(state),
+				StateDir: testStateDir(t), Reason: "observe task stop before fallback", IdempotencyKey: "stop-no-repeat-" + string(state),
 				Deadline: time.Now().Add(time.Minute),
 			})
 			if err != nil || result.Status != BootstrapStopped || adapter.stopCalls != 0 || result.TaskStopApplied {
@@ -288,7 +288,7 @@ func TestBootstrapServiceStopRecordsTaskEffectWhenReleaseVerificationFails(t *te
 	service := newTestBootstrapService(t, adapter, daemon)
 	service.poll = pollBootstrapChecks(1)
 	req := BootstrapMutationRequest{
-		StateDir: t.TempDir(), Reason: "preserve fallback effect truth", IdempotencyKey: "stop-effect-truth",
+		StateDir: testStateDir(t), Reason: "preserve fallback effect truth", IdempotencyKey: "stop-effect-truth",
 		Deadline: time.Now().Add(time.Minute),
 	}
 
@@ -324,7 +324,7 @@ func TestBootstrapServiceStopKeepsForeignReleaseDriftFailClosed(t *testing.T) {
 	}
 	service := newTestBootstrapService(t, adapter, daemon)
 	_, err := service.Stop(context.Background(), BootstrapMutationRequest{
-		StateDir: t.TempDir(), Reason: "reject foreign release", IdempotencyKey: "stop-foreign-release",
+		StateDir: testStateDir(t), Reason: "reject foreign release", IdempotencyKey: "stop-foreign-release",
 		Deadline: time.Now().Add(time.Minute),
 	})
 	if !errors.Is(err, ErrBootstrapDrift) || errors.Is(err, ErrBootstrapUnhealthy) || adapter.stopCalls != 0 {
@@ -347,7 +347,7 @@ func TestBootstrapServiceRemoveUsesRepairedStopFallback(t *testing.T) {
 	service := newTestBootstrapService(t, adapter, daemon)
 	service.poll = pollBootstrapChecks(1)
 	result, err := service.Remove(context.Background(), BootstrapMutationRequest{
-		StateDir: t.TempDir(), Reason: "remove through exact stop fallback", IdempotencyKey: "remove-stop-fallback",
+		StateDir: testStateDir(t), Reason: "remove through exact stop fallback", IdempotencyKey: "remove-stop-fallback",
 		Deadline: time.Now().Add(time.Minute),
 	})
 	if err != nil || result.Status != BootstrapAbsent || adapter.stopCalls != 1 || adapter.removeCalls != 1 || !result.TaskStopApplied {
@@ -359,7 +359,7 @@ func TestBootstrapWaitReleasedRequiresRemainingOperationDeadline(t *testing.T) {
 	t.Parallel()
 
 	service := newTestBootstrapService(t, newFakeBootstrapAdapter(), &fakeBootstrapDaemon{})
-	spec := BootstrapSpec{StateDir: t.TempDir()}
+	spec := BootstrapSpec{StateDir: testStateDir(t)}
 
 	if err := service.waitBootstrapReleased(context.Background(), spec); !errors.Is(err, ErrBootstrapUnhealthy) {
 		t.Fatalf("waitBootstrapReleased() without deadline error = %v, want unhealthy", err)
@@ -382,7 +382,7 @@ func TestBootstrapWaitReleasedPreservesPollingFailure(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	if err := service.waitBootstrapReleased(ctx, BootstrapSpec{StateDir: t.TempDir()}); !errors.Is(err, ErrBootstrapUnhealthy) || !errors.Is(err, wantErr) {
+	if err := service.waitBootstrapReleased(ctx, BootstrapSpec{StateDir: testStateDir(t)}); !errors.Is(err, ErrBootstrapUnhealthy) || !errors.Is(err, wantErr) {
 		t.Fatalf("waitBootstrapReleased() error = %v, want unhealthy polling failure", err)
 	}
 }

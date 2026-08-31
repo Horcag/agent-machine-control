@@ -128,7 +128,7 @@ func (b *deadlineAdmissionBackend) RestoreCheckpoint(context.Context, string, st
 func TestInvalidOperationDeadlineRejectedBeforeManagerAndProvider(t *testing.T) {
 	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
 	backend := &deadlineAdmissionBackend{}
-	stateDir := t.TempDir()
+	stateDir := missingDaemonStateRoot(t)
 	server, err := NewServer(Config{
 		StateDir: stateDir, ListenAddr: "127.0.0.1:0", Backend: backend,
 		Clock: func() time.Time { return now },
@@ -183,7 +183,7 @@ func TestInvalidOperationDeadlineRejectedBeforeManagerAndProvider(t *testing.T) 
 
 func TestOversizedOperationBodyRejectedBeforeManagerAndProvider(t *testing.T) {
 	backend := &deadlineAdmissionBackend{}
-	stateDir := t.TempDir()
+	stateDir := missingDaemonStateRoot(t)
 	server, err := NewServer(Config{StateDir: stateDir, ListenAddr: "127.0.0.1:0", Backend: backend})
 	if err != nil {
 		t.Fatal(err)

@@ -30,6 +30,7 @@ type targetCoordinatorHarness struct {
 
 func newTargetCoordinatorHarness(t *testing.T, root string, now time.Time, hook target.MutationJournalHook, commits *int) *targetCoordinatorHarness {
 	t.Helper()
+	root = filepath.Join(root, "state")
 	state, err := statedir.Resolve(root)
 	if err != nil {
 		t.Fatal(err)

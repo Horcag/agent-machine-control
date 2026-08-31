@@ -118,7 +118,7 @@ func assertShutdownOwnershipPresent(t *testing.T, server *Server, stateDir strin
 }
 
 func TestServerShutdownRetainsOwnershipUntilBlockedOperationDrains(t *testing.T) {
-	stateDir := t.TempDir()
+	stateDir := missingDaemonStateRoot(t)
 	seedRetryShutdownTarget(t, stateDir)
 	backend := &retryShutdownBackend{started: make(chan struct{}), release: make(chan struct{})}
 	server, err := NewServer(Config{StateDir: stateDir, ListenAddr: "127.0.0.1:0", Backend: backend})
@@ -199,7 +199,7 @@ func (c *incompleteShutdownChannel) LastCloseOutcome() guestssh.CloseOutcome {
 func (c *incompleteShutdownChannel) Wait() (int, error) { <-c.done; return 0, nil }
 
 func TestServerShutdownRetainsOwnershipForIncompleteSessionTransport(t *testing.T) {
-	stateDir := t.TempDir()
+	stateDir := missingDaemonStateRoot(t)
 	channel := &incompleteShutdownChannel{done: make(chan struct{})}
 	server, err := NewServer(Config{
 		StateDir: stateDir, ListenAddr: "127.0.0.1:0", Backend: &retryShutdownBackend{},
@@ -251,7 +251,7 @@ func TestServerShutdownRetainsOwnershipForIncompleteSessionTransport(t *testing.
 }
 
 func TestServerShutdownContinuesTeardownAfterTerminalFinalizationError(t *testing.T) {
-	stateDir := t.TempDir()
+	stateDir := missingDaemonStateRoot(t)
 	seedRetryShutdownTarget(t, stateDir)
 	backend := &retryShutdownBackend{started: make(chan struct{}), release: make(chan struct{})}
 	server, err := NewServer(Config{StateDir: stateDir, ListenAddr: "127.0.0.1:0", Backend: backend})
@@ -289,7 +289,7 @@ func TestServerShutdownContinuesTeardownAfterTerminalFinalizationError(t *testin
 }
 
 func TestServerShutdownHTTPFailureStillRemovesOwnershipAndRepeatedShutdownIsSafe(t *testing.T) {
-	stateDir := t.TempDir()
+	stateDir := missingDaemonStateRoot(t)
 	server, err := NewServer(Config{StateDir: stateDir, ListenAddr: "127.0.0.1:0", Backend: &retryShutdownBackend{}})
 	if err != nil {
 		t.Fatal(err)

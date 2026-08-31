@@ -88,8 +88,8 @@ func handleMockMCPSessionRoute(w http.ResponseWriter, r *http.Request, sessID, m
 }
 
 func setupMCPSessionTest(t *testing.T) (*Adapter, func()) {
-	tempDir := t.TempDir()
-	sd, _ := statedir.Resolve(filepath.Join(tempDir, "state"))
+	stateDir := filepath.Join(t.TempDir(), "state")
+	sd, _ := statedir.Resolve(stateDir)
 	_ = sd.EnsureDirs()
 
 	sessID := "sess-a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
@@ -108,10 +108,10 @@ func setupMCPSessionTest(t *testing.T) (*Adapter, func()) {
 	}
 	_ = daemon.WriteEndpointFile(sd.DaemonDir(), ep)
 
-	tokenStr := createTestAgentToken(t, tempDir)
+	tokenStr := createTestAgentToken(t, stateDir)
 
 	cl := client.New(server.URL, tokenStr)
-	adapter := NewAdapter(tempDir)
+	adapter := NewAdapter(stateDir)
 	adapter.client = cl
 
 	return adapter, func() {
@@ -281,7 +281,7 @@ func assertSubSecondSessionRequests(t *testing.T, captured map[string]map[string
 }
 
 func TestMCPSessions_ApprovalReferenceRequiresExactDeadlineBeforeClientResolution(t *testing.T) {
-	adapter := NewAdapter(t.TempDir())
+	adapter := NewAdapter(filepath.Join(t.TempDir(), "state"))
 	result, _, err := adapter.SessionOpen(context.Background(), nil, SessionOpenInput{
 		Target: "c4a523d4-6b99-4d62-a5e2-4752c0f20001", Reason: "missing exact deadline",
 		IdempotencyKey: "missing-approval-deadline", Timeout: "30s", ApprovalID: "app-mcp-session-reference",
@@ -292,7 +292,7 @@ func TestMCPSessions_ApprovalReferenceRequiresExactDeadlineBeforeClientResolutio
 }
 
 func TestMCPSessions_RejectInvalidApprovalIDBeforeClientResolution(t *testing.T) {
-	adapter := NewAdapter(t.TempDir())
+	adapter := NewAdapter(filepath.Join(t.TempDir(), "state"))
 	result, _, err := adapter.SessionOpen(context.Background(), nil, SessionOpenInput{
 		Target: "c4a523d4-6b99-4d62-a5e2-4752c0f20001", Reason: "reject unsafe reference",
 		IdempotencyKey: "invalid-approval-reference", Timeout: "30s", ApprovalID: "../outside",
@@ -405,7 +405,7 @@ func TestMCPSessions_ValidationErrors(t *testing.T) {
 }
 
 func TestMCPSessionOpenRejectsInvalidTerminalBeforeClientResolution(t *testing.T) {
-	adapter := NewAdapter(t.TempDir())
+	adapter := NewAdapter(filepath.Join(t.TempDir(), "state"))
 	res, _, err := adapter.SessionOpen(context.Background(), nil, SessionOpenInput{
 		Target:         "c4a523d4-6b99-4d62-a5e2-4752c0f20001",
 		Reason:         "reject invalid terminal before client resolution",
@@ -463,7 +463,7 @@ func TestMCPSessions_ClientFailures(t *testing.T) {
 	sessID := "sess-a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
 
 	// Unconfigured client
-	adapterUnconfigured := NewAdapter(t.TempDir())
+	adapterUnconfigured := NewAdapter(filepath.Join(t.TempDir(), "state"))
 	adapterUnconfigured.allowUnscopedTestTargetFallback = true
 	testMCPMutationsError(ctx, t, adapterUnconfigured, machGUID, sessID, "unconfigured client")
 	testMCPReadsError(ctx, t, adapterUnconfigured, sessID, "unconfigured client")
@@ -476,7 +476,7 @@ func TestMCPSessions_ClientFailures(t *testing.T) {
 	defer failingServer.Close()
 
 	clFailing := client.New(failingServer.URL, "token")
-	adapterFailing := NewAdapter(t.TempDir())
+	adapterFailing := NewAdapter(filepath.Join(t.TempDir(), "state"))
 	adapterFailing.allowUnscopedTestTargetFallback = true
 	adapterFailing.client = clFailing
 

@@ -40,7 +40,7 @@ func TestBootstrapEnsureFinalizesAfterCallerCancellationWithinBoundedGrace(t *te
 	service := newTestBootstrapService(t, adapter, daemon)
 
 	result, err := service.Ensure(callerCtx, BootstrapMutationRequest{
-		StateDir: t.TempDir(), Reason: "finalize healthy bootstrap", IdempotencyKey: "finalization-grace",
+		StateDir: testStateDir(t), Reason: "finalize healthy bootstrap", IdempotencyKey: "finalization-grace",
 		Deadline: time.Now().Add(time.Minute),
 	})
 	if err != nil || result.Status != BootstrapHealthy || result.ReceiptID == "" {
@@ -89,7 +89,7 @@ func TestBootstrapEnsureObservationTimeoutFinalizesDurablyAndReplays(t *testing.
 	}))
 
 	req := BootstrapMutationRequest{
-		StateDir: t.TempDir(), Reason: "persist after inspect timeout", IdempotencyKey: "observation-timeout",
+		StateDir: testStateDir(t), Reason: "persist after inspect timeout", IdempotencyKey: "observation-timeout",
 		Deadline: time.Now().Add(time.Minute),
 	}
 	first, err := service.Ensure(callerCtx, req)

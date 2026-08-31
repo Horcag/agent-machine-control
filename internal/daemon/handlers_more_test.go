@@ -150,7 +150,7 @@ func TestServer_EventsQueryBranches(t *testing.T) {
 }
 
 func TestServer_WaitAndListenError(t *testing.T) {
-	dir := t.TempDir()
+	dir := missingDaemonStateRoot(t)
 	srv, err := daemon.NewServer(daemon.Config{
 		StateDir:   dir,
 		ListenAddr: "127.0.0.1:0",
@@ -169,7 +169,7 @@ func TestServer_WaitAndListenError(t *testing.T) {
 
 	// Invalid listen address
 	badSrv, err := daemon.NewServer(daemon.Config{
-		StateDir:   t.TempDir(),
+		StateDir:   missingDaemonStateRoot(t),
 		ListenAddr: "999.999.999.999:80",
 		Backend:    &mockDaemonBackend{},
 	})

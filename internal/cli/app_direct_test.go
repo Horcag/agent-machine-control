@@ -71,7 +71,7 @@ func TestCLI_DefaultRun_Direct_ExecutableMissing(t *testing.T) {
 	defer func() { _ = os.Setenv("PATH", oldPath) }()
 
 	targetID := "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
-	stateDir := t.TempDir()
+	stateDir := filepath.Join(t.TempDir(), "state")
 	var stdout, stderr bytes.Buffer
 	code := cli.Run([]string{
 		"--state-dir", stateDir,

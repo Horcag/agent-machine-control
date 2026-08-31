@@ -15,7 +15,7 @@ import (
 )
 
 func TestNewServerReconcilesPendingSessionMutationBeforeServing(t *testing.T) {
-	root := t.TempDir()
+	root := filepath.Join(t.TempDir(), "state")
 	sd, err := statedir.Resolve(root)
 	if err != nil {
 		t.Fatal(err)

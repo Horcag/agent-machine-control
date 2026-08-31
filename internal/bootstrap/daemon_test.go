@@ -21,7 +21,7 @@ import (
 func TestLocalDaemonVerifiesAndStopsOwnedEndpoint(t *testing.T) {
 	t.Parallel()
 
-	stateDir := t.TempDir()
+	stateDir := filepath.Join(t.TempDir(), "state")
 	controller := NewLocalDaemon()
 	healthy, err := controller.Healthy(context.Background(), stateDir)
 	if err != nil || healthy {
@@ -63,7 +63,7 @@ func TestLocalDaemonVerifiesAndStopsOwnedEndpoint(t *testing.T) {
 func TestLocalDaemonRejectsCorruptEndpoint(t *testing.T) {
 	t.Parallel()
 
-	stateDir := t.TempDir()
+	stateDir := filepath.Join(t.TempDir(), "state")
 	server, err := daemon.NewServer(daemon.Config{StateDir: stateDir, ListenAddr: "127.0.0.1:0"})
 	if err != nil {
 		t.Fatal(err)
@@ -92,7 +92,7 @@ func TestLocalDaemonRejectsCorruptEndpoint(t *testing.T) {
 func TestLocalDaemonRejectsLiveEndpointWithoutAuthenticatedOwnership(t *testing.T) {
 	t.Parallel()
 
-	stateDir := t.TempDir()
+	stateDir := filepath.Join(t.TempDir(), "state")
 	sd, err := statedir.Resolve(stateDir)
 	if err != nil {
 		t.Fatal(err)
@@ -128,7 +128,7 @@ func TestLocalDaemonStopClassifiesAuthenticationDrift(t *testing.T) {
 		http.Error(w, "synthetic authentication rejection", http.StatusUnauthorized)
 	}))
 	t.Cleanup(server.Close)
-	stateDir := t.TempDir()
+	stateDir := filepath.Join(t.TempDir(), "state")
 	sd, err := statedir.Resolve(stateDir)
 	if err != nil {
 		t.Fatal(err)
@@ -156,7 +156,7 @@ func TestLocalDaemonStopClassifiesAuthenticationDrift(t *testing.T) {
 func TestLocalDaemonRequiresSingletonOwnershipReleaseWhenEndpointIsAbsent(t *testing.T) {
 	t.Parallel()
 
-	stateDir := t.TempDir()
+	stateDir := filepath.Join(t.TempDir(), "state")
 	sd, err := statedir.Resolve(stateDir)
 	if err != nil {
 		t.Fatal(err)
@@ -181,7 +181,7 @@ func TestLocalDaemonObserveReleaseReportsFullyReleased(t *testing.T) {
 func TestLocalDaemonObserveReleaseReportsExactSingletonDrain(t *testing.T) {
 	t.Parallel()
 
-	stateDir := t.TempDir()
+	stateDir := filepath.Join(t.TempDir(), "state")
 	runtimeID, pid, startTime := (&lease.DefaultIdentityProvider{}).CurrentIdentity()
 	writeSingletonOwner(t, stateDir, runtimeID, pid, startTime)
 	observation, err := NewLocalDaemon().ObserveRelease(context.Background(), stateDir)
@@ -193,7 +193,7 @@ func TestLocalDaemonObserveReleaseReportsExactSingletonDrain(t *testing.T) {
 func TestLocalDaemonObserveReleaseReportsOwnedEndpointUnavailable(t *testing.T) {
 	t.Parallel()
 
-	stateDir := t.TempDir()
+	stateDir := filepath.Join(t.TempDir(), "state")
 	sd, err := statedir.Resolve(stateDir)
 	if err != nil {
 		t.Fatal(err)
@@ -226,7 +226,7 @@ func TestLocalDaemonObserveReleaseReportsOwnedEndpointUnavailable(t *testing.T) 
 func TestLocalDaemonObserveReleaseRejectsForeignSingleton(t *testing.T) {
 	t.Parallel()
 
-	stateDir := t.TempDir()
+	stateDir := filepath.Join(t.TempDir(), "state")
 	_, pid, startTime := (&lease.DefaultIdentityProvider{}).CurrentIdentity()
 	writeSingletonOwner(t, stateDir, "linux:synthetic:foreign", pid, startTime)
 	observation, err := NewLocalDaemon().ObserveRelease(context.Background(), stateDir)
@@ -238,7 +238,7 @@ func TestLocalDaemonObserveReleaseRejectsForeignSingleton(t *testing.T) {
 func TestLocalDaemonObserveReleaseRejectsMalformedSingleton(t *testing.T) {
 	t.Parallel()
 
-	stateDir := t.TempDir()
+	stateDir := filepath.Join(t.TempDir(), "state")
 	sd, err := statedir.Resolve(stateDir)
 	if err != nil {
 		t.Fatal(err)
@@ -259,7 +259,7 @@ func TestLocalDaemonObserveReleaseRejectsMalformedSingleton(t *testing.T) {
 func TestLocalDaemonObserveReleaseReportsRetainedExactSingleton(t *testing.T) {
 	t.Parallel()
 
-	stateDir := t.TempDir()
+	stateDir := filepath.Join(t.TempDir(), "state")
 	runtimeID, _, _ := (&lease.DefaultIdentityProvider{}).CurrentIdentity()
 	writeSingletonOwner(t, stateDir, runtimeID, 2147483000, "synthetic-exited-process")
 	observation, err := NewLocalDaemon().ObserveRelease(context.Background(), stateDir)
@@ -271,7 +271,7 @@ func TestLocalDaemonObserveReleaseReportsRetainedExactSingleton(t *testing.T) {
 func TestLocalDaemonObserveReleaseReportsRetainedExactEndpointAndSingleton(t *testing.T) {
 	t.Parallel()
 
-	stateDir := t.TempDir()
+	stateDir := filepath.Join(t.TempDir(), "state")
 	sd, err := statedir.Resolve(stateDir)
 	if err != nil {
 		t.Fatal(err)
@@ -309,7 +309,7 @@ func TestLocalDaemonRejectsRuntimeAndProcessIdentityMismatch(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			stateDir := t.TempDir()
+			stateDir := filepath.Join(t.TempDir(), "state")
 			sd, err := statedir.Resolve(stateDir)
 			if err != nil {
 				t.Fatal(err)

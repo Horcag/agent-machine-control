@@ -150,7 +150,7 @@ func TestServer_ShutdownOrdering_BlockedBackendAndSSEWaiter(t *testing.T) {
 		}
 	}()
 
-	dir := t.TempDir()
+	dir := missingDaemonStateRoot(t)
 	seedDaemonTestTarget(t, dir)
 	srv, err := daemon.NewServer(daemon.Config{
 		StateDir:   dir,

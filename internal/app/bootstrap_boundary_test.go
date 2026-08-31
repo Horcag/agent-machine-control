@@ -42,7 +42,7 @@ func TestBootstrapServiceStopTreatsAbsentAsAlreadyStopped(t *testing.T) {
 	daemon := &fakeBootstrapDaemon{}
 	service := newTestBootstrapService(t, adapter, daemon)
 	req := BootstrapMutationRequest{
-		StateDir: t.TempDir(), Reason: "stop absent bootstrap", IdempotencyKey: "stop-absent",
+		StateDir: testStateDir(t), Reason: "stop absent bootstrap", IdempotencyKey: "stop-absent",
 		Deadline: time.Now().Add(time.Minute),
 	}
 	first, err := service.Stop(context.Background(), req)
@@ -69,7 +69,7 @@ func TestBootstrapServiceStartLeavesHealthyOwnedTaskAlone(t *testing.T) {
 	adapter.observation = BootstrapObservation{State: BootstrapHealthy, Exact: true, TaskRunning: true}
 	service := newTestBootstrapService(t, adapter, &fakeBootstrapDaemon{healthy: true})
 	result, err := service.Start(context.Background(), BootstrapMutationRequest{
-		StateDir: t.TempDir(), Reason: "keep healthy bootstrap", IdempotencyKey: "start-healthy",
+		StateDir: testStateDir(t), Reason: "keep healthy bootstrap", IdempotencyKey: "start-healthy",
 		Deadline: time.Now().Add(time.Minute),
 	})
 	if err != nil || result.Status != BootstrapHealthy || adapter.startCalls != 0 {
@@ -85,7 +85,7 @@ func TestBootstrapServiceStopPropagatesGracefulEndpointFailure(t *testing.T) {
 	adapter.observation = BootstrapObservation{State: BootstrapHealthy, Exact: true, TaskRunning: true}
 	service := newTestBootstrapService(t, adapter, &fakeBootstrapDaemon{healthy: true, stopErr: wantErr})
 	_, err := service.Stop(context.Background(), BootstrapMutationRequest{
-		StateDir: t.TempDir(), Reason: "surface stop failure", IdempotencyKey: "stop-failure",
+		StateDir: testStateDir(t), Reason: "surface stop failure", IdempotencyKey: "stop-failure",
 		Deadline: time.Now().Add(time.Minute),
 	})
 	if !errors.Is(err, wantErr) || adapter.stopCalls != 0 {
@@ -118,7 +118,7 @@ func TestBootstrapServiceStopPropagatesPreflightObservationFailures(t *testing.T
 			adapter.observation = BootstrapObservation{State: BootstrapHealthy, Exact: true, TaskRunning: true}
 			service := newTestBootstrapService(t, adapter, tc.daemon)
 			_, err := service.Stop(context.Background(), BootstrapMutationRequest{
-				StateDir: t.TempDir(), Reason: "surface preflight observation failure",
+				StateDir: testStateDir(t), Reason: "surface preflight observation failure",
 				IdempotencyKey: "stop-preflight-" + tc.name, Deadline: time.Now().Add(time.Minute),
 			})
 			if err == nil || adapter.stopCalls != 0 || tc.daemon.stopCalls != 0 {
@@ -141,7 +141,7 @@ func TestBootstrapServiceUsesInjectedClockForDeadlineAdmission(t *testing.T) {
 		WithBootstrapClock(func() time.Time { return now }),
 	)
 	_, err := service.Ensure(context.Background(), BootstrapMutationRequest{
-		StateDir: t.TempDir(), Reason: "clock-bound admission", IdempotencyKey: "injected-clock",
+		StateDir: testStateDir(t), Reason: "clock-bound admission", IdempotencyKey: "injected-clock",
 		Deadline: now.Add(-time.Minute),
 	})
 	if !errors.Is(err, domain.ErrMissingDeadline) {

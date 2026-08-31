@@ -2,6 +2,7 @@ package daemoncli_test
 
 import (
 	"bytes"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +29,7 @@ func TestDaemonCLI_HelpAndVersion(t *testing.T) {
 }
 
 func TestDaemonCLI_StatusStopped(t *testing.T) {
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "state")
 	var stdout, stderr bytes.Buffer
 
 	// Human output
@@ -53,7 +54,7 @@ func TestDaemonCLI_StatusStopped(t *testing.T) {
 }
 
 func TestDaemonCLI_RunStatusStop_Lifecycle(t *testing.T) {
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "state")
 
 	// Start daemon in background goroutine
 	var runStdout, runStderr bytes.Buffer
@@ -66,8 +67,17 @@ func TestDaemonCLI_RunStatusStop_Lifecycle(t *testing.T) {
 	// Wait for daemon to become ready
 	var statusStdout, statusStderr bytes.Buffer
 	var running bool
-	for range 20 {
-		time.Sleep(50 * time.Millisecond)
+	readyDeadline := time.NewTimer(30 * time.Second)
+	defer readyDeadline.Stop()
+	readyPoll := time.NewTicker(10 * time.Millisecond)
+	defer readyPoll.Stop()
+	for {
+		select {
+		case code := <-done:
+			t.Fatalf("daemon run exited before becoming ready with code %d; run stdout: %s, stderr: %s, status output: %s", code, runStdout.String(), runStderr.String(), statusStdout.String())
+		default:
+		}
+
 		statusStdout.Reset()
 		statusStderr.Reset()
 		code := daemoncli.Run([]string{"status", "--state-dir", dir, "--json"}, &statusStdout, &statusStderr)
@@ -75,10 +85,22 @@ func TestDaemonCLI_RunStatusStop_Lifecycle(t *testing.T) {
 			running = true
 			break
 		}
-	}
 
+		select {
+		case code := <-done:
+			t.Fatalf("daemon run exited before becoming ready with code %d; run stdout: %s, stderr: %s, status output: %s", code, runStdout.String(), runStderr.String(), statusStdout.String())
+		case <-readyPoll.C:
+		case <-readyDeadline.C:
+			select {
+			case code := <-done:
+				t.Fatalf("daemon failed to start and exited with code %d; run stdout: %s, stderr: %s, status output: %s", code, runStdout.String(), runStderr.String(), statusStdout.String())
+			default:
+				t.Fatalf("daemon failed to start before deadline; run goroutine is still active, status output: %s", statusStdout.String())
+			}
+		}
+	}
 	if !running {
-		t.Fatalf("daemon failed to start; run stderr: %s, status output: %s", runStderr.String(), statusStdout.String())
+		t.Fatal("daemon readiness loop exited without observing a running status")
 	}
 
 	// Stop daemon
@@ -123,7 +145,7 @@ func TestDaemonCLI_UsageAndFlagErrors(t *testing.T) {
 	}
 
 	// Stop non-running daemon
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "state")
 	if code := daemoncli.Run([]string{"stop", "--state-dir", dir}, &stdout, &stderr); code != daemoncli.ExitBackendUnavailable {
 		t.Errorf("expected ExitBackendUnavailable stopping inactive daemon, got %d", code)
 	}

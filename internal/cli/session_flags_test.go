@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -210,7 +211,7 @@ func writeCapturedResponse(t *testing.T, response http.ResponseWriter, value any
 func setupCapturedSessionCLI(t *testing.T, captured *capturedSessionRequests) (string, string) {
 	t.Helper()
 
-	statePath := t.TempDir()
+	statePath := filepath.Join(t.TempDir(), "state")
 	sd, err := statedir.Resolve(statePath)
 	if err != nil {
 		t.Fatalf("resolve state dir: %v", err)

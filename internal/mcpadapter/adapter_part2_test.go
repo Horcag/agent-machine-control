@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -49,11 +50,12 @@ func TestMutationAndDurableToolsOperations(t *testing.T) {
 }
 
 func TestHTTPTransportAndAuth(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "mcpadapter-test-*")
+	tempRoot, err := os.MkdirTemp("", "mcpadapter-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer os.RemoveAll(tempRoot)
+	tempDir := filepath.Join(tempRoot, "state")
 
 	agentToken := createTestAgentToken(t, tempDir)
 

@@ -59,7 +59,7 @@ func (c *retryClassChannel) LastCloseOutcome() guestssh.CloseOutcome {
 }
 
 func TestDaemonClosePartialEffectExactRetryPreservesGatewayTimeout(t *testing.T) {
-	dir := t.TempDir()
+	dir := missingDaemonStateRoot(t)
 	seedDaemonTestTarget(t, dir)
 	channel := &retryClassChannel{done: make(chan struct{})}
 	keyProvider := &guestssh.MockKeyProvider{MachineConfig: &guestssh.MachineSSHConfig{

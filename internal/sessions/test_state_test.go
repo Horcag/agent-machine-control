@@ -18,3 +18,8 @@ func testStateDir(t *testing.T) *statedir.StateDir {
 	}
 	return sd
 }
+
+func testSessionsDir(t *testing.T) string {
+	t.Helper()
+	return testStateDir(t).SessionsDir()
+}

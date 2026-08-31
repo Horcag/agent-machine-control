@@ -33,6 +33,15 @@ func exactWindowsACLProofForCurrent(kind PathKind, currentSID string) windowsACL
 	}
 }
 
+func permuteWindowsACLProof(proof windowsACLProof, order []int) windowsACLProof {
+	entries := make([]windowsACEProof, len(order))
+	for index, sourceIndex := range order {
+		entries[index] = proof.Entries[sourceIndex]
+	}
+	proof.Entries = entries
+	return proof
+}
+
 func TestValidateWindowsACLProofAcceptsOnlyExactDirectoryAndFileForms(t *testing.T) {
 	for _, kind := range []PathKind{PathDirectory, PathFile, PathInheritedFile} {
 		t.Run(string(kind), func(t *testing.T) {
@@ -104,13 +113,39 @@ func TestValidateWindowsACLProofAcceptsExactLocalSystemForms(t *testing.T) {
 			if len(proof.Entries) != 2 {
 				t.Fatalf("LocalSystem entries = %d, want exactly 2", len(proof.Entries))
 			}
-			if proof.Entries[0].SID != windowsLocalSystemSID || proof.Entries[1].SID != windowsAdministratorsSID {
-				t.Fatalf("LocalSystem trustees = %+v, want ordered SYSTEM and Administrators", proof.Entries)
-			}
 			if err := validateWindowsACLProof(proof); err != nil {
 				t.Fatalf("exact LocalSystem proof rejected: %v", err)
 			}
 		})
+	}
+}
+
+func TestValidateWindowsACLProofAcceptsACEPermutations(t *testing.T) {
+	tests := map[string]struct {
+		proof  windowsACLProof
+		orders [][]int
+	}{
+		"ordinary user": {
+			proof: exactWindowsACLProof(PathDirectory),
+			orders: [][]int{
+				{0, 1, 2}, {0, 2, 1}, {1, 0, 2},
+				{1, 2, 0}, {2, 0, 1}, {2, 1, 0},
+			},
+		},
+		"LocalSystem": {
+			proof:  exactWindowsACLProofForCurrent(PathDirectory, windowsLocalSystemSID),
+			orders: [][]int{{0, 1}, {1, 0}},
+		},
+	}
+	for name, test := range tests {
+		for index, order := range test.orders {
+			t.Run(name, func(t *testing.T) {
+				proof := permuteWindowsACLProof(test.proof, order)
+				if err := validateWindowsACLProof(proof); err != nil {
+					t.Fatalf("ACE permutation %d rejected: %v", index, err)
+				}
+			})
+		}
 	}
 }
 

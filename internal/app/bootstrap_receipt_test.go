@@ -49,7 +49,7 @@ func TestBootstrapObservationFailureRecordsInferredTerminalEvidence(t *testing.T
 	adapter.inspectErr = observationErr
 	service := newTestBootstrapService(t, adapter, &fakeBootstrapDaemon{})
 	result, err := service.Ensure(context.Background(), BootstrapMutationRequest{
-		StateDir: t.TempDir(), Reason: "record uncertain effect", IdempotencyKey: "inferred-evidence",
+		StateDir: testStateDir(t), Reason: "record uncertain effect", IdempotencyKey: "inferred-evidence",
 		Deadline: time.Now().Add(time.Minute),
 	})
 	if !errors.Is(err, observationErr) || result.SchemaVersion != 0 || result.ReceiptID == "" {

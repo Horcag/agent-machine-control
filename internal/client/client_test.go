@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -76,7 +77,7 @@ func (m *mockBackend) RestoreCheckpoint(_ context.Context, _ string, _ string) (
 }
 
 func setupDaemon(t *testing.T) (*daemon.Server, string) {
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "state")
 	state, err := statedir.Resolve(dir)
 	if err != nil {
 		t.Fatal(err)

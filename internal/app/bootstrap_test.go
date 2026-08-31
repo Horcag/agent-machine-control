@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -12,6 +13,13 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/receipt"
 )
 
+// testStateDir returns a missing child so Windows state-root creation, owner, and DACL behavior
+// are exercised instead of inheriting the ACL of t.TempDir().
+func testStateDir(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(t.TempDir(), "state")
+}
+
 func TestBootstrapServiceEnsureCreatesStartsAndReplaysWithoutEffects(t *testing.T) {
 	t.Parallel()
 
@@ -19,7 +27,7 @@ func TestBootstrapServiceEnsureCreatesStartsAndReplaysWithoutEffects(t *testing.
 	daemon := &fakeBootstrapDaemon{becomesHealthyAfter: 1}
 	service := newTestBootstrapService(t, adapter, daemon)
 	req := BootstrapMutationRequest{
-		StateDir:       t.TempDir(),
+		StateDir:       testStateDir(t),
 		Reason:         "install local control daemon",
 		IdempotencyKey: "ensure-once",
 		Deadline:       time.Now().Add(time.Minute),
@@ -62,7 +70,7 @@ func TestBootstrapServiceRefusesDriftWithoutMutation(t *testing.T) {
 	service := newTestBootstrapService(t, adapter, &fakeBootstrapDaemon{})
 
 	_, err := service.Start(context.Background(), BootstrapMutationRequest{
-		StateDir:       t.TempDir(),
+		StateDir:       testStateDir(t),
 		Reason:         "recover daemon",
 		IdempotencyKey: "start-drifted",
 		Deadline:       time.Now().Add(time.Minute),
@@ -86,7 +94,7 @@ func TestBootstrapServiceStopTimeoutAndDriftRemainTruthful(t *testing.T) {
 			return false, context.DeadlineExceeded
 		}
 		_, err := service.Stop(context.Background(), BootstrapMutationRequest{
-			StateDir: t.TempDir(), Reason: "bounded stop", IdempotencyKey: "stop-timeout",
+			StateDir: testStateDir(t), Reason: "bounded stop", IdempotencyKey: "stop-timeout",
 			Deadline: time.Now().Add(time.Minute),
 		})
 		if !errors.Is(err, ErrBootstrapUnhealthy) || !errors.Is(err, context.DeadlineExceeded) || adapter.stopCalls != 0 {
@@ -103,7 +111,7 @@ func TestBootstrapServiceStopTimeoutAndDriftRemainTruthful(t *testing.T) {
 			return check(ctx)
 		}
 		_, err := service.Stop(context.Background(), BootstrapMutationRequest{
-			StateDir: t.TempDir(), Reason: "drifted stop", IdempotencyKey: "stop-drift",
+			StateDir: testStateDir(t), Reason: "drifted stop", IdempotencyKey: "stop-drift",
 			Deadline: time.Now().Add(time.Minute),
 		})
 		if !errors.Is(err, ErrBootstrapDrift) || adapter.stopCalls != 0 {
@@ -121,7 +129,7 @@ func TestBootstrapServiceStopVerifiesFallbackTaskStopped(t *testing.T) {
 	service := newTestBootstrapService(t, adapter, &fakeBootstrapDaemon{})
 	service.poll = pollBootstrapChecks(1)
 	_, err := service.Stop(context.Background(), BootstrapMutationRequest{
-		StateDir: t.TempDir(), Reason: "verify fallback", IdempotencyKey: "stop-verify",
+		StateDir: testStateDir(t), Reason: "verify fallback", IdempotencyKey: "stop-verify",
 		Deadline: time.Now().Add(time.Minute),
 	})
 	if !errors.Is(err, ErrBootstrapUnhealthy) || adapter.stopCalls != 1 {
@@ -137,7 +145,7 @@ func TestBootstrapServiceRemoveRequiresExactOwnership(t *testing.T) {
 	service := newTestBootstrapService(t, adapter, &fakeBootstrapDaemon{})
 
 	result, err := service.Remove(context.Background(), BootstrapMutationRequest{
-		StateDir:       t.TempDir(),
+		StateDir:       testStateDir(t),
 		Reason:         "uninstall operator-owned daemon",
 		IdempotencyKey: "remove-owned",
 		Deadline:       time.Now().Add(time.Minute),
@@ -227,7 +235,7 @@ func TestBootstrapEnsureRefusesDaemonWithoutOwnedTask(t *testing.T) {
 	adapter := newFakeBootstrapAdapter()
 	service := newTestBootstrapService(t, adapter, &fakeBootstrapDaemon{healthy: true})
 	_, err := service.Ensure(context.Background(), BootstrapMutationRequest{
-		StateDir: t.TempDir(), Reason: "install", IdempotencyKey: "foreign-daemon", Deadline: time.Now().Add(time.Minute),
+		StateDir: testStateDir(t), Reason: "install", IdempotencyKey: "foreign-daemon", Deadline: time.Now().Add(time.Minute),
 	})
 	if !errors.Is(err, ErrBootstrapDrift) || adapter.installCalls != 0 {
 		t.Fatalf("Ensure() error=%v installCalls=%d", err, adapter.installCalls)
@@ -242,7 +250,7 @@ func TestBootstrapFailedRetryDoesNotBecomeSuccessOrReplayEffects(t *testing.T) {
 	daemon := &fakeBootstrapDaemon{}
 	service := newTestBootstrapService(t, adapter, daemon)
 	req := BootstrapMutationRequest{
-		StateDir: t.TempDir(), Reason: "recover", IdempotencyKey: "failed-retry", Deadline: time.Now().Add(time.Minute),
+		StateDir: testStateDir(t), Reason: "recover", IdempotencyKey: "failed-retry", Deadline: time.Now().Add(time.Minute),
 	}
 	if _, err := service.Start(context.Background(), req); !errors.Is(err, ErrBootstrapDrift) {
 		t.Fatalf("first Start() error = %v, want drift", err)
@@ -274,7 +282,7 @@ func TestBootstrapServiceStopBlocksFallbackOnPersistentDaemonDrift(t *testing.T)
 		return check(ctx)
 	}
 	_, err := service.Stop(context.Background(), BootstrapMutationRequest{
-		StateDir: t.TempDir(), Reason: "preserve ownership drift", IdempotencyKey: "stop-daemon-drift",
+		StateDir: testStateDir(t), Reason: "preserve ownership drift", IdempotencyKey: "stop-daemon-drift",
 		Deadline: time.Now().Add(time.Minute),
 	})
 	if !errors.Is(err, ErrBootstrapDrift) || adapter.stopCalls != 0 {
@@ -292,7 +300,7 @@ func TestBootstrapServiceStopSurfacesOwnershipDriftAfterFallback(t *testing.T) {
 	}
 	service := newTestBootstrapService(t, adapter, daemon)
 	_, err := service.Stop(context.Background(), BootstrapMutationRequest{
-		StateDir: t.TempDir(), Reason: "verify ownership drift", IdempotencyKey: "stop-post-fallback-drift",
+		StateDir: testStateDir(t), Reason: "verify ownership drift", IdempotencyKey: "stop-post-fallback-drift",
 		Deadline: time.Now().Add(time.Minute),
 	})
 	if !errors.Is(err, ErrBootstrapDrift) || errors.Is(err, ErrBootstrapUnhealthy) || adapter.stopCalls != 1 {
@@ -333,7 +341,7 @@ func TestBootstrapReplayPreservesLifecycleTerminalSemantics(t *testing.T) {
 			service := newTestBootstrapService(t, adapter, daemon)
 			tc.setup(adapter, daemon, service)
 			req := BootstrapMutationRequest{
-				StateDir: t.TempDir(), Reason: "terminal replay", IdempotencyKey: "replay-" + tc.name,
+				StateDir: testStateDir(t), Reason: "terminal replay", IdempotencyKey: "replay-" + tc.name,
 				Deadline: time.Now().Add(time.Minute),
 			}
 			first, err := tc.run(service, context.Background(), req)
@@ -360,7 +368,7 @@ func TestBootstrapReplayChangedRequestStillCollides(t *testing.T) {
 	adapter := newFakeBootstrapAdapter()
 	service := newTestBootstrapService(t, adapter, &fakeBootstrapDaemon{becomesHealthyAfter: 1})
 	req := BootstrapMutationRequest{
-		StateDir: t.TempDir(), Reason: "first intent", IdempotencyKey: "collision-key",
+		StateDir: testStateDir(t), Reason: "first intent", IdempotencyKey: "collision-key",
 		Deadline: time.Now().Add(time.Minute),
 	}
 	if _, err := service.Ensure(context.Background(), req); err != nil {
@@ -393,7 +401,7 @@ func TestBootstrapReceiptUsesExplicitSIDAndObservedStateWithoutRollbackClaim(t *
 	adapter := newFakeBootstrapAdapter()
 	service := newTestBootstrapService(t, adapter, &fakeBootstrapDaemon{becomesHealthyAfter: 1})
 	result, err := service.Ensure(context.Background(), BootstrapMutationRequest{
-		StateDir: t.TempDir(), Reason: "install owned daemon", IdempotencyKey: "receipt-truth",
+		StateDir: testStateDir(t), Reason: "install owned daemon", IdempotencyKey: "receipt-truth",
 		Deadline: time.Now().Add(time.Minute),
 	})
 	if err != nil {
@@ -421,7 +429,7 @@ func TestBootstrapPartialInstallRecordsObservedStateAndExactRetryDoesNotRepeat(t
 	adapter.startErr = errors.New("synthetic start failure")
 	service := newTestBootstrapService(t, adapter, &fakeBootstrapDaemon{})
 	req := BootstrapMutationRequest{
-		StateDir: t.TempDir(), Reason: "install then fail start", IdempotencyKey: "partial-install",
+		StateDir: testStateDir(t), Reason: "install then fail start", IdempotencyKey: "partial-install",
 		Deadline: time.Now().Add(time.Minute),
 	}
 	first, err := service.Ensure(context.Background(), req)
@@ -456,7 +464,7 @@ func TestBootstrapPartialStartRecordsRunningTaskState(t *testing.T) {
 	adapter.startChangesState = true
 	service := newTestBootstrapService(t, adapter, &fakeBootstrapDaemon{healthy: true})
 	result, err := service.Start(context.Background(), BootstrapMutationRequest{
-		StateDir: t.TempDir(), Reason: "start with post-effect failure", IdempotencyKey: "partial-start",
+		StateDir: testStateDir(t), Reason: "start with post-effect failure", IdempotencyKey: "partial-start",
 		Deadline: time.Now().Add(time.Minute),
 	})
 	if err == nil || result.Status != BootstrapHealthy {
@@ -476,7 +484,7 @@ func TestBootstrapPartialRemoveRecordsAbsentState(t *testing.T) {
 	adapter.removeErr = errors.New("synthetic post-remove failure")
 	service := newTestBootstrapService(t, adapter, &fakeBootstrapDaemon{})
 	result, err := service.Remove(context.Background(), BootstrapMutationRequest{
-		StateDir: t.TempDir(), Reason: "remove with post-effect failure", IdempotencyKey: "partial-remove",
+		StateDir: testStateDir(t), Reason: "remove with post-effect failure", IdempotencyKey: "partial-remove",
 		Deadline: time.Now().Add(time.Minute),
 	})
 	if err == nil || result.Status != BootstrapAbsent {

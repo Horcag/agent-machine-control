@@ -190,7 +190,7 @@ func serveExactRetryOpen(t *testing.T, srv *Server, fixture exactRetryFixture) S
 }
 
 func TestDaemonHTTPExactRetryReconcilesFinalizingOpenWithoutGuestTransport(t *testing.T) {
-	root := t.TempDir()
+	root := filepath.Join(t.TempDir(), "state")
 	fixture := newExactRetryFixture(t, root)
 	transport := &exactRetryTransport{}
 	srv := newExactRetryServer(t, root, fixture, transport)

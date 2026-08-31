@@ -81,7 +81,7 @@ func setupOperationApprovalServer(t *testing.T, backend app.Backend) (*daemon.Se
 
 func setupOperationApprovalServerWithClock(t *testing.T, backend app.Backend, clock func() time.Time) (*daemon.Server, *client.Client, string) {
 	t.Helper()
-	stateDir := t.TempDir()
+	stateDir := missingDaemonStateRoot(t)
 	seedDaemonTestTarget(t, stateDir)
 	server, err := daemon.NewServer(daemon.Config{
 		StateDir: stateDir, ListenAddr: "127.0.0.1:0", Backend: backend, Clock: clock,

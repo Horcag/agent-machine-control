@@ -113,7 +113,8 @@ func TestDiagnosticDestructiveDeniedExactRetryReturnsCachedReceipt(t *testing.T)
 	}
 	defer os.RemoveAll(dir)
 
-	sd, err := statedir.Resolve(dir)
+	root := filepath.Join(dir, "state")
+	sd, err := statedir.Resolve(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,8 +157,8 @@ func TestDiagnosticDestructiveDeniedExactRetryReturnsCachedReceipt(t *testing.T)
 }
 
 func TestDiagnosticMutationTimeoutBoundsTransportWithoutCallerDeadline(t *testing.T) {
-	dir := t.TempDir()
-	sd, err := statedir.Resolve(dir)
+	root := filepath.Join(t.TempDir(), "state")
+	sd, err := statedir.Resolve(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,8 +284,8 @@ func TestDiagnosticReadCursorContinuationDoesNotSkipChunk(t *testing.T) {
 }
 
 func TestDiagnosticCloseFailureCannotProduceSuccessReceipt(t *testing.T) {
-	dir := t.TempDir()
-	sd, err := statedir.Resolve(dir)
+	root := filepath.Join(t.TempDir(), "state")
+	sd, err := statedir.Resolve(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -331,8 +332,8 @@ func TestDiagnosticCloseFailureCannotProduceSuccessReceipt(t *testing.T) {
 }
 
 func TestDiagnosticAgentCannotSubmitRawApproval(t *testing.T) {
-	dir := t.TempDir()
-	sd, err := statedir.Resolve(dir)
+	root := filepath.Join(t.TempDir(), "state")
+	sd, err := statedir.Resolve(root)
 	if err != nil {
 		t.Fatal(err)
 	}

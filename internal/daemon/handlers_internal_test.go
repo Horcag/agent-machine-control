@@ -137,7 +137,7 @@ func TestServer_EventsNilHubAndNonFlusher(t *testing.T) {
 }
 
 func TestServer_StartDefaultListenAddr(t *testing.T) {
-	dir := t.TempDir()
+	dir := missingDaemonStateRoot(t)
 	srv, err := NewServer(Config{
 		StateDir:   dir,
 		ListenAddr: "", // tests default 127.0.0.1:0
@@ -175,7 +175,7 @@ func TestServer_WriteOwnerRecordAndEndpointFile_Errors(t *testing.T) {
 }
 
 func TestServer_StartListenErrors(t *testing.T) {
-	dir := t.TempDir()
+	dir := missingDaemonStateRoot(t)
 
 	// 1. Invalid host:port format
 	srv1, err := NewServer(Config{
@@ -189,7 +189,7 @@ func TestServer_StartListenErrors(t *testing.T) {
 	}
 
 	// 2. Non-loopback listen address
-	dir2 := t.TempDir()
+	dir2 := missingDaemonStateRoot(t)
 	srv2, err := NewServer(Config{
 		StateDir:   dir2,
 		ListenAddr: "192.168.1.50:8080",
@@ -207,7 +207,7 @@ func TestServer_StartListenErrors(t *testing.T) {
 	}
 	defer ln.Close()
 
-	dir3 := t.TempDir()
+	dir3 := missingDaemonStateRoot(t)
 	srv3, err := NewServer(Config{
 		StateDir:   dir3,
 		ListenAddr: ln.Addr().String(),
