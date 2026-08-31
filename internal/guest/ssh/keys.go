@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -73,11 +74,8 @@ func validateStrictFileContext(ctx context.Context, path string) ([]byte, error)
 		if err != nil {
 			return nil, err
 		}
-		if fi.Mode()&os.ModeSymlink != 0 {
-			if isAllowedDarwinVarAlias(current) {
-				continue
-			}
-			return nil, fmt.Errorf("security: symlink component detected at %q", current)
+		if err := validateStrictPathComponent(current, fi.Mode()); err != nil {
+			return nil, err
 		}
 	}
 
@@ -103,12 +101,40 @@ func validateStrictFileContext(ctx context.Context, path string) ([]byte, error)
 	return io.ReadAll(&contextFileReader{ctx: ctx, reader: io.LimitReader(file, maxProtectedFileSize+1)})
 }
 
-func isAllowedDarwinVarAlias(path string) bool {
-	if runtime.GOOS != "darwin" || path != "/var" {
-		return false
+func validateStrictPathComponent(path string, mode os.FileMode) error {
+	if mode&os.ModeSymlink == 0 {
+		return nil
 	}
-	target, err := os.Readlink(path)
-	return err == nil && target == "/private/var"
+	allowed, err := isAllowedDarwinVarAlias(path)
+	if err != nil {
+		return fmt.Errorf("security: failed to resolve Darwin system alias %q: %w", path, err)
+	}
+	if !allowed {
+		return fmt.Errorf("security: symlink component detected at %q", path)
+	}
+	return nil
+}
+
+func isAllowedDarwinVarAlias(path string) (bool, error) {
+	if runtime.GOOS != "darwin" || path != "/var" {
+		return false, nil
+	}
+	return verifiedDarwinVarAlias(path, filepath.EvalSymlinks)
+}
+
+func verifiedDarwinVarAlias(path string, evalSymlinks func(string) (string, error)) (bool, error) {
+	cleaned := pathpkg.Clean(path)
+	if cleaned != "/var" {
+		return false, nil
+	}
+	resolved, err := evalSymlinks(cleaned)
+	if err != nil {
+		return false, err
+	}
+	if pathpkg.Clean(resolved) != "/private/var" {
+		return false, fmt.Errorf("unexpected Darwin /var target %q", resolved)
+	}
+	return true, nil
 }
 
 const maxProtectedFileSize = 64 * 1024

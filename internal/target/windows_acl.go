@@ -3,6 +3,7 @@ package target
 import (
 	"errors"
 	"fmt"
+	"slices"
 )
 
 const (
@@ -33,12 +34,19 @@ type windowsACEProof struct {
 }
 
 func validateWindowsACLProof(proof windowsACLProof) error {
-	if proof.CurrentUser == "" || proof.Owner != proof.CurrentUser {
-		return errors.New("target: protected path is not owned by the current Windows SID")
+	if proof.CurrentUser == "" {
+		return errors.New("target: current Windows SID is unavailable")
 	}
 	expectedFlags, expectedProtected, err := expectedWindowsACLShape(proof.Kind)
 	if err != nil {
 		return err
+	}
+	if proof.Kind == PathInheritedFile {
+		if !windowsSIDAllowed(proof.Owner, windowsAllowedTrusteeSIDs(proof.CurrentUser)) {
+			return fmt.Errorf("target: inherited file owner %q is not an approved Windows SID", proof.Owner)
+		}
+	} else if proof.Owner != proof.CurrentUser {
+		return fmt.Errorf("target: protected %s owner %q is not the current Windows SID", proof.Kind, proof.Owner)
 	}
 	if proof.Protected != expectedProtected {
 		return errors.New("target: protected path has unexpected DACL inheritance protection")
@@ -67,6 +75,10 @@ func validateWindowsACLProof(proof windowsACLProof) error {
 		delete(expectedTrustees, entry.SID)
 	}
 	return nil
+}
+
+func windowsSIDAllowed(sid string, allowed []string) bool {
+	return slices.Contains(allowed, sid)
 }
 
 func windowsAllowedTrusteeSIDs(currentSID string) []string {

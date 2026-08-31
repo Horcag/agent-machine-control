@@ -106,6 +106,40 @@ func TestValidateWindowsACLProofAcceptsOnlyExactDirectoryAndFileForms(t *testing
 	}
 }
 
+func TestValidateWindowsACLProofAcceptsTrustedInheritedFileOwners(t *testing.T) {
+	for _, owner := range windowsAllowedTrusteeSIDs(testOwnerSID) {
+		t.Run(owner, func(t *testing.T) {
+			proof := exactWindowsACLProof(PathInheritedFile)
+			proof.Owner = owner
+			if err := validateWindowsACLProof(proof); err != nil {
+				t.Fatalf("trusted inherited-file owner rejected: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateWindowsACLProofRejectsForeignInheritedFileOwner(t *testing.T) {
+	proof := exactWindowsACLProof(PathInheritedFile)
+	proof.Owner = "S-1-5-21-2000"
+	if err := validateWindowsACLProof(proof); err == nil {
+		t.Fatalf("foreign inherited-file owner unexpectedly accepted: %+v", proof)
+	}
+}
+
+func TestValidateWindowsACLProofRejectsTrustedNonCurrentProtectedOwners(t *testing.T) {
+	for _, kind := range []PathKind{PathDirectory, PathFile} {
+		for _, owner := range []string{windowsLocalSystemSID, windowsAdministratorsSID} {
+			t.Run(string(kind)+"/"+owner, func(t *testing.T) {
+				proof := exactWindowsACLProof(kind)
+				proof.Owner = owner
+				if err := validateWindowsACLProof(proof); err == nil {
+					t.Fatalf("protected path accepted non-current trusted owner: %+v", proof)
+				}
+			})
+		}
+	}
+}
+
 func TestValidateWindowsACLProofAcceptsExactLocalSystemForms(t *testing.T) {
 	for _, kind := range []PathKind{PathDirectory, PathFile, PathInheritedFile} {
 		t.Run(string(kind), func(t *testing.T) {

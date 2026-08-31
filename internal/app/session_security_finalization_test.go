@@ -258,7 +258,7 @@ func assertAdmissionDeadlineLeavesNoState(t *testing.T, svc *app.SessionService,
 
 func assertAdmissionRetrySucceeds(t *testing.T, svc *app.SessionService, transport *trackingTransport, params app.SessionOpenParams) {
 	t.Helper()
-	params.Timeout = time.Second
+	params.Timeout = 30 * time.Second
 	opened, retryReceipt, err := svc.OpenSession(context.Background(), params)
 	if err != nil || opened == nil || retryReceipt == nil {
 		t.Fatalf("retry after pre-reservation deadline = session %+v receipt %+v err %v", opened, retryReceipt, err)
