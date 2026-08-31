@@ -74,6 +74,9 @@ func validateStrictFileContext(ctx context.Context, path string) ([]byte, error)
 			return nil, err
 		}
 		if fi.Mode()&os.ModeSymlink != 0 {
+			if isAllowedDarwinVarAlias(current) {
+				continue
+			}
 			return nil, fmt.Errorf("security: symlink component detected at %q", current)
 		}
 	}
@@ -98,6 +101,14 @@ func validateStrictFileContext(ctx context.Context, path string) ([]byte, error)
 	}
 	defer file.Close()
 	return io.ReadAll(&contextFileReader{ctx: ctx, reader: io.LimitReader(file, maxProtectedFileSize+1)})
+}
+
+func isAllowedDarwinVarAlias(path string) bool {
+	if runtime.GOOS != "darwin" || path != "/var" {
+		return false
+	}
+	target, err := os.Readlink(path)
+	return err == nil && target == "/private/var"
 }
 
 const maxProtectedFileSize = 64 * 1024

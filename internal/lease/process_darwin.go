@@ -32,6 +32,13 @@ func platformProcessStartTime(pid int) string {
 func darwinProcessStartTime(pid int) (string, error) {
 	info, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
 	if err != nil {
+		if errors.Is(err, unix.EIO) {
+			// Darwin can report EIO for a PID that no longer exists. Confirm
+			// absence without weakening fail-closed handling of other errors.
+			if killErr := unix.Kill(pid, 0); errors.Is(killErr, unix.ESRCH) {
+				return "", unix.ESRCH
+			}
+		}
 		return "", err
 	}
 	if info == nil || info.Proc.P_pid != int32(pid) {

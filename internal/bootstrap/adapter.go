@@ -14,7 +14,6 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/Horcag/agent-machine-control/internal/app"
@@ -133,7 +132,7 @@ func (a *PowerShellAdapter) Remove(ctx context.Context, spec app.BootstrapSpec) 
 }
 
 func (a *PowerShellAdapter) readHostContext(ctx context.Context) (hostContext, error) {
-	if runtime.GOOS != "linux" {
+	if !a.isWSL() {
 		return hostContext{}, app.ErrBootstrapUnsupported
 	}
 	out, err := a.runner.Run(ctx, hostContextScript, nil)
