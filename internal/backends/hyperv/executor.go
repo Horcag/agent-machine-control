@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"slices"
 	"strings"
 	"time"
 
@@ -89,8 +88,7 @@ func commandEnvironment(base, explicit []string, wslInterop bool) []string {
 		return env
 	}
 
-	wslEnv := mergeWSLEnv(environmentEntryValue(env, "WSLENV"), forwardNames)
-	return setEnvironmentEntry(env, "WSLENV", wslEnv)
+	return wslruntime.ForwardNamesViaWSLEnv(env, forwardNames)
 }
 
 func mergeEnvironment(base, explicit []string) []string {
@@ -141,41 +139,6 @@ func environmentNameStart(char byte) bool {
 
 func environmentNamePart(char byte) bool {
 	return environmentNameStart(char) || char >= '0' && char <= '9'
-}
-
-func mergeWSLEnv(existing string, names []string) string {
-	entries := make([]string, 0, len(names)+1)
-	seen := make(map[string]struct{}, len(names)+1)
-	for entry := range strings.SplitSeq(existing, ":") {
-		if entry == "" {
-			continue
-		}
-		entries = append(entries, entry)
-		name, _, _ := strings.Cut(entry, "/")
-		seen[name] = struct{}{}
-	}
-	for _, name := range names {
-		if _, exists := seen[name]; exists {
-			continue
-		}
-		seen[name] = struct{}{}
-		entries = append(entries, name)
-	}
-	return strings.Join(entries, ":")
-}
-
-func environmentEntryValue(env []string, name string) string {
-	prefix := name + "="
-	for _, entry := range slices.Backward(env) {
-		if value, ok := strings.CutPrefix(entry, prefix); ok {
-			return value
-		}
-	}
-	return ""
-}
-
-func setEnvironmentEntry(env []string, name, value string) []string {
-	return setEnvironmentRawEntry(env, name, name+"="+value)
 }
 
 func setEnvironmentRawEntry(env []string, name, replacement string) []string {

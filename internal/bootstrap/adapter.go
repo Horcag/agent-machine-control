@@ -27,6 +27,13 @@ const (
 	taskName = "amcd-current-user"
 )
 
+var bootstrapPayloadEnvironmentNames = [...]string{
+	"AMC_BOOTSTRAP_ACTION",
+	"AMC_BOOTSTRAP_SPEC_B64",
+	"AMC_BOOTSTRAP_WRAPPER_B64",
+	"AMC_BOOTSTRAP_METADATA_B64",
+}
+
 //go:embed task_fingerprint.ps1
 var taskFingerprintScript string
 
@@ -197,8 +204,10 @@ func decodeSingleJSON(data []byte, target any) error {
 }
 
 type shellRunner struct {
-	lookPath func(string) (string, error)
-	run      func(context.Context, string, []string, []string) ([]byte, error)
+	lookPath   func(string) (string, error)
+	run        func(context.Context, string, []string, []string) ([]byte, error)
+	environ    func() []string
+	wslRuntime func() bool
 }
 
 func (s shellRunner) Run(ctx context.Context, script string, extraEnv map[string]string) ([]byte, error) {
@@ -210,9 +219,18 @@ func (s shellRunner) Run(ctx context.Context, script string, extraEnv map[string
 	if err != nil {
 		return nil, app.ErrBootstrapUnsupported
 	}
-	env := os.Environ()
+	environ := s.environ
+	if environ == nil {
+		environ = os.Environ
+	}
+	env := environ()
 	for key, value := range extraEnv {
 		env = append(env, key+"="+value)
+	}
+	if s.runningUnderWSL() {
+		if names := bootstrapPayloadNames(extraEnv); len(names) > 0 {
+			env = wslruntime.ForwardNamesViaWSLEnv(env, names)
+		}
 	}
 	args := []string{"-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script}
 	run := s.run
@@ -227,6 +245,23 @@ func (s shellRunner) Run(ctx context.Context, script string, extraEnv map[string
 		return nil, fmt.Errorf("bootstrap: PowerShell scheduler operation failed")
 	}
 	return out, nil
+}
+
+func (s shellRunner) runningUnderWSL() bool {
+	if s.wslRuntime != nil {
+		return s.wslRuntime()
+	}
+	return wslruntime.IsWSL()
+}
+
+func bootstrapPayloadNames(env map[string]string) []string {
+	names := make([]string, 0, len(bootstrapPayloadEnvironmentNames))
+	for _, name := range bootstrapPayloadEnvironmentNames {
+		if _, present := env[name]; present {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 func runPowerShellCommand(ctx context.Context, path string, args, env []string) ([]byte, error) {

@@ -238,6 +238,64 @@ func TestShellRunnerUsesBoundedPowerShellInvocationAndSanitizesFailures(t *testi
 	}
 }
 
+func TestShellRunnerForwardsOnlyFixedBootstrapPayloadThroughWSLEnv(t *testing.T) {
+	t.Parallel()
+
+	var gotEnv []string
+	runner := shellRunner{
+		lookPath: func(string) (string, error) { return "/synthetic/powershell.exe", nil },
+		environ: func() []string {
+			return []string{"PATH=/usr/bin", "WSLENV=EXISTING/u:AMC_BOOTSTRAP_ACTION/p:EXISTING/w"}
+		},
+		wslRuntime: func() bool { return true },
+		run: func(_ context.Context, _ string, _ []string, env []string) ([]byte, error) {
+			gotEnv = env
+			return []byte(`{"state":"stopped"}`), nil
+		},
+	}
+
+	_, err := runner.Run(t.Context(), "synthetic-script", map[string]string{
+		"AMC_BOOTSTRAP_ACTION":       "inspect",
+		"AMC_BOOTSTRAP_SPEC_B64":     "encoded-spec",
+		"AMC_BOOTSTRAP_WRAPPER_B64":  "encoded-wrapper",
+		"AMC_BOOTSTRAP_METADATA_B64": "encoded-metadata",
+		"AMC_UNRELATED_INPUT":        "must-not-cross-interop",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantWSLEnv = "EXISTING/u:AMC_BOOTSTRAP_ACTION/p:AMC_BOOTSTRAP_SPEC_B64:AMC_BOOTSTRAP_WRAPPER_B64:AMC_BOOTSTRAP_METADATA_B64"
+	if value := testWSLEnvValue(gotEnv); value != wantWSLEnv {
+		t.Fatalf("WSLENV = %q, want %q", value, wantWSLEnv)
+	}
+	if strings.Contains(testWSLEnvValue(gotEnv), "AMC_UNRELATED_INPUT") {
+		t.Fatalf("WSLENV forwarded unrelated input: %q", testWSLEnvValue(gotEnv))
+	}
+}
+
+func TestShellRunnerDoesNotSynthesizeWSLEnvOutsideWSL(t *testing.T) {
+	t.Parallel()
+
+	var gotEnv []string
+	runner := shellRunner{
+		lookPath:   func(string) (string, error) { return "/synthetic/powershell.exe", nil },
+		environ:    func() []string { return []string{"PATH=/usr/bin"} },
+		wslRuntime: func() bool { return false },
+		run: func(_ context.Context, _ string, _ []string, env []string) ([]byte, error) {
+			gotEnv = env
+			return []byte(`{"state":"stopped"}`), nil
+		},
+	}
+
+	_, err := runner.Run(t.Context(), "synthetic-script", map[string]string{"AMC_BOOTSTRAP_ACTION": "inspect"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value := testWSLEnvValue(gotEnv); value != "" {
+		t.Fatalf("WSLENV = %q, want no synthesized value outside WSL", value)
+	}
+}
+
 func TestBuildSpecProducesExactS4ULimitedFingerprint(t *testing.T) {
 	t.Parallel()
 
@@ -354,6 +412,15 @@ func newTestPowerShellAdapter(t *testing.T, environmentDistro, defaultDistro str
 
 func containsString(values []string, wanted string) bool {
 	return slices.Contains(values, wanted)
+}
+
+func testWSLEnvValue(env []string) string {
+	for _, entry := range slices.Backward(env) {
+		if value, ok := strings.CutPrefix(entry, "WSLENV="); ok {
+			return value
+		}
+	}
+	return ""
 }
 
 func (f *fakeCommandRunner) Run(_ context.Context, script string, env map[string]string) ([]byte, error) {

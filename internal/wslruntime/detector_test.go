@@ -53,3 +53,21 @@ func TestDetect(t *testing.T) {
 		})
 	}
 }
+
+func TestProcfsDetectionSupportsWSLEnvironmentForwarding(t *testing.T) {
+	t.Parallel()
+
+	isWSL := detect("linux", func(string) string { return "" }, func(path string) ([]byte, error) {
+		if path == kernelReleasePath {
+			return []byte("6.6.87.2-microsoft-standard-WSL2"), nil
+		}
+		return nil, errors.New("not available")
+	})
+	if !isWSL {
+		t.Fatal("procfs WSL evidence was not detected after environment markers were stripped")
+	}
+	got := ForwardNamesViaWSLEnv([]string{"PATH=/usr/bin"}, []string{"AMC_BOOTSTRAP_ACTION"})
+	if value := environmentValue(got, "WSLENV"); value != "AMC_BOOTSTRAP_ACTION" {
+		t.Fatalf("WSLENV = %q, want bootstrap payload forwarded", value)
+	}
+}
