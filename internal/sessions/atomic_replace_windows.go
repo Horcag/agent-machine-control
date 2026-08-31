@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -22,6 +23,8 @@ const fileRenameInfoExFlags = windows.FILE_RENAME_REPLACE_IF_EXISTS | windows.FI
 const fileRenameSourceAccess = windows.DELETE | windows.SYNCHRONIZE | windows.GENERIC_WRITE
 const fileRenameSourceShare = windows.FILE_SHARE_READ | windows.FILE_SHARE_WRITE | windows.FILE_SHARE_DELETE
 const fileRenameSourceFlags = windows.FILE_ATTRIBUTE_NORMAL | windows.FILE_FLAG_OPEN_REPARSE_POINT | windows.FILE_FLAG_WRITE_THROUGH
+const fileRenameRetryWindow = 250 * time.Millisecond
+const fileRenameRetryDelay = 5 * time.Millisecond
 
 type windowsReplaceOperations struct {
 	createFile         func(*uint16, uint32, uint32, *windows.SecurityAttributes, uint32, uint32, windows.Handle) (windows.Handle, error)
@@ -109,7 +112,7 @@ func fileRenameInfoExReplaceWith(ctx context.Context, oldPath, newPath string, o
 	if err := ctx.Err(); err != nil {
 		return closeBeforeCommit(err)
 	}
-	if err := operations.setFileInformation(handle, windows.FileRenameInfoEx, &buffer[0], uint32(bufferSize)); err != nil {
+	if err := setFileRenameInformationWithRetry(ctx, handle, &buffer[0], uint32(bufferSize), operations.setFileInformation); err != nil {
 		return closeBeforeCommit(fmt.Errorf("sessions: FileRenameInfoEx commit: %w", err))
 	}
 
@@ -124,4 +127,38 @@ func fileRenameInfoExReplaceWith(ctx context.Context, oldPath, newPath string, o
 	}
 	_ = operations.closeHandle(handle)
 	return publicationResult{Committed: true}
+}
+
+func setFileRenameInformationWithRetry(
+	ctx context.Context,
+	handle windows.Handle,
+	buffer *byte,
+	bufferSize uint32,
+	setFileInformation func(windows.Handle, uint32, *byte, uint32) error,
+) error {
+	deadline := time.Now().Add(fileRenameRetryWindow)
+	if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(deadline) {
+		deadline = contextDeadline
+	}
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		err := setFileInformation(handle, windows.FileRenameInfoEx, buffer, bufferSize)
+		if err == nil || !retryableFileRenameError(err) || !time.Now().Before(deadline) {
+			return err
+		}
+		timer := time.NewTimer(fileRenameRetryDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func retryableFileRenameError(err error) bool {
+	return errors.Is(err, windows.ERROR_ACCESS_DENIED) || errors.Is(err, windows.ERROR_SHARING_VIOLATION) ||
+		errors.Is(err, windows.ERROR_DELETE_PENDING)
 }

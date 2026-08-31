@@ -126,6 +126,57 @@ func TestFileRenameInfoExPostCommitFlushFailurePreservesCommit(t *testing.T) {
 	}
 }
 
+func TestFileRenameInfoExRetriesTransientCommitFailures(t *testing.T) {
+	renameCalls := 0
+	operations := windowsReplaceOperations{
+		createFile: func(*uint16, uint32, uint32, *windows.SecurityAttributes, uint32, uint32, windows.Handle) (windows.Handle, error) {
+			return windows.Handle(1), nil
+		},
+		getFileInformation: func(_ windows.Handle, info *windows.ByHandleFileInformation) error {
+			info.FileAttributes = windows.FILE_ATTRIBUTE_NORMAL
+			return nil
+		},
+		setFileInformation: func(windows.Handle, uint32, *byte, uint32) error {
+			renameCalls++
+			if renameCalls < 3 {
+				return windows.ERROR_ACCESS_DENIED
+			}
+			return nil
+		},
+		flushFileBuffers: func(windows.Handle) error { return nil },
+		closeHandle:      func(windows.Handle) error { return nil },
+	}
+	result := fileRenameInfoExReplaceWith(t.Context(), "source", "target", operations)
+	if result.Err != nil || !result.Committed || renameCalls != 3 {
+		t.Fatalf("transient rename result = %+v calls = %d, want committed after three attempts", result, renameCalls)
+	}
+}
+
+func TestFileRenameInfoExRetryStopsOnCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	renameCalls := 0
+	operations := windowsReplaceOperations{
+		createFile: func(*uint16, uint32, uint32, *windows.SecurityAttributes, uint32, uint32, windows.Handle) (windows.Handle, error) {
+			return windows.Handle(1), nil
+		},
+		getFileInformation: func(_ windows.Handle, info *windows.ByHandleFileInformation) error {
+			info.FileAttributes = windows.FILE_ATTRIBUTE_NORMAL
+			return nil
+		},
+		setFileInformation: func(windows.Handle, uint32, *byte, uint32) error {
+			renameCalls++
+			cancel()
+			return windows.ERROR_SHARING_VIOLATION
+		},
+		flushFileBuffers: func(windows.Handle) error { return nil },
+		closeHandle:      func(windows.Handle) error { return nil },
+	}
+	result := fileRenameInfoExReplaceWith(ctx, "source", "target", operations)
+	if result.Committed || !errors.Is(result.Err, context.Canceled) || renameCalls != 1 {
+		t.Fatalf("cancelled rename result = %+v calls = %d, want one pre-commit attempt", result, renameCalls)
+	}
+}
+
 func TestFileRenameInfoExRejectsDirectoryAndReparseSourcesBeforeCommit(t *testing.T) {
 	for _, attributes := range []uint32{windows.FILE_ATTRIBUTE_DIRECTORY, windows.FILE_ATTRIBUTE_REPARSE_POINT} {
 		t.Run(fmt.Sprintf("attributes-%#x", attributes), func(t *testing.T) {
