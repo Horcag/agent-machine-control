@@ -204,3 +204,27 @@ func TestScripts_PreflightOrdering(t *testing.T) {
 		assertOrder(t, hyperv.ScriptCheckpointRestore, "Get-VMSnapshot", "Restore-VMSnapshot")
 	})
 }
+
+func TestScripts_CheckpointRestoreUsesVMScopedExactGUID(t *testing.T) {
+	restore := hyperv.ScriptCheckpointRestore
+
+	if strings.Contains(restore, "Get-VMSnapshot -VM $vm -Id") {
+		t.Fatal("ScriptCheckpointRestore must not combine Get-VMSnapshot -VM and -Id")
+	}
+	if !strings.Contains(restore, "$snaps = @(Get-VMSnapshot -VM $vm -ErrorAction Stop)") {
+		t.Fatal("ScriptCheckpointRestore must enumerate snapshots scoped to the exact VM")
+	}
+	if !strings.Contains(restore, "$matches = @($snaps | Where-Object { $_.Id.Guid -eq $snapGuid })") {
+		t.Fatal("ScriptCheckpointRestore must compare checkpoint GUIDs exactly in memory")
+	}
+	if !strings.Contains(restore, "if ($matches.Count -ne 1)") {
+		t.Fatal("ScriptCheckpointRestore must reject zero and ambiguous checkpoint matches")
+	}
+	if !strings.Contains(restore, "$snap = $matches[0]") {
+		t.Fatal("ScriptCheckpointRestore must select a checkpoint only after a unique match")
+	}
+
+	assertOrder(t, restore, "$snaps = @(Get-VMSnapshot -VM $vm -ErrorAction Stop)", "$matches = @($snaps | Where-Object { $_.Id.Guid -eq $snapGuid })")
+	assertOrder(t, restore, "if ($matches.Count -ne 1)", "$snap = $matches[0]")
+	assertOrder(t, restore, "$snap = $matches[0]", "Restore-VMSnapshot -VMSnapshot $snap -Confirm:$false -ErrorAction Stop")
+}

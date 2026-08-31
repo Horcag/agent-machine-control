@@ -170,14 +170,16 @@ try {
     $vmGuid = [guid]::Parse($targetId)
     $vm = Get-VM -Id $vmGuid -ErrorAction Stop
     $snapGuid = [guid]::Parse($snapId)
-    $snap = Get-VMSnapshot -VM $vm -Id $snapGuid -ErrorAction Stop
-    if (-not $snap) {
+    $snaps = @(Get-VMSnapshot -VM $vm -ErrorAction Stop)
+    $matches = @($snaps | Where-Object { $_.Id.Guid -eq $snapGuid })
+    if ($matches.Count -ne 1) {
         @{
             schema_version = "1"
             error_category = "checkpoint_not_found"
         } | ConvertTo-Json -Compress
         exit 0
     }
+    $snap = $matches[0]
 
     Restore-VMSnapshot -VMSnapshot $snap -Confirm:$false -ErrorAction Stop
 
