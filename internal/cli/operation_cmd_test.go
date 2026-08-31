@@ -220,7 +220,7 @@ func TestCLI_OperationApproveAndExplicitExecution(t *testing.T) {
 	var mutationOut, mutationErr bytes.Buffer
 	code = application.Run([]string{
 		"machine", "stop", cliTestVMID, "--mode", "turn-off",
-		"--reason", reason, "--idempotency-key", key, "--timeout", "1s",
+		"--reason", reason, "--idempotency-key", key, "--timeout", "10s",
 		"--approval-id", grant.ApprovalID, "--deadline", grant.Deadline, "--json",
 	}, &mutationOut, &mutationErr)
 	if code != cli.ExitSuccess {

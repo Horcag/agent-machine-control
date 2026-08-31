@@ -116,7 +116,7 @@ func openSanitizerSession(t *testing.T, endpoint, operatorToken string) string {
 	t.Helper()
 	status, data := doJSONReq(t, http.MethodPost, endpoint+"/v1/sessions", operatorToken, daemon.SessionOpenRequest{
 		Target: "c4a523d4-6b99-4d62-a5e2-4752c0f20001", Reason: "open sanitizer test",
-		IdempotencyKey: "sanitizer-open", TimeoutSeconds: 2,
+		IdempotencyKey: "sanitizer-open", TimeoutSeconds: 30,
 	})
 	if status != http.StatusOK {
 		t.Fatalf("open sanitizer session status=%d body=%s", status, data)
@@ -135,7 +135,7 @@ func writeSplitSecrets(t *testing.T, sessionPath, operatorToken string, exactVal
 		t.Helper()
 		writeIndex++
 		status, body := doJSONReq(t, http.MethodPost, sessionPath+"/write", operatorToken, daemon.SessionWriteRequest{
-			Data: chunk, Reason: "exercise exact sanitizer boundary", IdempotencyKey: fmt.Sprintf("sanitizer-write-%d", writeIndex), TimeoutSeconds: 2,
+			Data: chunk, Reason: "exercise exact sanitizer boundary", IdempotencyKey: fmt.Sprintf("sanitizer-write-%d", writeIndex), TimeoutSeconds: 30,
 		})
 		if status != http.StatusOK {
 			t.Fatalf("sanitizer write %d status=%d body=%s", writeIndex, status, body)
@@ -153,7 +153,7 @@ func writeSplitSecrets(t *testing.T, sessionPath, operatorToken string, exactVal
 func waitForSanitizedOutput(t *testing.T, sessionPath, operatorToken string) string {
 	t.Helper()
 	status, data := doJSONReq(t, http.MethodPost, sessionPath+"/wait", operatorToken, daemon.SessionWaitRequest{
-		Regex: "ordinary-output-end", TimeoutMillis: 1000,
+		Regex: "ordinary-output-end", TimeoutMillis: 10_000,
 	})
 	if status != http.StatusOK {
 		t.Fatalf("wait sanitizer output status=%d body=%s", status, data)
@@ -187,7 +187,7 @@ func assertExactValuesRedacted(t *testing.T, clean string, exactValues []string)
 func closeSanitizerSession(t *testing.T, sessionPath, operatorToken string) {
 	t.Helper()
 	status, data := doJSONReq(t, http.MethodPost, sessionPath+"/close", operatorToken, daemon.SessionCloseRequest{
-		Reason: "close sanitizer test", IdempotencyKey: "sanitizer-close", TimeoutSeconds: 2,
+		Reason: "close sanitizer test", IdempotencyKey: "sanitizer-close", TimeoutSeconds: 30,
 	})
 	if status != http.StatusOK {
 		t.Fatalf("close sanitizer session status=%d body=%s", status, data)

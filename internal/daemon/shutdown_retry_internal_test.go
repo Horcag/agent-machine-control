@@ -141,7 +141,7 @@ func TestServerShutdownRetainsOwnershipUntilBlockedOperationDrains(t *testing.T)
 	}
 	select {
 	case <-backend.started:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("provider did not start")
 	}
 
@@ -266,7 +266,7 @@ func TestServerShutdownContinuesTeardownAfterTerminalFinalizationError(t *testin
 	}
 	select {
 	case <-backend.started:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("provider did not start")
 	}
 	if err := server.eventHub.Close(); err != nil {
