@@ -102,11 +102,12 @@ func NewMutationJournal(targetDir string, options ...MutationJournalOption) (*Mu
 	for _, option := range options {
 		option(journal)
 	}
-	if err := os.MkdirAll(journal.dir, 0700); err != nil {
+	if err := os.Mkdir(journal.dir, 0700); err != nil && !errors.Is(err, os.ErrExist) {
 		return nil, fmt.Errorf("target: create mutation journal: %w", err)
-	}
-	if err := os.Chmod(journal.dir, 0700); err != nil {
-		return nil, fmt.Errorf("target: protect mutation journal: %w", err)
+	} else if err == nil {
+		if err := journal.security.ProtectDir(context.Background(), journal.dir); err != nil {
+			return nil, fmt.Errorf("%w: mutation directory", ErrInsecureState)
+		}
 	}
 	if err := journal.security.ValidateDir(context.Background(), journal.dir); err != nil {
 		return nil, fmt.Errorf("%w: mutation directory", ErrInsecureState)

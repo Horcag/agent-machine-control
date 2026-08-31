@@ -175,7 +175,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return ExitBackendUnavailable
 	}
 	var targetCoordinator *app.TargetCoordinator
-	if norm.Direct && norm.CommandArgs[0] == "target" {
+	if requiresDirectTargetCoordinator(norm) {
 		targetJournal, journalErr := target.NewMutationJournal(sd.TargetsDir())
 		if journalErr != nil {
 			fmt.Fprintf(stderr, "amc: failed to initialize target mutation journal: %v\n", journalErr)
@@ -228,6 +228,18 @@ func requiresTargetRuntime(norm NormalizedCLI) bool {
 	}
 	switch norm.CommandArgs[0] {
 	case "machine", "checkpoint", "target":
+		return true
+	default:
+		return false
+	}
+}
+
+func requiresDirectTargetCoordinator(norm NormalizedCLI) bool {
+	if !norm.Direct || len(norm.CommandArgs) < 2 || norm.CommandArgs[0] != "target" {
+		return false
+	}
+	switch norm.CommandArgs[1] {
+	case "approve", "enroll", "clear":
 		return true
 	default:
 		return false

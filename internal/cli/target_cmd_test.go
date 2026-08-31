@@ -22,6 +22,29 @@ import (
 
 const targetCommandVMID = "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
 
+func TestRequiresDirectTargetCoordinator(t *testing.T) {
+	tests := []struct {
+		name string
+		norm NormalizedCLI
+		want bool
+	}{
+		{name: "direct candidates is read only", norm: NormalizedCLI{Direct: true, CommandArgs: []string{"target", "candidates"}}},
+		{name: "direct show is read only", norm: NormalizedCLI{Direct: true, CommandArgs: []string{"target", "show"}}},
+		{name: "direct help is read only", norm: NormalizedCLI{Direct: true, CommandArgs: []string{"target", "help"}}},
+		{name: "daemon mutation has no direct coordinator", norm: NormalizedCLI{CommandArgs: []string{"target", "enroll"}}},
+		{name: "direct approve needs coordinator", norm: NormalizedCLI{Direct: true, CommandArgs: []string{"target", "approve"}}, want: true},
+		{name: "direct enroll needs coordinator", norm: NormalizedCLI{Direct: true, CommandArgs: []string{"target", "enroll"}}, want: true},
+		{name: "direct clear needs coordinator", norm: NormalizedCLI{Direct: true, CommandArgs: []string{"target", "clear"}}, want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := requiresDirectTargetCoordinator(test.norm); got != test.want {
+				t.Fatalf("requiresDirectTargetCoordinator(%+v) = %t, want %t", test.norm, got, test.want)
+			}
+		})
+	}
+}
+
 //nolint:cyclop // The test verifies one end-to-end approval and enrollment flow.
 func TestDirectTargetCommandsDiscoverApproveEnrollAndShow(t *testing.T) {
 	service, coordinator, actor := targetCommandHarness(t)
