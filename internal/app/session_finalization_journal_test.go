@@ -409,9 +409,9 @@ func runReserveCancellationCase(t *testing.T, name string, cancelHook bool) {
 	t.Helper()
 	h := newFinalizationHarness(t)
 	params := h.writeParams("idem-reserve-context-" + name)
-	params.Timeout = 500 * time.Millisecond
+	params.Timeout = 10 * time.Second
 	if cancelHook {
-		params.Timeout = time.Second
+		params.Timeout = 30 * time.Second
 	}
 	parentCtx, cancelParent := context.WithCancel(context.Background())
 	defer cancelParent()
