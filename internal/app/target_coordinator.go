@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/approval"
@@ -50,6 +51,7 @@ type TargetCoordinator struct {
 	receiptStore  *receipt.Store
 	approvalStore *approval.Store
 	nowFn         func() time.Time
+	mu            sync.Mutex
 }
 
 // NewTargetCoordinator constructs the shared target control-plane mutation service.
@@ -88,13 +90,12 @@ func (c *TargetCoordinator) Show(ctx context.Context) (TargetResolution, error) 
 
 // Mutate executes or resumes one exact approval-gated target authority transition.
 func (c *TargetCoordinator) Mutate(ctx context.Context, params TargetMutationParams) (TargetMutationResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if err := validateTargetOperator(params.Caller); err != nil {
 		return TargetMutationResult{}, err
 	}
-	if params.ApprovalID == "" {
-		return TargetMutationResult{}, target.ErrApprovalRequired
-	}
-	if err := domain.ValidateApprovalID(params.ApprovalID); err != nil {
+	if err := validateTargetApprovalReference(params.ApprovalID); err != nil {
 		return TargetMutationResult{}, target.ErrApprovalRequired
 	}
 
@@ -129,37 +130,12 @@ func (c *TargetCoordinator) Mutate(ctx context.Context, params TargetMutationPar
 		return TargetMutationResult{}, err
 	}
 
-	currentHash, err := c.currentTargetHash(ctx)
+	publication, commitErr, err := c.applyTargetPlan(ctx, plan, op, record, issued, consumed)
 	if err != nil {
 		return TargetMutationResult{}, err
 	}
-	effectApplied := currentHash == record.DesiredHash
-	if !effectApplied && currentHash != record.PriorHash {
-		return TargetMutationResult{}, target.ErrMutationDrift
-	}
 
-	publication := target.Publication{Committed: effectApplied}
-	var commitErr error
-	consumedHere := false
-	if effectApplied {
-		publication, commitErr = c.repairPublication(ctx, plan)
-	} else {
-		if err := c.auditStore.RecordAdmissionIntentContext(ctx, op); err != nil {
-			return TargetMutationResult{}, c.cancelUnexecuted(ctx, op, issued, false, err)
-		}
-		if !consumed {
-			if err := c.approvalStore.MarkConsumedContext(ctx, *issued, c.now()); err != nil {
-				return TargetMutationResult{}, c.cancelUnexecuted(ctx, op, issued, false, err)
-			}
-			consumedHere = true
-		}
-		publication, commitErr = c.service.CommitTargetPlan(ctx, plan)
-		if !publication.Committed {
-			return TargetMutationResult{}, c.cancelUnexecuted(ctx, op, issued, consumedHere, commitErr)
-		}
-	}
-
-	receiptValue := targetEffectReceipt(op, record, c.now())
+	receiptValue := targetEffectReceipt(record, c.now())
 	if record.Receipt != nil {
 		receiptValue = *record.Receipt
 	}
@@ -168,6 +144,142 @@ func (c *TargetCoordinator) Mutate(ctx context.Context, params TargetMutationPar
 	}
 	finalizationErr := c.finalizeTargetEffect(ctx, op, receiptValue)
 	return TargetMutationResult{Resolution: plan.Resolution, Publication: publication, Receipt: receiptValue}, errors.Join(commitErr, finalizationErr)
+}
+
+func validateTargetApprovalReference(approvalID string) error {
+	if approvalID == "" {
+		return target.ErrApprovalRequired
+	}
+	return domain.ValidateApprovalID(approvalID)
+}
+
+func (c *TargetCoordinator) applyTargetPlan(
+	ctx context.Context,
+	plan TargetPlan,
+	op domain.Operation,
+	record *target.MutationRecord,
+	issued *domain.Approval,
+	consumed bool,
+) (target.Publication, error, error) {
+	currentHash, err := c.currentTargetHash(ctx)
+	if err != nil {
+		return target.Publication{}, nil, err
+	}
+	if currentHash == record.DesiredHash {
+		publication, repairErr := c.repairPublication(ctx, plan)
+		return publication, repairErr, nil
+	}
+	if currentHash != record.PriorHash {
+		return target.Publication{}, nil, target.ErrMutationDrift
+	}
+	if err := c.auditStore.RecordAdmissionIntentContext(ctx, op); err != nil {
+		return target.Publication{}, nil, c.cancelUnexecuted(ctx, op, issued, false, err)
+	}
+	consumedHere := false
+	if !consumed {
+		if err := c.approvalStore.MarkConsumedContext(ctx, *issued, c.now()); err != nil {
+			return target.Publication{}, nil, c.cancelUnexecuted(ctx, op, issued, false, err)
+		}
+		consumedHere = true
+	}
+	publication, commitErr := c.service.CommitTargetPlan(ctx, plan)
+	if !publication.Committed {
+		return target.Publication{}, commitErr, c.cancelUnexecuted(ctx, op, issued, consumedHere, commitErr)
+	}
+	return publication, commitErr, nil
+}
+
+// ReconcileStartup finalizes committed target authority without repeating Store effects.
+func (c *TargetCoordinator) ReconcileStartup(ctx context.Context) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	records, err := c.journal.ListContext(ctx)
+	if err != nil {
+		return 0, err
+	}
+	reconciled := 0
+	for _, record := range records {
+		changed, err := c.reconcileTargetRecord(ctx, record)
+		if err != nil {
+			return reconciled, err
+		}
+		if changed {
+			reconciled++
+		}
+	}
+	return reconciled, nil
+}
+
+func (c *TargetCoordinator) reconcileTargetRecord(ctx context.Context, record target.MutationRecord) (bool, error) {
+	if record.State == target.MutationFinalized {
+		return false, nil
+	}
+	currentHash, err := c.currentTargetHash(ctx)
+	if err != nil {
+		return false, err
+	}
+	if currentHash == record.PriorHash && !record.EffectApplied {
+		return true, c.cancelNoEffectTargetRecord(ctx, record)
+	}
+	if currentHash != record.DesiredHash {
+		return false, target.ErrMutationDrift
+	}
+	return true, c.finalizeAppliedTargetRecord(ctx, record)
+}
+
+func (c *TargetCoordinator) cancelNoEffectTargetRecord(ctx context.Context, record target.MutationRecord) error {
+	approvalID := targetApprovalID(record.Actor, record.IdempotencyKey)
+	issued, err := c.approvalStore.LoadIssuedContext(ctx, approvalID)
+	if err != nil && !errors.Is(err, approval.ErrApprovalNotIssued) {
+		return err
+	}
+	if issued != nil {
+		consumed, err := c.approvalStore.IsConsumedContext(ctx, approvalID)
+		if err != nil {
+			return err
+		}
+		if consumed {
+			if err := c.approvalStore.ReleaseUnexecutedContext(ctx, *issued); err != nil {
+				return err
+			}
+		}
+	}
+	return c.journal.CancelRecordContext(ctx, record)
+}
+
+func (c *TargetCoordinator) finalizeAppliedTargetRecord(ctx context.Context, record target.MutationRecord) error {
+	publication, err := c.repairCurrentPublication(ctx, record)
+	if err != nil || !publication.Committed || !publication.Durable {
+		return errors.Join(target.ErrMutationFinalization, err)
+	}
+	receiptValue := targetEffectReceiptFromRecord(record, c.now())
+	if record.Receipt != nil {
+		receiptValue = *record.Receipt
+	}
+	if err := c.journal.RecordEffectForRecordContext(ctx, record, receiptValue, true); err != nil {
+		return err
+	}
+	if err := c.receiptStore.EnsureContext(ctx, receiptValue); err != nil {
+		return err
+	}
+	if err := c.auditStore.EnsureTerminalOutcomeContext(ctx, receiptValue); err != nil {
+		return err
+	}
+	return c.journal.MarkFinalizedForRecordContext(ctx, record, c.now())
+}
+
+func (c *TargetCoordinator) repairCurrentPublication(ctx context.Context, record target.MutationRecord) (target.Publication, error) {
+	if record.DesiredHash == target.StateDigest(nil) {
+		return c.service.store.Clear(ctx)
+	}
+	current, err := c.service.store.Load(ctx)
+	if err != nil {
+		return target.Publication{}, err
+	}
+	if target.StateDigest(&current) != record.DesiredHash {
+		return target.Publication{}, target.ErrMutationDrift
+	}
+	return c.service.store.Save(ctx, current)
 }
 
 func (c *TargetCoordinator) prepareMutationPlan(ctx context.Context, params TargetMutationParams, existing *target.MutationRecord) (TargetPlan, error) {
@@ -290,16 +402,20 @@ func (c *TargetCoordinator) cancelUnexecuted(ctx context.Context, op domain.Oper
 	return errors.Join(primary, journalErr, releaseErr)
 }
 
-func targetEffectReceipt(op domain.Operation, record *target.MutationRecord, completedAt time.Time) domain.Receipt {
+func targetEffectReceipt(record *target.MutationRecord, completedAt time.Time) domain.Receipt {
+	return targetEffectReceiptFromRecord(*record, completedAt)
+}
+
+func targetEffectReceiptFromRecord(record target.MutationRecord, completedAt time.Time) domain.Receipt {
 	completedAt = completedAt.UTC()
 	if completedAt.Before(record.CreatedAt) {
 		completedAt = record.CreatedAt
 	}
 	digest := sha256.Sum256([]byte("target-effect\x00" + string(record.Fingerprint) + "\x00" + string(record.IdempotencyFingerprint)))
 	return domain.Receipt{
-		ReceiptID: domain.ReceiptID("rcpt-" + hex.EncodeToString(digest[:16])), OperationKind: op.Kind,
+		ReceiptID: domain.ReceiptID("rcpt-" + hex.EncodeToString(digest[:16])), OperationKind: record.Kind,
 		Fingerprint: record.Fingerprint, IdempotencyFingerprint: record.IdempotencyFingerprint,
-		IdempotencyKey: op.IdempotencyKey, Actor: op.Actor.EffectiveActor, Target: op.Target,
+		IdempotencyKey: record.IdempotencyKey, Actor: record.Actor, Target: record.Target,
 		Class: domain.ClassDestructivePrivileged, EffectiveBackend: "control-plane",
 		StartedAt: record.CreatedAt, CompletedAt: completedAt,
 		Outcome:         domain.ExecutionOutcome{Status: domain.OutcomeSuccess, ExitCode: 0},

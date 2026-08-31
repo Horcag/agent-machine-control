@@ -182,21 +182,32 @@ func (s *TargetService) ResolveTarget(ctx context.Context, reference string) (Ta
 	}
 
 	locator := value.Locator
-	if reference != "" && reference != "default" && !slices.Contains(value.Aliases, reference) {
-		if _, err := domain.ParseMachineLocator(reference); err != nil {
-			if _, err := domain.NormalizeMachineGUID(reference); err != nil {
-				return TargetResolution{}, target.ErrDifferentTarget
-			}
-		}
-		entry, err := s.inventory.ResolveMachine(reference)
-		if err != nil {
+	if !isStoredTargetReference(reference, value) {
+		if err := s.validateExplicitTargetReference(reference, locator); err != nil {
 			return TargetResolution{}, err
-		}
-		if entry.Locator != locator {
-			return TargetResolution{}, target.ErrDifferentTarget
 		}
 	}
 	return s.resolveCanonical(ctx, locator)
+}
+
+func isStoredTargetReference(reference string, value target.Default) bool {
+	return reference == "" || reference == "default" || slices.Contains(value.Aliases, reference)
+}
+
+func (s *TargetService) validateExplicitTargetReference(reference string, locator domain.MachineLocator) error {
+	if _, err := domain.ParseMachineLocator(reference); err != nil {
+		if _, err := domain.NormalizeMachineGUID(reference); err != nil {
+			return target.ErrDifferentTarget
+		}
+	}
+	entry, err := s.inventory.ResolveMachine(reference)
+	if err != nil {
+		return err
+	}
+	if entry.Locator != locator {
+		return target.ErrDifferentTarget
+	}
+	return nil
 }
 
 // ShowDefaultTarget returns the stored default only after inventory proves it remains routeable.

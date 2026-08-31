@@ -30,6 +30,42 @@ func TestRecoveryServiceCanonicalizesAllPublicTargetReferencesBeforeEffects(t *t
 		MemoryAssignedBytes: 1024, Capabilities: domain.DirectMachineCapabilities(), ObservedAt: now,
 		ObservationType: domain.ObservationObserved,
 	}
+	backend, startCalls := canonicalTargetBackend(t, observation, vmID, checkpointID, now)
+
+	state, err := statedir.Resolve(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	targetService := canonicalTargetService(t, state, backend)
+
+	leaseManager := lease.NewManager(state.LeasesDir(), lease.WithClock(func() time.Time { return now }))
+	auditStore := audit.NewStore(state.AuditDir(), audit.WithClock(func() time.Time { return now }))
+	receiptStore := receipt.NewStore(state.ReceiptsDir())
+	approvalStore := approval.NewStore(state.ApprovalsDir())
+	recovery := app.NewRecoveryService(
+		backend, leaseManager, auditStore, receiptStore, approvalStore,
+		app.WithRecoveryClock(func() time.Time { return now }),
+		app.WithRecoveryTargetResolver(targetService),
+	)
+	scopes := domain.NewScopeSet(domain.ScopeMachineWrite)
+	actor, err := domain.NewActorContext("operator:test", "operator:test", scopes, scopes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCanonicalRecoveryRetries(t, recovery, actor, locator, vmID, startCalls)
+	if _, err := recovery.ListCheckpoints(context.Background(), "primary"); err != nil {
+		t.Fatalf("ListCheckpoints alias: %v", err)
+	}
+	if entries, err := os.ReadDir(state.ReceiptsDir()); err != nil || len(entries) != 1 {
+		t.Fatalf("receipt files = %d, %v", len(entries), err)
+	}
+}
+
+func canonicalTargetBackend(t *testing.T, observation domain.MachineObservation, vmID, checkpointID string, now time.Time) (*mockBackend, *int) {
+	t.Helper()
 	startCalls := 0
 	backend := &mockBackend{
 		listMachinesFn: func(context.Context) ([]domain.MachineObservation, error) {
@@ -58,14 +94,11 @@ func TestRecoveryServiceCanonicalizesAllPublicTargetReferencesBeforeEffects(t *t
 			return observation, nil
 		},
 	}
+	return backend, &startCalls
+}
 
-	state, err := statedir.Resolve(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := state.EnsureDirs(); err != nil {
-		t.Fatal(err)
-	}
+func canonicalTargetService(t *testing.T, state *statedir.StateDir, backend *mockBackend) *app.TargetService {
+	t.Helper()
 	inventory, err := app.NewTrustedInventory(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -85,21 +118,11 @@ func TestRecoveryServiceCanonicalizesAllPublicTargetReferencesBeforeEffects(t *t
 	if _, _, err := targetService.EnrollDefaultTarget(context.Background(), "", []string{"primary"}); err != nil {
 		t.Fatalf("EnrollDefaultTarget: %v", err)
 	}
+	return targetService
+}
 
-	leaseManager := lease.NewManager(state.LeasesDir(), lease.WithClock(func() time.Time { return now }))
-	auditStore := audit.NewStore(state.AuditDir(), audit.WithClock(func() time.Time { return now }))
-	receiptStore := receipt.NewStore(state.ReceiptsDir())
-	approvalStore := approval.NewStore(state.ApprovalsDir())
-	recovery := app.NewRecoveryService(
-		backend, leaseManager, auditStore, receiptStore, approvalStore,
-		app.WithRecoveryClock(func() time.Time { return now }),
-		app.WithRecoveryTargetResolver(targetService),
-	)
-	scopes := domain.NewScopeSet(domain.ScopeMachineWrite)
-	actor, err := domain.NewActorContext("operator:test", "operator:test", scopes, scopes)
-	if err != nil {
-		t.Fatal(err)
-	}
+func assertCanonicalRecoveryRetries(t *testing.T, recovery *app.RecoveryService, actor domain.ActorContext, locator domain.MachineLocator, vmID string, startCalls *int) {
+	t.Helper()
 	request := app.MutationRequest{
 		TargetID: "default", Actor: actor, Reason: "canonical identity test",
 		IdempotencyKey: "canonical-target-retry", Timeout: 30 * time.Second,
@@ -121,13 +144,7 @@ func TestRecoveryServiceCanonicalizesAllPublicTargetReferencesBeforeEffects(t *t
 			t.Fatalf("retry receipt %q != %q", retry.ReceiptID, first.ReceiptID)
 		}
 	}
-	if startCalls != 1 {
-		t.Fatalf("StartMachine calls = %d", startCalls)
-	}
-	if _, err := recovery.ListCheckpoints(context.Background(), "primary"); err != nil {
-		t.Fatalf("ListCheckpoints alias: %v", err)
-	}
-	if entries, err := os.ReadDir(state.ReceiptsDir()); err != nil || len(entries) != 1 {
-		t.Fatalf("receipt files = %d, %v", len(entries), err)
+	if *startCalls != 1 {
+		t.Fatalf("StartMachine calls = %d", *startCalls)
 	}
 }

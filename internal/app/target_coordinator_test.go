@@ -97,10 +97,14 @@ func targetOperator(t *testing.T) domain.ActorContext {
 	return actor
 }
 
-func issueEnrollApproval(t *testing.T, harness *targetCoordinatorHarness, key string, aliases []string) *TargetApprovalGrant {
+func issueEnrollApproval(t *testing.T, harness *targetCoordinatorHarness, key string, aliases []string, reasons ...string) *TargetApprovalGrant {
 	t.Helper()
+	reason := "enroll synthetic local VM"
+	if len(reasons) > 0 {
+		reason = reasons[0]
+	}
 	grant, err := harness.coordinator.IssueApproval(context.Background(), TargetApprovalIssueParams{
-		Kind: "target.enroll", Aliases: aliases, Caller: targetOperator(t), Reason: "enroll synthetic local VM",
+		Kind: "target.enroll", Aliases: aliases, Caller: targetOperator(t), Reason: reason,
 		IdempotencyKey: key, ValidFor: 2 * time.Minute,
 	})
 	if err != nil {
@@ -138,6 +142,53 @@ func TestTargetCoordinatorEnrollApprovalAndRedactedEvidence(t *testing.T) {
 	}
 }
 
+func TestTargetCoordinatorClearApprovalRetryAndExactMutationReplay(t *testing.T) {
+	now := time.Date(2026, 8, 31, 5, 30, 0, 0, time.UTC)
+	harness := newTargetCoordinatorHarness(t, t.TempDir(), now, nil, nil)
+	enroll := issueEnrollApproval(t, harness, "target-clear-seed", []string{"primary"})
+	if _, err := harness.coordinator.Mutate(context.Background(), TargetMutationParams{
+		Kind: "target.enroll", Aliases: []string{"primary"}, Caller: targetOperator(t), Reason: "enroll synthetic local VM",
+		IdempotencyKey: "target-clear-seed", Deadline: enroll.Deadline, ApprovalID: enroll.ApprovalID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if shown, err := harness.coordinator.Show(context.Background()); err != nil || shown.Locator.String() != "local:"+targetVMA {
+		t.Fatalf("Show = %+v, %v", shown, err)
+	}
+	issue := TargetApprovalIssueParams{
+		Kind: "target.clear", Caller: targetOperator(t), Reason: "clear synthetic target authority",
+		IdempotencyKey: "target-clear", ValidFor: time.Minute,
+	}
+	grant, err := harness.coordinator.IssueApproval(context.Background(), issue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayedGrant, err := harness.coordinator.IssueApproval(context.Background(), issue)
+	if err != nil || replayedGrant.ApprovalID != grant.ApprovalID || !replayedGrant.Deadline.Equal(grant.Deadline) {
+		t.Fatalf("approval replay = %+v, %v", replayedGrant, err)
+	}
+	collision := issue
+	collision.Reason = "different clear authority"
+	if _, err := harness.coordinator.IssueApproval(context.Background(), collision); !errors.Is(err, receipt.ErrIdempotencyCollision) {
+		t.Fatalf("approval collision = %v", err)
+	}
+	params := TargetMutationParams{
+		Kind: "target.clear", Caller: targetOperator(t), Reason: issue.Reason,
+		IdempotencyKey: issue.IdempotencyKey, Deadline: grant.Deadline, ApprovalID: grant.ApprovalID,
+	}
+	cleared, err := harness.coordinator.Mutate(context.Background(), params)
+	if err != nil || !cleared.Publication.Durable {
+		t.Fatalf("clear = %+v, %v", cleared, err)
+	}
+	if _, err := harness.store.Load(context.Background()); !errors.Is(err, target.ErrNoDefault) {
+		t.Fatalf("target remains after clear: %v", err)
+	}
+	replayed, err := harness.coordinator.Mutate(context.Background(), params)
+	if err != nil || replayed.Receipt.ReceiptID != cleared.Receipt.ReceiptID {
+		t.Fatalf("clear replay = %+v, %v", replayed, err)
+	}
+}
+
 func TestTargetCoordinatorRepairsCommittedEffectAcrossRestartWithoutSecondReplace(t *testing.T) {
 	now := time.Date(2026, 8, 31, 6, 0, 0, 0, time.UTC)
 	root := t.TempDir()
@@ -150,21 +201,50 @@ func TestTargetCoordinatorRepairsCommittedEffectAcrossRestartWithoutSecondReplac
 		}
 		return nil
 	}, &commits)
-	grant := issueEnrollApproval(t, harness, "target-enroll-restart", []string{"primary"})
+	grant := issueEnrollApproval(t, harness, "target-enroll-restart", []string{"primary"}, "restart effect truth test")
 	params := TargetMutationParams{
 		Kind: "target.enroll", Aliases: []string{"primary"}, Caller: targetOperator(t), Reason: "restart effect truth test",
 		IdempotencyKey: "target-enroll-restart", Deadline: grant.Deadline, ApprovalID: grant.ApprovalID,
 	}
 	first, err := harness.coordinator.Mutate(context.Background(), params)
-	if err == nil || !first.Publication.Committed {
-		t.Fatalf("first result = %+v, %v", first, err)
+	requireCommittedTargetFailure(t, first, err, commits)
+
+	restarted := newTargetCoordinatorHarness(t, root, now.Add(time.Second), nil, &commits)
+	requireTargetStartupReconcile(t, restarted, params, commits)
+	repaired, err := restarted.coordinator.Mutate(context.Background(), params)
+	requireRepairedTargetResult(t, repaired, first, err, commits)
+	again, err := restarted.coordinator.Mutate(context.Background(), params)
+	if err != nil || again.Receipt.ReceiptID != repaired.Receipt.ReceiptID || commits != 1 {
+		t.Fatalf("terminal retry = %+v, %v commits=%d", again, err, commits)
+	}
+}
+
+func requireCommittedTargetFailure(t *testing.T, result TargetMutationResult, err error, commits int) {
+	t.Helper()
+	if err == nil || !result.Publication.Committed {
+		t.Fatalf("first result = %+v, %v", result, err)
 	}
 	if commits != 1 {
 		t.Fatalf("replace commits after first attempt = %d", commits)
 	}
+}
 
-	restarted := newTargetCoordinatorHarness(t, root, now.Add(time.Second), nil, &commits)
-	repaired, err := restarted.coordinator.Mutate(context.Background(), params)
+func requireTargetStartupReconcile(t *testing.T, harness *targetCoordinatorHarness, params TargetMutationParams, commits int) {
+	t.Helper()
+	if reconciled, err := harness.coordinator.ReconcileStartup(context.Background()); err != nil || reconciled != 1 {
+		t.Fatalf("startup reconcile = %d, %v", reconciled, err)
+	}
+	if commits != 1 {
+		t.Fatalf("startup reconcile repeated namespace replace: %d", commits)
+	}
+	record, err := harness.journal.LookupKeyContext(context.Background(), params.Caller.EffectiveActor, params.IdempotencyKey)
+	if err != nil || record.State != target.MutationFinalized || !record.Durable {
+		t.Fatalf("reconciled record = %+v, %v", record, err)
+	}
+}
+
+func requireRepairedTargetResult(t *testing.T, repaired, first TargetMutationResult, err error, commits int) {
+	t.Helper()
 	if err != nil {
 		t.Fatalf("restart retry: %v", err)
 	}
@@ -174,9 +254,65 @@ func TestTargetCoordinatorRepairsCommittedEffectAcrossRestartWithoutSecondReplac
 	if repaired.Receipt.ReceiptID != first.Receipt.ReceiptID || !repaired.Publication.Durable {
 		t.Fatalf("repaired = %+v first = %+v", repaired, first)
 	}
-	again, err := restarted.coordinator.Mutate(context.Background(), params)
-	if err != nil || again.Receipt.ReceiptID != repaired.Receipt.ReceiptID || commits != 1 {
-		t.Fatalf("terminal retry = %+v, %v commits=%d", again, err, commits)
+}
+
+func TestTargetCoordinatorStartupCancelsNoEffectReservation(t *testing.T) {
+	now := time.Date(2026, 8, 31, 6, 15, 0, 0, time.UTC)
+	harness := newTargetCoordinatorHarness(t, t.TempDir(), now, nil, nil)
+	operator := targetOperator(t)
+	plan, err := harness.coordinator.prepareMutationPlan(context.Background(), TargetMutationParams{
+		Kind: "target.enroll", Caller: operator, Reason: "reserve without target effect",
+		IdempotencyKey: "target-no-effect", Deadline: now.Add(time.Minute),
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, err := buildTargetOperation(plan, operator, "reserve without target effect", "target-no-effect", now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := harness.journal.ReserveContext(context.Background(), op, plan.PriorHash, plan.DesiredHash, plan.StateHash, plan.AliasCount, now); err != nil {
+		t.Fatal(err)
+	}
+	if reconciled, err := harness.coordinator.ReconcileStartup(context.Background()); err != nil || reconciled != 1 {
+		t.Fatalf("startup reconcile = %d, %v", reconciled, err)
+	}
+	if _, err := harness.journal.LookupKeyContext(context.Background(), operator.EffectiveActor, "target-no-effect"); !errors.Is(err, target.ErrMutationNotFound) {
+		t.Fatalf("no-effect reservation remains: %v", err)
+	}
+}
+
+func TestTargetCoordinatorStartupRejectsUnknownAuthorityState(t *testing.T) {
+	now := time.Date(2026, 8, 31, 6, 30, 0, 0, time.UTC)
+	harness := newTargetCoordinatorHarness(t, t.TempDir(), now, nil, nil)
+	operator := targetOperator(t)
+	plan, err := harness.coordinator.prepareMutationPlan(context.Background(), TargetMutationParams{
+		Kind: "target.enroll", Aliases: []string{"primary"}, Caller: operator, Reason: "reserve target authority",
+		IdempotencyKey: "target-drift", Deadline: now.Add(time.Minute),
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, err := buildTargetOperation(plan, operator, "reserve target authority", "target-drift", now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := harness.journal.ReserveContext(context.Background(), op, plan.PriorHash, plan.DesiredHash, plan.StateHash, plan.AliasCount, now); err != nil {
+		t.Fatal(err)
+	}
+	otherLocator, err := domain.NewMachineLocator(domain.LocalHostID, "d4a523d4-6b99-4d62-a5e2-4752c0f20002")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := target.NewDefault(otherLocator, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := harness.store.Save(context.Background(), other); err != nil {
+		t.Fatal(err)
+	}
+	if reconciled, err := harness.coordinator.ReconcileStartup(context.Background()); !errors.Is(err, target.ErrMutationDrift) || reconciled != 0 {
+		t.Fatalf("startup reconcile = %d, %v; want fail-closed drift", reconciled, err)
 	}
 }
 
@@ -198,6 +334,30 @@ func TestTargetCoordinatorRejectsAgentBeforeReservation(t *testing.T) {
 	}
 	if _, err := harness.store.Load(context.Background()); !errors.Is(err, target.ErrNoDefault) {
 		t.Fatalf("agent changed target: %v", err)
+	}
+}
+
+func TestTargetCoordinatorRejectsDelegatedAndUnscopedOperators(t *testing.T) {
+	harness := newTargetCoordinatorHarness(t, t.TempDir(), time.Now().UTC(), nil, nil)
+	targetScope := domain.NewScopeSet(domain.ScopeTargetAdmin)
+	delegated, err := domain.NewActorContext("operator:delegating", "operator:delegate", targetScope, targetScope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	machineScope := domain.NewScopeSet(domain.ScopeMachineWrite)
+	unscoped, err := domain.NewActorContext("operator:unscoped", "operator:unscoped", machineScope, machineScope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, caller := range map[string]domain.ActorContext{"delegated": delegated, "unscoped": unscoped} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := harness.coordinator.IssueApproval(context.Background(), TargetApprovalIssueParams{
+				Kind: "target.enroll", Caller: caller, Reason: "forbidden target mutation",
+				IdempotencyKey: "forbidden-" + name, ValidFor: time.Minute,
+			}); !errors.Is(err, target.ErrAccessDenied) {
+				t.Fatalf("IssueApproval error = %v", err)
+			}
+		})
 	}
 }
 

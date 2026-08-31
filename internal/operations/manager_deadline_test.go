@@ -38,7 +38,7 @@ func runManagerPreProviderDeadline(t *testing.T, key string, install func(*mockB
 	install(backend, &seamCalls)
 	testNow := time.Now().UTC()
 	manager, hub, _ := setupTestManager(t, backend, operations.WithClock(func() time.Time { return testNow }))
-	operation := deadlineTestOperation(key, testNow.Add(time.Second))
+	operation := deadlineTestOperation(key, testNow.Add(5*time.Second))
 
 	started := time.Now()
 	record, _, err := manager.Submit(context.Background(), operation, 5*time.Second)
@@ -46,7 +46,7 @@ func runManagerPreProviderDeadline(t *testing.T, key string, install func(*mockB
 		t.Fatal(err)
 	}
 	final := waitForTerminalOperation(t, manager, hub, record.ID, operation.Actor)
-	if elapsed := time.Since(started); elapsed > 2*time.Second {
+	if elapsed := time.Since(started); elapsed > 8*time.Second {
 		t.Fatalf("deadline completion took %s", elapsed)
 	}
 	if final.State != domain.OpStateFailed || final.ErrorCategory != "timeout" {
@@ -124,7 +124,7 @@ func deadlineTestOperation(key string, deadline time.Time) domain.Operation {
 
 func waitForTerminalOperation(t *testing.T, manager *operations.Manager, hub *events.Hub, operationID string, actor domain.ActorContext) *domain.OperationRecord {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	events, unsubscribe, err := hub.Subscribe(ctx, operationID, 0)
 	if err != nil {

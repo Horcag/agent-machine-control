@@ -346,7 +346,7 @@ func TestCLI_Checkpoint_ValidationErrors(t *testing.T) {
 		{"missing subcommand", []string{"checkpoint"}, cli.ExitUsage},
 		{"unknown subcommand", []string{"checkpoint", "delete"}, cli.ExitUsage},
 		{"list missing guid", []string{"checkpoint", "list"}, cli.ExitUsage},
-		{"list invalid guid", []string{"checkpoint", "list", "invalid-guid"}, cli.ExitUsage},
+		{"list public alias reaches backend", []string{"checkpoint", "list", "public-alias"}, cli.ExitBackendUnavailable},
 		{"create missing name", []string{"--direct", "checkpoint", "create", targetID, "--reason", "r", "--idempotency-key", "k"}, cli.ExitUsage},
 		{"create missing guid", []string{"--direct", "checkpoint", "create", "--name", "s", "--reason", "r", "--idempotency-key", "k"}, cli.ExitUsage},
 		{"restore missing target", []string{"--direct", "checkpoint", "restore", "--reason", "r", "--idempotency-key", "k"}, cli.ExitUsage},

@@ -17,6 +17,7 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/lease"
 	"github.com/Horcag/agent-machine-control/internal/receipt"
 	"github.com/Horcag/agent-machine-control/internal/statedir"
+	"github.com/Horcag/agent-machine-control/internal/target"
 )
 
 // App is the main CLI orchestrator.
@@ -111,7 +112,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	adapter := hyperv.New()
 	discoveryService := app.NewDiscoveryService(adapter)
 
-	if !isDirectMutatingCommand(norm) {
+	if !isDirectTargetCommand(norm) {
 		readOnlyRecoverySvc := app.NewRecoveryService(adapter, nil, nil, nil, nil)
 		appInstance := NewApp(
 			discoveryService,
@@ -137,6 +138,30 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	auditStore := audit.NewStore(sd.AuditDir())
 	receiptStore := receipt.NewStore(sd.ReceiptsDir())
 	approvalStore := approval.NewStore(sd.ApprovalsDir())
+	inventory, err := app.NewTrustedInventory(nil)
+	if err != nil {
+		fmt.Fprintf(stderr, "amc: failed to initialize trusted inventory: %v\n", err)
+		return ExitBackendUnavailable
+	}
+	targetStore, err := target.NewStore(sd.TargetsDir())
+	if err != nil {
+		fmt.Fprintf(stderr, "amc: failed to initialize target authority: %v\n", err)
+		return ExitBackendUnavailable
+	}
+	refreshTarget := func(ctx context.Context) error {
+		_, refreshErr := app.RefreshTrustedInventory(ctx, inventory, func(host app.HostEntry) app.TrustedHostObserver {
+			if host.ID != domain.LocalHostID {
+				return nil
+			}
+			return adapter
+		}, 1)
+		return refreshErr
+	}
+	targetService, err := app.NewTargetService(inventory, targetStore, app.WithTargetRefresh(refreshTarget))
+	if err != nil {
+		fmt.Fprintf(stderr, "amc: failed to initialize target service: %v\n", err)
+		return ExitBackendUnavailable
+	}
 
 	recoveryService := app.NewRecoveryService(
 		adapter,
@@ -144,6 +169,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		auditStore,
 		receiptStore,
 		approvalStore,
+		app.WithRecoveryTargetResolver(targetService),
 	)
 
 	actorResolver := &actor.DefaultResolver{}
@@ -165,9 +191,12 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	return appInstance.Run(args, stdout, stderr)
 }
 
-func isDirectMutatingCommand(norm NormalizedCLI) bool {
+func isDirectTargetCommand(norm NormalizedCLI) bool {
 	if !norm.Direct || len(norm.CommandArgs) < 2 {
 		return false
+	}
+	if norm.CommandArgs[0] == "checkpoint" && norm.CommandArgs[1] == "list" {
+		return true
 	}
 	return isMutatingSubcommand(norm.CommandArgs[0], norm.CommandArgs[1])
 }

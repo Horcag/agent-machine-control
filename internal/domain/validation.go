@@ -168,6 +168,9 @@ func ValidateEvidenceRef(s string) error {
 
 // ValidateOperationParameters validates that operation parameters strictly match canonical schemas for known kinds.
 func ValidateOperationParameters(kind OperationKind, params map[string]any) error {
+	if validateSpecial := specialOperationParameterValidator(kind); validateSpecial != nil {
+		return validateSpecial(params)
+	}
 	switch kind {
 	case "machine.start":
 		return validateStartParams(params)
@@ -193,14 +196,21 @@ func ValidateOperationParameters(kind OperationKind, params map[string]any) erro
 		return validateSessionShowParams(params)
 	case "session.close":
 		return validateSessionCloseParams(params)
-	case "session.approval.issue":
-		return validateSessionApprovalIssueParams(params)
-	case "target.enroll", "target.clear":
-		return validateTargetMutationParams(params)
-	case "target.approval.issue":
-		return validateTargetApprovalIssueParams(params)
 	default:
 		return ErrInvalidOperationKind
+	}
+}
+
+func specialOperationParameterValidator(kind OperationKind) func(map[string]any) error {
+	switch kind {
+	case "session.approval.issue":
+		return validateSessionApprovalIssueParams
+	case "target.enroll", "target.clear":
+		return validateTargetMutationParams
+	case "target.approval.issue":
+		return validateTargetApprovalIssueParams
+	default:
+		return nil
 	}
 }
 

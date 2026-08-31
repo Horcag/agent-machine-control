@@ -11,7 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"reflect"
+	"sort"
 	"sync"
 	"time"
 
@@ -20,9 +20,10 @@ import (
 )
 
 const (
-	mutationSchemaVersion = 1
-	mutationDirName       = "mutations"
-	maxMutationBytes      = 64 * 1024
+	legacyMutationSchemaVersion = 1
+	mutationSchemaVersion       = 2
+	mutationDirName             = "mutations"
+	maxMutationBytes            = 64 * 1024
 )
 
 var (
@@ -60,6 +61,7 @@ type MutationRecord struct {
 	Durable                bool                 `json:"durable"`
 	Receipt                *domain.Receipt      `json:"receipt,omitempty"`
 	CreatedAt              time.Time            `json:"created_at"`
+	Deadline               time.Time            `json:"deadline"`
 	FinalizedAt            *time.Time           `json:"finalized_at,omitempty"`
 }
 
@@ -143,6 +145,14 @@ func (j *MutationJournal) ReserveContext(ctx context.Context, op domain.Operatio
 	path := j.pathFor(op)
 	existing, err := j.readContext(ctx, path)
 	if err == nil {
+		if canUpgradeLegacyMutation(*existing, record) {
+			existing.SchemaVersion = mutationSchemaVersion
+			existing.Deadline = record.Deadline
+			if err := j.replaceContext(ctx, path, *existing); err != nil {
+				return nil, err
+			}
+			return existing, nil
+		}
 		if !sameMutationIdentity(*existing, record) {
 			return nil, ErrMutationCollision
 		}
@@ -190,91 +200,38 @@ func (j *MutationJournal) LookupKeyContext(ctx context.Context, actor domain.Act
 	return j.readContext(ctx, filepath.Join(j.dir, hex.EncodeToString(digest[:])+".json"))
 }
 
-// RecordEffectContext durably stores semantic Store effect truth before public evidence finalization.
-func (j *MutationJournal) RecordEffectContext(ctx context.Context, op domain.Operation, receipt domain.Receipt, committed, durable bool) error {
+// ListContext returns every strictly validated reservation in deterministic order.
+func (j *MutationJournal) ListContext(ctx context.Context) ([]MutationRecord, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	path := j.pathFor(op)
-	record, err := j.readContext(ctx, path)
-	if err != nil {
-		return err
-	}
-	if !recordMatchesOperation(*record, op) {
-		return ErrMutationCollision
-	}
-	if record.EffectApplied {
-		if record.Committed != committed || record.Durable != durable || record.Receipt == nil || !reflect.DeepEqual(*record.Receipt, receipt) {
-			return ErrMutationCollision
-		}
-		return nil
-	}
-	if record.State != MutationPending || !committed {
-		return ErrMutationFinalization
-	}
-	if err := receipt.Validate(); err != nil || receipt.Fingerprint != record.Fingerprint || receipt.IdempotencyFingerprint != record.IdempotencyFingerprint {
-		return ErrMutationCollision
-	}
-	if err := j.runHook("effect"); err != nil {
-		return err
-	}
-	record.State = MutationFinalizing
-	record.EffectApplied = true
-	record.Committed = true
-	record.Durable = durable
-	copyReceipt := receipt
-	record.Receipt = &copyReceipt
-	return j.replaceContext(ctx, path, *record)
-}
-
-// MarkFinalizedContext records that receipt and terminal audit evidence are durable.
-func (j *MutationJournal) MarkFinalizedContext(ctx context.Context, op domain.Operation, now time.Time) error {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	path := j.pathFor(op)
-	record, err := j.readContext(ctx, path)
-	if err != nil {
-		return err
-	}
-	if !recordMatchesOperation(*record, op) {
-		return ErrMutationCollision
-	}
-	if record.State == MutationFinalized {
-		return nil
-	}
-	if record.State != MutationFinalizing || !record.EffectApplied || record.Receipt == nil {
-		return ErrMutationFinalization
-	}
-	if err := j.runHook("finalize"); err != nil {
-		return err
-	}
-	finalizedAt := now.UTC()
-	record.State = MutationFinalized
-	record.FinalizedAt = &finalizedAt
-	return j.replaceContext(ctx, path, *record)
-}
-
-// CancelContext removes only a reservation proven to have no Store effect.
-func (j *MutationJournal) CancelContext(ctx context.Context, op domain.Operation) error {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	path := j.pathFor(op)
-	record, err := j.readContext(ctx, path)
-	if errors.Is(err, ErrMutationNotFound) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if !recordMatchesOperation(*record, op) || record.EffectApplied || record.State != MutationPending {
-		return ErrMutationFinalization
-	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return ErrMutationFinalization
+	entries, err := os.ReadDir(j.dir)
+	if err != nil {
+		return nil, ErrMutationFinalization
 	}
-	return statedir.SyncDir(j.dir)
+	records := make([]MutationRecord, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || !isMutationRecordName(entry.Name()) {
+			return nil, ErrMutationFinalization
+		}
+		record, err := j.readContext(ctx, filepath.Join(j.dir, entry.Name()))
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, *record)
+	}
+	sort.Slice(records, func(i, k int) bool {
+		if !records[i].CreatedAt.Equal(records[k].CreatedAt) {
+			return records[i].CreatedAt.Before(records[k].CreatedAt)
+		}
+		if records[i].Actor != records[k].Actor {
+			return records[i].Actor < records[k].Actor
+		}
+		return records[i].IdempotencyKey < records[k].IdempotencyKey
+	})
+	return records, nil
 }
 
 func mutationRecordFor(op domain.Operation, priorHash, desiredHash, transitionHash string, aliasCount int, now time.Time) (MutationRecord, error) {
@@ -296,20 +253,42 @@ func mutationRecordFor(op domain.Operation, priorHash, desiredHash, transitionHa
 		SchemaVersion: mutationSchemaVersion, Kind: op.Kind, Actor: op.Actor.EffectiveActor, Target: op.Target,
 		Fingerprint: fp, IdempotencyFingerprint: idFP, IdempotencyKey: op.IdempotencyKey,
 		PriorHash: priorHash, DesiredHash: desiredHash, TransitionHash: transitionHash, AliasCount: aliasCount,
-		State: MutationPending, CreatedAt: now.UTC(),
+		State: MutationPending, CreatedAt: now.UTC(), Deadline: op.Deadline.UTC(),
 	}, nil
 }
 
 func (j *MutationJournal) pathFor(op domain.Operation) string {
-	digest := sha256.Sum256([]byte(string(op.Actor.EffectiveActor) + "\x00" + op.IdempotencyKey))
+	return j.pathForIdentity(op.Actor.EffectiveActor, op.IdempotencyKey)
+}
+
+func (j *MutationJournal) pathForIdentity(actor domain.ActorID, idempotencyKey string) string {
+	digest := sha256.Sum256([]byte(string(actor) + "\x00" + idempotencyKey))
 	return filepath.Join(j.dir, hex.EncodeToString(digest[:])+".json")
+}
+
+func isMutationRecordName(name string) bool {
+	if len(name) != 69 || name[64:] != ".json" {
+		return false
+	}
+	_, err := hex.DecodeString(name[:64])
+	return err == nil
 }
 
 func sameMutationIdentity(left, right MutationRecord) bool {
 	return left.Kind == right.Kind && left.Actor == right.Actor && left.Target == right.Target &&
 		left.Fingerprint == right.Fingerprint && left.IdempotencyFingerprint == right.IdempotencyFingerprint &&
 		left.IdempotencyKey == right.IdempotencyKey && left.PriorHash == right.PriorHash &&
-		left.DesiredHash == right.DesiredHash && left.TransitionHash == right.TransitionHash && left.AliasCount == right.AliasCount
+		left.DesiredHash == right.DesiredHash && left.TransitionHash == right.TransitionHash && left.AliasCount == right.AliasCount &&
+		left.Deadline.Equal(right.Deadline)
+}
+
+func canUpgradeLegacyMutation(existing, requested MutationRecord) bool {
+	if existing.SchemaVersion != legacyMutationSchemaVersion || !existing.Deadline.IsZero() || requested.Deadline.IsZero() {
+		return false
+	}
+	existing.SchemaVersion = requested.SchemaVersion
+	existing.Deadline = requested.Deadline
+	return sameMutationIdentity(existing, requested)
 }
 
 func recordMatchesOperation(record MutationRecord, op domain.Operation) bool {
@@ -363,28 +342,34 @@ func (j *MutationJournal) readContext(ctx context.Context, path string) (*Mutati
 }
 
 func validateMutationRecord(record MutationRecord) error {
-	if record.SchemaVersion != mutationSchemaVersion || record.CreatedAt.IsZero() ||
+	if !supportedMutationSchema(record) || record.CreatedAt.IsZero() ||
 		(record.State != MutationPending && record.State != MutationFinalizing && record.State != MutationFinalized) {
 		return ErrMutationFinalization
 	}
-	if err := record.Fingerprint.Validate(); err != nil {
+	if record.Fingerprint.Validate() != nil || record.IdempotencyFingerprint.Validate() != nil {
 		return ErrMutationFinalization
 	}
-	if err := record.IdempotencyFingerprint.Validate(); err != nil {
+	if !validMutationEffectState(record) {
 		return ErrMutationFinalization
 	}
-	if record.State == MutationPending && (record.EffectApplied || record.Receipt != nil) {
+	if record.Receipt != nil && record.Receipt.Validate() != nil {
 		return ErrMutationFinalization
-	}
-	if record.State != MutationPending && (!record.EffectApplied || !record.Committed || record.Receipt == nil) {
-		return ErrMutationFinalization
-	}
-	if record.Receipt != nil {
-		if err := record.Receipt.Validate(); err != nil {
-			return ErrMutationFinalization
-		}
 	}
 	return nil
+}
+
+func supportedMutationSchema(record MutationRecord) bool {
+	if record.SchemaVersion == mutationSchemaVersion {
+		return !record.Deadline.IsZero()
+	}
+	return record.SchemaVersion == legacyMutationSchemaVersion && record.Deadline.IsZero()
+}
+
+func validMutationEffectState(record MutationRecord) bool {
+	if record.State == MutationPending {
+		return !record.EffectApplied && !record.Committed && record.Receipt == nil
+	}
+	return record.EffectApplied && record.Committed && record.Receipt != nil
 }
 
 func rejectDuplicateMutationFields(payload []byte) error {

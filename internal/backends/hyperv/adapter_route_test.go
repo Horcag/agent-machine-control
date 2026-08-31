@@ -253,7 +253,7 @@ func (e noCallExecutor) Execute(context.Context, string, []string, []string) ([]
 }
 
 func TestNilExecutorOptionFallsBackToDefault(t *testing.T) {
-	adapter := hyperv.New(hyperv.WithExecutor(nil), hyperv.WithExecutablePath("powershell.exe"))
+	adapter := hyperv.New(hyperv.WithExecutor(nil), hyperv.WithExecutablePath("amc-definitely-missing-powershell"))
 	if _, err := adapter.ListMachines(context.Background()); err == nil {
 		t.Fatal("expected execution error, not nil executor panic")
 	}

@@ -26,7 +26,6 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/receipt"
 	"github.com/Horcag/agent-machine-control/internal/sessions"
 	"github.com/Horcag/agent-machine-control/internal/statedir"
-	"github.com/Horcag/agent-machine-control/internal/target"
 )
 
 type contextKey string
@@ -41,34 +40,35 @@ var (
 
 // Server is the HTTP/1.1 daemon server for Agent Machine Control.
 type Server struct {
-	cfg              Config
-	stateDir         *statedir.StateDir
-	authStore        *auth.Store
-	leaseMgr         *lease.Manager
-	auditStore       *audit.Store
-	receiptStore     *receipt.Store
-	approvalStore    *approval.Store
-	recoveryService  *app.RecoveryService
-	targetService    *app.TargetService
-	eventHub         *events.Hub
-	opMgr            *operations.Manager
-	sessionMgr       *sessions.Manager
-	sessionService   *app.SessionService
-	singletonLock    *SingletonLock
-	httpServer       *http.Server
-	listener         net.Listener
-	endpoint         string
-	startedAt        time.Time
-	pid              int
-	runtimeID        string
-	startTime        string
-	shutdownChan     chan struct{}
-	shutdownOnce     sync.Once
-	admissionClosed  atomic.Bool
-	semaphore        chan struct{}
-	identityProvider lease.IdentityProvider
-	shutdownHTTP     func(context.Context) error
-	closeHTTP        func() error
+	cfg               Config
+	stateDir          *statedir.StateDir
+	authStore         *auth.Store
+	leaseMgr          *lease.Manager
+	auditStore        *audit.Store
+	receiptStore      *receipt.Store
+	approvalStore     *approval.Store
+	recoveryService   *app.RecoveryService
+	targetService     *app.TargetService
+	targetCoordinator *app.TargetCoordinator
+	eventHub          *events.Hub
+	opMgr             *operations.Manager
+	sessionMgr        *sessions.Manager
+	sessionService    *app.SessionService
+	singletonLock     *SingletonLock
+	httpServer        *http.Server
+	listener          net.Listener
+	endpoint          string
+	startedAt         time.Time
+	pid               int
+	runtimeID         string
+	startTime         string
+	shutdownChan      chan struct{}
+	shutdownOnce      sync.Once
+	admissionClosed   atomic.Bool
+	semaphore         chan struct{}
+	identityProvider  lease.IdentityProvider
+	shutdownHTTP      func(context.Context) error
+	closeHTTP         func() error
 
 	afterEarlyMutationAdmissionCheck func()
 
@@ -135,29 +135,10 @@ func NewServer(cfg Config) (*Server, error) {
 	if backend == nil {
 		backend = hyperv.New()
 	}
-	inventory, err := app.NewTrustedInventory(nil)
+	targetService, targetCoordinator, err := initializeTargetSubsystem(sd, backend, auditStore, receiptStore, approvalStore, cfg.Clock)
 	if err != nil {
 		_ = lock.Release()
-		return nil, fmt.Errorf("daemon: failed to initialize trusted inventory: %w", err)
-	}
-	targetStore, err := target.NewStore(sd.TargetsDir())
-	if err != nil {
-		_ = lock.Release()
-		return nil, fmt.Errorf("daemon: failed to initialize target authority: %w", err)
-	}
-	refreshTarget := func(ctx context.Context) error {
-		_, refreshErr := app.RefreshTrustedInventory(ctx, inventory, func(host app.HostEntry) app.TrustedHostObserver {
-			if host.ID != domain.LocalHostID {
-				return nil
-			}
-			return backend
-		}, 1)
-		return refreshErr
-	}
-	targetService, err := app.NewTargetService(inventory, targetStore, app.WithTargetRefresh(refreshTarget))
-	if err != nil {
-		_ = lock.Release()
-		return nil, fmt.Errorf("daemon: failed to initialize target service: %w", err)
+		return nil, err
 	}
 
 	recoverySvc := app.NewRecoveryService(backend, leaseMgr, auditStore, receiptStore, approvalStore, app.WithRecoveryTargetResolver(targetService))
@@ -185,27 +166,28 @@ func NewServer(cfg Config) (*Server, error) {
 	runtimeID, pid, startTime := ident.CurrentIdentity()
 
 	srv := &Server{
-		cfg:              cfg,
-		stateDir:         sd,
-		authStore:        authStore,
-		leaseMgr:         leaseMgr,
-		auditStore:       auditStore,
-		receiptStore:     receiptStore,
-		approvalStore:    approvalStore,
-		recoveryService:  recoverySvc,
-		targetService:    targetService,
-		eventHub:         eventHub,
-		opMgr:            opMgr,
-		sessionMgr:       sessionMgr,
-		sessionService:   sessionSvc,
-		singletonLock:    lock,
-		startedAt:        now,
-		pid:              pid,
-		runtimeID:        runtimeID,
-		startTime:        startTime,
-		shutdownChan:     make(chan struct{}),
-		semaphore:        make(chan struct{}, 100),
-		identityProvider: ident,
+		cfg:               cfg,
+		stateDir:          sd,
+		authStore:         authStore,
+		leaseMgr:          leaseMgr,
+		auditStore:        auditStore,
+		receiptStore:      receiptStore,
+		approvalStore:     approvalStore,
+		recoveryService:   recoverySvc,
+		targetService:     targetService,
+		targetCoordinator: targetCoordinator,
+		eventHub:          eventHub,
+		opMgr:             opMgr,
+		sessionMgr:        sessionMgr,
+		sessionService:    sessionSvc,
+		singletonLock:     lock,
+		startedAt:         now,
+		pid:               pid,
+		runtimeID:         runtimeID,
+		startTime:         startTime,
+		shutdownChan:      make(chan struct{}),
+		semaphore:         make(chan struct{}, 100),
+		identityProvider:  ident,
 	}
 
 	srv.setupHTTPServer()
@@ -298,6 +280,10 @@ func (s *Server) dispatchOtherV1(w http.ResponseWriter, r *http.Request, path st
 		} else {
 			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 		}
+	case path == "target-approvals":
+		s.dispatchTargetApproval(w, r)
+	case path == "target":
+		s.dispatchTarget(w, r)
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "endpoint not found")
 	}

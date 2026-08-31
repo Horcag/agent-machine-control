@@ -37,17 +37,13 @@ func runCheckpointRestore(
 	}
 
 	if len(positionals) != 2 {
-		fmt.Fprintln(stderr, "amc checkpoint restore: requires exactly <vm-guid> and <checkpoint-guid>")
+		fmt.Fprintln(stderr, "amc checkpoint restore: requires exactly <machine-reference> and <checkpoint-guid>")
 		return ExitUsage
 	}
 
 	targetID := positionals[0]
 	checkpointID := positionals[1]
 
-	if err := domain.ValidateMachineGUID(targetID); err != nil {
-		fmt.Fprintf(stderr, "amc checkpoint restore: invalid machine GUID %q\n", targetID)
-		return ExitUsage
-	}
 	if err := domain.ValidateMachineGUID(checkpointID); err != nil {
 		fmt.Fprintf(stderr, "amc checkpoint restore: invalid checkpoint GUID %q\n", checkpointID)
 		return ExitUsage
@@ -97,14 +93,18 @@ func runCheckpointRestore(
 			},
 		)
 	}
+	canonicalTarget, err := recoverySvc.ResolveTargetReference(ctx, targetID)
+	if err != nil {
+		return mapMutationError(err, stderr, "checkpoint restore")
+	}
 
-	appr, reqDeadline, approvalExit := prepareCheckpointRestoreApproval(ctx, recoverySvc, actor, prompter, nowFn, targetID, checkpointID, common, stderr)
+	appr, reqDeadline, approvalExit := prepareCheckpointRestoreApproval(ctx, recoverySvc, actor, prompter, nowFn, string(canonicalTarget), checkpointID, common, stderr)
 	if approvalExit != ExitSuccess {
 		return approvalExit
 	}
 
 	req := app.MutationRequest{
-		TargetID:       targetID,
+		TargetID:       string(canonicalTarget),
 		Actor:          actor,
 		Reason:         common.Reason,
 		IdempotencyKey: common.IdempotencyKey,

@@ -14,6 +14,7 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/app"
 	"github.com/Horcag/agent-machine-control/internal/backends/hyperv"
 	"github.com/Horcag/agent-machine-control/internal/domain"
+	"github.com/Horcag/agent-machine-control/internal/target"
 )
 
 func runMachine(
@@ -212,6 +213,30 @@ func printNetworkAdapters(w io.Writer, adapters []domain.NetworkAdapterSummary) 
 }
 
 func mapCLIError(err error, stderr io.Writer, opName string) int {
+	if code, ok := mapTargetCLIError(err, stderr, opName); ok {
+		return code
+	}
+	return mapHyperVCLIError(err, stderr, opName)
+}
+
+func mapTargetCLIError(err error, stderr io.Writer, opName string) (int, bool) {
+	if errors.Is(err, target.ErrNoDefault) {
+		fmt.Fprintf(stderr, "amc %s: no target is enrolled; enroll a local target first\n", opName)
+		return ExitConflict, true
+	}
+	if errors.Is(err, target.ErrDifferentTarget) || errors.Is(err, domain.ErrMachineReferenceMiss) {
+		fmt.Fprintf(stderr, "amc %s: machine reference does not identify the enrolled target\n", opName)
+		return ExitNotFound, true
+	}
+	if errors.Is(err, target.ErrInventoryRefresh) || errors.Is(err, domain.ErrMachineReferenceStale) ||
+		errors.Is(err, domain.ErrMachineHostUnavailable) || errors.Is(err, domain.ErrMachineAccessDenied) {
+		fmt.Fprintf(stderr, "amc %s: enrolled target inventory is unavailable\n", opName)
+		return ExitBackendUnavailable, true
+	}
+	return 0, false
+}
+
+func mapHyperVCLIError(err error, stderr io.Writer, opName string) int {
 	if errors.Is(err, hyperv.ErrMachineNotFound) {
 		fmt.Fprintf(stderr, "amc %s: machine not found\n", opName)
 		return ExitNotFound

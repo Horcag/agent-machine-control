@@ -43,15 +43,11 @@ func runMachineStop(
 	}
 
 	if len(positionals) != 1 {
-		fmt.Fprintln(stderr, "amc machine stop: requires exactly one machine GUID")
+		fmt.Fprintln(stderr, "amc machine stop: requires exactly one machine reference")
 		return ExitUsage
 	}
 
 	targetID := positionals[0]
-	if err := domain.ValidateMachineGUID(targetID); err != nil {
-		fmt.Fprintf(stderr, "amc machine stop: invalid machine GUID %q\n", targetID)
-		return ExitUsage
-	}
 
 	if !directMode {
 		dReq := daemon.CreateOperationRequest{
@@ -73,9 +69,13 @@ func runMachineStop(
 			domain.MachineStateOff,
 		)
 	}
+	canonicalTarget, err := recoverySvc.ResolveTargetReference(ctx, targetID)
+	if err != nil {
+		return mapMutationError(err, stderr, "machine stop")
+	}
 
 	req := app.MutationRequest{
-		TargetID:       targetID,
+		TargetID:       string(canonicalTarget),
 		Actor:          actor,
 		Reason:         common.Reason,
 		IdempotencyKey: common.IdempotencyKey,

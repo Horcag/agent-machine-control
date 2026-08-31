@@ -84,7 +84,7 @@ func setupDaemonForCLI(t *testing.T) (*daemon.Server, string) {
 		t.Fatal(err)
 	}
 	locator, _ := domain.NewMachineLocator(domain.LocalHostID, cliTestVMID)
-	value, _ := target.NewDefault(locator, nil)
+	value, _ := target.NewDefault(locator, []string{"primary"})
 	if _, err := store.Save(context.Background(), value); err != nil {
 		t.Fatal(err)
 	}
@@ -144,6 +144,8 @@ func TestCLI_Operation_ListShowWaitCancel(t *testing.T) {
 		t.Errorf("expected at least 1 operation in list")
 	}
 
+	assertAliasFilteredOperation(t, appInstance)
+
 	// 2. amc operation show <op-id> --json
 	var showStdout, showStderr bytes.Buffer
 	code = appInstance.Run([]string{"operation", "show", opDTO.OperationID, "--json"}, &showStdout, &showStderr)
@@ -175,6 +177,19 @@ func TestCLI_Operation_ListShowWaitCancel(t *testing.T) {
 	// Completed operations return conflict/error when cancelled
 	if code != cli.ExitConflict && code != cli.ExitSuccess {
 		t.Errorf("expected ExitConflict or ExitSuccess for terminal cancel, got %d", code)
+	}
+}
+
+func assertAliasFilteredOperation(t *testing.T, appInstance *cli.App) {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	code := appInstance.Run([]string{"operation", "list", "--machine", "primary", "--json"}, &stdout, &stderr)
+	if code != cli.ExitSuccess {
+		t.Fatalf("operation list alias filter returned code %d; stderr: %s", code, stderr.String())
+	}
+	var listEnv cli.OperationListOutputEnvelope
+	if err := json.Unmarshal(stdout.Bytes(), &listEnv); err != nil || len(listEnv.Operations) != 1 || listEnv.Operations[0].Target != "local:"+cliTestVMID {
+		t.Fatalf("alias-filtered operations = %+v, %v", listEnv.Operations, err)
 	}
 }
 

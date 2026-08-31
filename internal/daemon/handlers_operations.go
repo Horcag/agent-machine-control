@@ -104,9 +104,14 @@ func (s *Server) handleListOperations(w http.ResponseWriter, r *http.Request) {
 
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
+	machine, err := s.normalizeOperationMachineFilter(r.Context(), q.Get("machine"))
+	if err != nil {
+		writeTargetResolutionError(w, err)
+		return
+	}
 	opts := operations.ListOptions{
 		State:   domain.OperationState(q.Get("state")),
-		Machine: domain.MachineRef(q.Get("machine")),
+		Machine: machine,
 		Limit:   limit,
 	}
 
@@ -125,6 +130,23 @@ func (s *Server) handleListOperations(w http.ResponseWriter, r *http.Request) {
 		SchemaVersion: SchemaVersion,
 		Operations:    dtos,
 	})
+}
+
+func (s *Server) normalizeOperationMachineFilter(ctx context.Context, reference string) (domain.MachineRef, error) {
+	if reference == "" {
+		return "", nil
+	}
+	if locator, err := domain.ParseMachineLocator(reference); err == nil {
+		return domain.MachineRef(locator.String()), nil
+	}
+	if vmID, err := domain.NormalizeMachineGUID(reference); err == nil {
+		locator, locatorErr := domain.NewMachineLocator(domain.LocalHostID, vmID)
+		if locatorErr != nil {
+			return "", locatorErr
+		}
+		return domain.MachineRef(locator.String()), nil
+	}
+	return s.recoveryService.ResolveTargetReference(ctx, reference)
 }
 
 func (s *Server) handleGetOperation(w http.ResponseWriter, r *http.Request, opID string) {

@@ -56,15 +56,9 @@ func (c *TargetCoordinator) IssueApproval(ctx context.Context, params TargetAppr
 		return nil, fmt.Errorf("target approval validity must be between %s and %s", minTargetApprovalValidity, maxTargetApprovalValidity)
 	}
 	approvalID := targetApprovalID(params.Caller.EffectiveActor, params.IdempotencyKey)
-	existing, err := c.approvalStore.LoadIssuedContext(ctx, approvalID)
-	if err != nil && !errors.Is(err, approval.ErrApprovalNotIssued) {
+	existing, issuedAt, deadline, err := c.loadTargetApproval(ctx, approvalID, params.ValidFor)
+	if err != nil {
 		return nil, err
-	}
-	issuedAt := c.now()
-	deadline := issuedAt.Add(params.ValidFor)
-	if existing != nil {
-		issuedAt = existing.IssuedAt
-		deadline = existing.ExpiresAt
 	}
 	plan, err := c.prepareMutationPlan(ctx, TargetMutationParams{
 		Kind: params.Kind, Reference: params.Reference, Aliases: params.Aliases,
@@ -86,25 +80,11 @@ func (c *TargetCoordinator) IssueApproval(ctx context.Context, params TargetAppr
 		AuthorizedClass: domain.ClassDestructivePrivileged, Fingerprint: fingerprint,
 		IdempotencyKey: approvedOp.IdempotencyKey, IssuedAt: issuedAt, ExpiresAt: deadline,
 	}
-	if existing != nil && targetApprovalCollision(*existing, issued) {
-		return nil, receipt.ErrIdempotencyCollision
-	}
 	issuanceOp, issuanceReceipt, err := buildTargetApprovalIssuanceEvidence(params.Caller, approvedOp, issued)
 	if err != nil {
 		return nil, err
 	}
-	if existing == nil {
-		if err := c.auditStore.RecordAdmissionIntentContext(ctx, issuanceOp); err != nil {
-			return nil, err
-		}
-		if err := c.approvalStore.IssueContext(ctx, issued); err != nil {
-			return nil, err
-		}
-	}
-	if err := c.receiptStore.EnsureContext(ctx, issuanceReceipt); err != nil {
-		return nil, err
-	}
-	if err := c.auditStore.EnsureTerminalOutcomeContext(ctx, issuanceReceipt); err != nil {
+	if err := c.persistTargetApproval(ctx, existing, issued, issuanceOp, issuanceReceipt); err != nil {
 		return nil, err
 	}
 	return &TargetApprovalGrant{
@@ -114,6 +94,44 @@ func (c *TargetCoordinator) IssueApproval(ctx context.Context, params TargetAppr
 			IdempotencyKey: approvedOp.IdempotencyKey, Parameters: domain.DeepCloneMap(approvedOp.Parameters),
 		},
 	}, nil
+}
+
+func (c *TargetCoordinator) loadTargetApproval(ctx context.Context, approvalID string, validFor time.Duration) (*domain.Approval, time.Time, time.Time, error) {
+	existing, err := c.approvalStore.LoadIssuedContext(ctx, approvalID)
+	if err != nil && !errors.Is(err, approval.ErrApprovalNotIssued) {
+		return nil, time.Time{}, time.Time{}, err
+	}
+	issuedAt := c.now()
+	deadline := issuedAt.Add(validFor)
+	if existing != nil {
+		issuedAt = existing.IssuedAt
+		deadline = existing.ExpiresAt
+	}
+	return existing, issuedAt, deadline, nil
+}
+
+func (c *TargetCoordinator) persistTargetApproval(
+	ctx context.Context,
+	existing *domain.Approval,
+	issued domain.Approval,
+	issuanceOp domain.Operation,
+	issuanceReceipt domain.Receipt,
+) error {
+	if existing != nil && targetApprovalCollision(*existing, issued) {
+		return receipt.ErrIdempotencyCollision
+	}
+	if existing == nil {
+		if err := c.auditStore.RecordAdmissionIntentContext(ctx, issuanceOp); err != nil {
+			return err
+		}
+		if err := c.approvalStore.IssueContext(ctx, issued); err != nil {
+			return err
+		}
+	}
+	if err := c.receiptStore.EnsureContext(ctx, issuanceReceipt); err != nil {
+		return err
+	}
+	return c.auditStore.EnsureTerminalOutcomeContext(ctx, issuanceReceipt)
 }
 
 func buildTargetApprovalIssuanceEvidence(caller domain.ActorContext, approved domain.Operation, issued domain.Approval) (domain.Operation, domain.Receipt, error) {
