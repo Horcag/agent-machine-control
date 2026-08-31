@@ -81,6 +81,19 @@ func TestEnsureDirsBatchesWindowsHostStateTree(t *testing.T) {
 	}
 }
 
+func TestEnsurePlatformStateDirectoriesFailsClosedBeforeBatch(t *testing.T) {
+	restoreWindowsHostStateDirHooks(t)
+	if handled, err := ensurePlatformStateDirectories(nil, ""); handled || err != nil {
+		t.Fatalf("empty state-directory set = %t, %v; want unhandled", handled, err)
+	}
+
+	windowsHostPathDetector = func(string) (bool, error) { return false, errors.New("synthetic mount inspection failure") }
+	handled, err := ensurePlatformStateDirectories([]string{"/synthetic/state"}, "/synthetic/state/targets")
+	if !handled || !errors.Is(err, ErrInsecurePermissions) {
+		t.Fatalf("mount inspection failure = %t, %v; want handled insecure-permissions error", handled, err)
+	}
+}
+
 func TestLinuxPrivateDirectoryTreatsExistingWindowsHostPathAsConcurrent(t *testing.T) {
 	restoreWindowsHostStateDirHooks(t)
 	windowsHostPathDetector = func(string) (bool, error) { return true, nil }

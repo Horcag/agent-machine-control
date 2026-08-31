@@ -230,22 +230,18 @@ func (s *Store) publish(ctx context.Context, value Default, payload []byte) (Pub
 }
 
 func (s *Store) prepareTemporary(ctx context.Context, file *os.File, path string, payload []byte) error {
-	if err := s.security.ValidateInheritedFile(ctx, path); err != nil {
-		return fmt.Errorf("%w: inherited temporary file: %w", ErrInsecureState, err)
-	}
-	if err := file.Chmod(0600); err != nil {
-		return fmt.Errorf("target: protect temporary state mode: %w", err)
-	}
-	if err := s.security.ProtectNewFile(ctx, path); err != nil {
+	protected, err := protectInheritedFileForWrite(ctx, file, path, s.security)
+	if err != nil {
 		return fmt.Errorf("%w: temporary file: %w", ErrInsecureState, err)
 	}
-	if _, err := file.Write(payload); err != nil {
+	defer protected.Close()
+	if _, err := protected.Write(payload); err != nil {
 		return fmt.Errorf("target: write temporary state: %w", err)
 	}
-	if err := file.Sync(); err != nil {
+	if err := protected.Sync(); err != nil {
 		return fmt.Errorf("target: sync temporary state: %w", err)
 	}
-	if err := file.Close(); err != nil {
+	if err := protected.Close(); err != nil {
 		return fmt.Errorf("target: close temporary state: %w", err)
 	}
 	if err := s.security.ValidateFile(ctx, path); err != nil {

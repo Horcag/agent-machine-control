@@ -11,12 +11,20 @@ import (
 )
 
 func openNoFollow(path string) (*os.File, error) {
+	return openNoFollowWithFlags(path, unix.O_RDONLY)
+}
+
+func openNoFollowWrite(path string) (*os.File, error) {
+	return openNoFollowWithFlags(path, unix.O_WRONLY)
+}
+
+func openNoFollowWithFlags(path string, flags int) (*os.File, error) {
 	directory, err := os.Open(filepath.Dir(path))
 	if err != nil {
 		return nil, err
 	}
 	defer directory.Close()
-	fd, err := unix.Openat(int(directory.Fd()), filepath.Base(path), unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	fd, err := unix.Openat(int(directory.Fd()), filepath.Base(path), flags|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
 		return nil, err
 	}

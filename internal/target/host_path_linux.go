@@ -125,7 +125,11 @@ if ($action -eq 'protect' -or $action -eq 'protect-new') {
 $acl = Get-Acl -LiteralPath $path
 $owner = (New-Object Security.Principal.NTAccount($acl.Owner)).Translate([Security.Principal.SecurityIdentifier]).Value
 $entries = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | ForEach-Object {
-  $flags = [int]$_.InheritanceFlags -bor [int]$_.PropagationFlags
+  $flags = 0
+  if (([int]$_.InheritanceFlags -band 1) -ne 0) { $flags = $flags -bor 0x02 }
+  if (([int]$_.InheritanceFlags -band 2) -ne 0) { $flags = $flags -bor 0x01 }
+  if (([int]$_.PropagationFlags -band 1) -ne 0) { $flags = $flags -bor 0x04 }
+  if (([int]$_.PropagationFlags -band 2) -ne 0) { $flags = $flags -bor 0x08 }
   if ($_.IsInherited) { $flags = $flags -bor 0x10 }
   @{
     type = [byte][int]$_.AccessControlType

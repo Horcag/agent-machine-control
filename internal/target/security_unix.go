@@ -56,10 +56,7 @@ func (s *platformSecurity) ProtectDir(ctx context.Context, path string) error {
 		return err
 	}
 	if hostBacked {
-		if s.windowsGuard == nil {
-			return ErrHostSecurityUnproven
-		}
-		return s.windowsGuard.Protect(ctx, path, PathDirectory)
+		return s.validateHostPath(ctx, path, PathDirectory)
 	}
 	if err := validatePOSIXOwnerAndType(path, true); err != nil {
 		return err

@@ -10,3 +10,7 @@ import (
 func openNoFollow(string) (*os.File, error) {
 	return nil, errors.New("target: no-follow reads are unsupported on this platform")
 }
+
+func openNoFollowWrite(string) (*os.File, error) {
+	return nil, errors.New("target: no-follow writes are unsupported on this platform")
+}

@@ -405,12 +405,15 @@ func (j *MutationJournal) writeExclusive(ctx context.Context, path string, recor
 	}
 	committed := false
 	defer func() {
-		_ = file.Close()
+		if file != nil {
+			_ = file.Close()
+		}
 		if !committed {
 			_ = os.Remove(path)
 		}
 	}()
-	if err := j.security.ProtectNewFile(ctx, path); err != nil {
+	file, err = protectInheritedFileForWrite(ctx, file, path, j.security)
+	if err != nil {
 		return ErrInsecureState
 	}
 	if _, err := file.Write(payload); err != nil {
@@ -422,6 +425,7 @@ func (j *MutationJournal) writeExclusive(ctx context.Context, path string, recor
 	if err := file.Close(); err != nil {
 		return ErrMutationFinalization
 	}
+	file = nil
 	if err := statedir.SyncDir(j.dir); err != nil {
 		return ErrMutationFinalization
 	}
@@ -440,13 +444,13 @@ func (j *MutationJournal) replaceContext(ctx context.Context, path string, recor
 	}
 	temporaryPath := temporary.Name()
 	defer func() {
-		_ = temporary.Close()
+		if temporary != nil {
+			_ = temporary.Close()
+		}
 		_ = os.Remove(temporaryPath)
 	}()
-	if err := temporary.Chmod(0600); err != nil {
-		return ErrMutationFinalization
-	}
-	if err := j.security.ProtectNewFile(ctx, temporaryPath); err != nil {
+	temporary, err = protectInheritedFileForWrite(ctx, temporary, temporaryPath, j.security)
+	if err != nil {
 		return ErrInsecureState
 	}
 	if _, err := temporary.Write(payload); err != nil {
@@ -458,6 +462,7 @@ func (j *MutationJournal) replaceContext(ctx context.Context, path string, recor
 	if err := temporary.Close(); err != nil {
 		return ErrMutationFinalization
 	}
+	temporary = nil
 	if err := os.Rename(temporaryPath, path); err != nil {
 		return ErrMutationFinalization
 	}

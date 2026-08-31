@@ -10,13 +10,21 @@ import (
 )
 
 func openNoFollow(path string) (*os.File, error) {
+	return openNoFollowAccess(path, windows.GENERIC_READ)
+}
+
+func openNoFollowWrite(path string) (*os.File, error) {
+	return openNoFollowAccess(path, windows.GENERIC_WRITE)
+}
+
+func openNoFollowAccess(path string, access uint32) (*os.File, error) {
 	path16, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return nil, err
 	}
 	handle, err := windows.CreateFile(
 		path16,
-		windows.GENERIC_READ,
+		access,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
 		nil,
 		windows.OPEN_EXISTING,

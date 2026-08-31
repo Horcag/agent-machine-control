@@ -125,8 +125,8 @@ func TestHostBackedPathUsesInjectedWindowsGuard(t *testing.T) {
 	}
 	guard.mu.Lock()
 	defer guard.mu.Unlock()
-	if !slices.Contains(guard.protect, PathDirectory) || !slices.Contains(guard.protectNew, PathFile) ||
-		!slices.Contains(guard.validate, PathInheritedFile) || len(guard.validate) < 3 {
+	if len(guard.protect) != 0 || !slices.Contains(guard.protectNew, PathFile) ||
+		!slices.Contains(guard.validate, PathDirectory) || !slices.Contains(guard.validate, PathInheritedFile) || len(guard.validate) < 3 {
 		t.Fatalf("guard calls = validate %v protect %v protect-new %v", guard.validate, guard.protect, guard.protectNew)
 	}
 }
@@ -236,6 +236,16 @@ func TestWindowsGuardScriptParses(t *testing.T) {
 	}
 	if !strings.Contains(windowsGuardScript, "create-private-directory") || !strings.Contains(windowsGuardScript, "CreateDirectoryW") {
 		t.Fatal("PowerShell guard does not expose the atomic private-directory action")
+	}
+	for _, mapping := range []string{
+		"$_.InheritanceFlags -band 1) -ne 0) { $flags = $flags -bor 0x02",
+		"$_.InheritanceFlags -band 2) -ne 0) { $flags = $flags -bor 0x01",
+		"$_.PropagationFlags -band 1) -ne 0) { $flags = $flags -bor 0x04",
+		"$_.PropagationFlags -band 2) -ne 0) { $flags = $flags -bor 0x08",
+	} {
+		if !strings.Contains(windowsGuardScript, mapping) {
+			t.Fatalf("PowerShell guard does not preserve raw ACE flag mapping %q", mapping)
+		}
 	}
 	if strings.Contains(windowsGuardScript, "AMC_TARGET_GUARD_") || !strings.Contains(windowsGuardScript, "[Console]::In.ReadToEnd()") {
 		t.Fatal("PowerShell guard does not receive its request exclusively over standard input")
