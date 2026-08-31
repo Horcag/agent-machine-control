@@ -80,6 +80,43 @@ function Convert-ComparablePath($Value) {
     return (Convert-NullableText $Value).ToLowerInvariant()
 }
 
+function Get-PersistedPrincipalSid([string] $PersistedTaskXml) {
+    try {
+        if ([string]::IsNullOrWhiteSpace($PersistedTaskXml)) {
+            return ''
+        }
+        [xml] $taskXml = $PersistedTaskXml
+        $userIds = @($taskXml.SelectNodes('/*[local-name()="Task"]/*[local-name()="Principals"]/*[local-name()="Principal"]/*[local-name()="UserId"]'))
+        if ($userIds.Count -ne 1) {
+            return ''
+        }
+        return Convert-NullableText $userIds[0].InnerText
+    }
+    catch {
+        return ''
+    }
+}
+
+function Convert-ComparablePrincipalId($Value) {
+    $principalId = Convert-NullableText $Value
+    if ($principalId -ceq 'Author') {
+        return ''
+    }
+    return $principalId
+}
+
+function Test-EmptyTaskRepetition($Repetition) {
+    if ($null -eq $Repetition) {
+        return $true
+    }
+    if (-not (Test-HasProperty $Repetition 'Interval') -or -not (Test-HasProperty $Repetition 'Duration') -or -not (Test-HasProperty $Repetition 'StopAtDurationEnd')) {
+        return $false
+    }
+    return [string]::IsNullOrEmpty((Convert-NullableText $Repetition.Interval)) -and `
+        [string]::IsNullOrEmpty((Convert-NullableText $Repetition.Duration)) -and `
+        $Repetition.StopAtDurationEnd -eq $false
+}
+
 function Get-CimClassName($Object) {
     if ($null -eq $Object -or -not (Test-HasProperty $Object 'CimClass')) {
         return ''
@@ -101,7 +138,7 @@ function Get-OptionalExpected($Object, [string] $Name, $Expected) {
     return $Expected
 }
 
-function Get-OwnedTaskFingerprint($Task) {
+function Get-OwnedTaskFingerprint($Task, [string] $PersistedTaskXml) {
     $actions = @($Task.Actions)
     $triggers = @($Task.Triggers)
     if ($actions.Count -ne 1 -or $triggers.Count -ne 1) {
@@ -119,10 +156,10 @@ function Get-OwnedTaskFingerprint($Task) {
         action_arguments = Convert-NullableText $action.Arguments
         action_working_directory = Convert-NullableText $action.WorkingDirectory
         action_id = Convert-NullableText $action.Id
-        principal_sid = Resolve-SidSafe ([string] $principal.UserId)
+        principal_sid = Get-PersistedPrincipalSid $PersistedTaskXml
         principal_logon_type = [string] $principal.LogonType
         principal_run_level = [string] $principal.RunLevel
-        principal_id = Convert-NullableText $principal.Id
+        principal_id = Convert-ComparablePrincipalId $principal.Id
         principal_display_name = Convert-NullableText $principal.DisplayName
         principal_group_id = Convert-NullableText $principal.GroupId
         principal_process_token_sid_type = Convert-NullableText $principal.ProcessTokenSidType
@@ -136,7 +173,7 @@ function Get-OwnedTaskFingerprint($Task) {
         trigger_end_boundary = Convert-NullableText $trigger.EndBoundary
         trigger_execution_time_limit = Convert-NullableText $trigger.ExecutionTimeLimit
         trigger_id = Convert-NullableText $trigger.Id
-        trigger_has_repetition = $null -ne $trigger.Repetition
+        trigger_has_repetition = -not (Test-EmptyTaskRepetition $trigger.Repetition)
         settings_enabled = [bool] $settings.Enabled
         settings_hidden = [bool] $settings.Hidden
         settings_allow_demand_start = [bool] $settings.AllowDemandStart
@@ -224,9 +261,9 @@ function Get-ExpectedOwnedTaskFingerprint($Task, $Spec) {
     }
 }
 
-function Test-OwnedTaskFingerprint($Task, $Spec) {
+function Test-OwnedTaskFingerprint($Task, $Spec, [string] $PersistedTaskXml) {
     try {
-        $actual = (Get-OwnedTaskFingerprint $Task) | ConvertTo-Json -Compress -Depth 6
+        $actual = (Get-OwnedTaskFingerprint $Task $PersistedTaskXml) | ConvertTo-Json -Compress -Depth 6
         $expected = (Get-ExpectedOwnedTaskFingerprint $Task $Spec) | ConvertTo-Json -Compress -Depth 6
         return [string]::Equals($actual, $expected, [StringComparison]::Ordinal)
     }

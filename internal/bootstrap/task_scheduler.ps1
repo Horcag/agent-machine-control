@@ -91,7 +91,8 @@ function Get-OwnedObservation($Spec) {
         return [pscustomobject]@{ state = 'drift'; reason = 'owned artifact hash does not match'; exact = $false; task_running = $false }
     }
 
-    if (-not (Test-OwnedTaskFingerprint $task $Spec)) {
+    $persistedTaskXml = Export-ScheduledTask -TaskPath $Spec.task_path -TaskName $Spec.task_name -ErrorAction Stop
+    if (-not (Test-OwnedTaskFingerprint $task $Spec $persistedTaskXml)) {
         return [pscustomobject]@{ state = 'drift'; reason = 'owned task fingerprint does not match'; exact = $false; task_running = $false }
     }
 

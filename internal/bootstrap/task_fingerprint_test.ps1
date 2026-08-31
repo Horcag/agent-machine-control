@@ -120,6 +120,10 @@ function New-SyntheticSpec {
     }
 }
 
+function New-SyntheticPersistedTaskXml([string] $PrincipalUserId = 'S-1-5-21-1000') {
+    return "<Task><Principals><Principal><UserId>$PrincipalUserId</UserId></Principal></Principals></Task>"
+}
+
 function New-SyntheticTask {
     $action = [pscustomobject]@{
         CimClass = [pscustomobject]@{ CimClassName = 'MSFT_TaskExecAction' }
@@ -185,7 +189,44 @@ function New-SyntheticTask {
 
 function Test-TaskFingerprints {
     $spec = New-SyntheticSpec
-    Assert-True (Test-OwnedTaskFingerprint (New-SyntheticTask) $spec) 'exact task fingerprint was rejected'
+    $persistedTaskXml = New-SyntheticPersistedTaskXml
+    Assert-True (Test-OwnedTaskFingerprint (New-SyntheticTask) $spec $persistedTaskXml) 'exact task fingerprint was rejected'
+
+    $task = New-SyntheticTask
+    $task.Principal.UserId = 'operator'
+    Assert-True (Test-OwnedTaskFingerprint $task $spec $persistedTaskXml) 'persisted XML SID was not authoritative over a short CIM account name'
+
+    foreach ($name in @('missing persisted SID', 'wrong persisted SID', 'missing persisted XML')) {
+        $xml = switch ($name) {
+            'missing persisted SID' { '<Task><Principals><Principal /></Principals></Task>' }
+            'wrong persisted SID' { New-SyntheticPersistedTaskXml 'S-1-5-21-2000' }
+            'missing persisted XML' { '' }
+        }
+        Assert-False (Test-OwnedTaskFingerprint (New-SyntheticTask) $spec $xml) "$name was accepted"
+    }
+
+    $task = New-SyntheticTask
+    $task.Principal.Id = 'Author'
+    Assert-True (Test-OwnedTaskFingerprint $task $spec $persistedTaskXml) 'default Author principal ID was rejected'
+    foreach ($principalId in @('author', 'custom-principal')) {
+        $task = New-SyntheticTask
+        $task.Principal.Id = $principalId
+        Assert-False (Test-OwnedTaskFingerprint $task $spec $persistedTaskXml) "principal ID $principalId was accepted"
+    }
+
+    $task = New-SyntheticTask
+    $task.Triggers[0].Repetition = [pscustomobject]@{ Interval = ''; Duration = ''; StopAtDurationEnd = $false }
+    Assert-True (Test-OwnedTaskFingerprint $task $spec $persistedTaskXml) 'materially empty repetition was rejected'
+    foreach ($name in @('interval', 'duration', 'stop at duration end', 'incomplete repetition')) {
+        $task = New-SyntheticTask
+        $task.Triggers[0].Repetition = switch ($name) {
+            'interval' { [pscustomobject]@{ Interval = 'PT1H'; Duration = ''; StopAtDurationEnd = $false } }
+            'duration' { [pscustomobject]@{ Interval = ''; Duration = 'P1D'; StopAtDurationEnd = $false } }
+            'stop at duration end' { [pscustomobject]@{ Interval = ''; Duration = ''; StopAtDurationEnd = $true } }
+            'incomplete repetition' { [pscustomobject]@{ Interval = ''; Duration = '' } }
+        }
+        Assert-False (Test-OwnedTaskFingerprint $task $spec $persistedTaskXml) "$name repetition was accepted"
+    }
 
     $cases = [ordered]@{
         'extra action' = { param($task) $task.Actions += $task.Actions[0] }
@@ -214,7 +255,7 @@ function Test-TaskFingerprints {
     foreach ($name in $cases.Keys) {
         $task = New-SyntheticTask
         & $cases[$name] $task
-        Assert-False (Test-OwnedTaskFingerprint $task $spec) "$name drift was accepted"
+        Assert-False (Test-OwnedTaskFingerprint $task $spec $persistedTaskXml) "$name drift was accepted"
     }
 }
 
@@ -232,7 +273,7 @@ function Test-NativeTaskDefinitionFingerprint {
         -RestartCount $spec.restart_count -RestartInterval ([Xml.XmlConvert]::ToTimeSpan($spec.restart_interval)) `
         -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     $task = New-ScheduledTask -Action $action -Principal $principal -Trigger $trigger -Settings $settings
-    Assert-True (Test-OwnedTaskFingerprint $task $spec) 'native in-memory task definition fingerprint was rejected'
+    Assert-True (Test-OwnedTaskFingerprint $task $spec (New-SyntheticPersistedTaskXml $identity.User.Value)) 'native in-memory task definition fingerprint was rejected'
 }
 
 Test-AclFingerprints
