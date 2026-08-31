@@ -119,55 +119,64 @@ func TestMutationJournalFailsClosedOnSecurityAndCancellation(t *testing.T) {
 }
 
 func TestMutationJournalProtectsOnlyNewDirectoryBeforeValidation(t *testing.T) {
-	t.Run("new directory", func(t *testing.T) {
-		security := &recordingMutationJournalSecurity{}
-		if _, err := NewMutationJournal(t.TempDir(), WithMutationJournalSecurity(security)); err != nil {
-			t.Fatal(err)
-		}
-		if got, want := strings.Join(security.calls, ","), mutationJournalNewDirectorySecurityCalls(); got != want {
-			t.Fatalf("security calls = %q, want %q", got, want)
-		}
-	})
+	t.Run("new directory", testNewMutationJournalDirectory)
+	t.Run("protection failure prevents validation", testMutationJournalProtectionFailure)
+	t.Run("validation failure after protection is rejected", testMutationJournalValidationFailure)
+	t.Run("insecure existing directory is not blessed", testExistingMutationJournalDirectory)
+}
 
-	t.Run("protection failure prevents validation", func(t *testing.T) {
-		security := &recordingMutationJournalSecurity{mutationJournalTestSecurity: mutationJournalTestSecurity{protectErr: errors.New("cannot protect")}}
-		_, err := NewMutationJournal(t.TempDir(), WithMutationJournalSecurity(security))
-		if mutationJournalUsesPostCreateProtection() {
-			if !errors.Is(err, ErrInsecureState) {
-				t.Fatalf("NewMutationJournal protection error = %v", err)
-			}
-		} else if err != nil {
-			t.Fatalf("NewMutationJournal atomic Windows creation error = %v", err)
-		}
-		if got, want := strings.Join(security.calls, ","), mutationJournalNewDirectoryProtectFailureCalls(); got != want {
-			t.Fatalf("security calls = %q, want %q", got, want)
-		}
-	})
+func testNewMutationJournalDirectory(t *testing.T) {
+	security := &recordingMutationJournalSecurity{}
+	if _, err := NewMutationJournal(t.TempDir(), WithMutationJournalSecurity(security)); err != nil {
+		t.Fatal(err)
+	}
+	assertMutationJournalCalls(t, security, mutationJournalNewDirectorySecurityCalls())
+}
 
-	t.Run("validation failure after protection is rejected", func(t *testing.T) {
-		security := &recordingMutationJournalSecurity{mutationJournalTestSecurity: mutationJournalTestSecurity{dirErr: errors.New("invalid protection proof")}}
-		if _, err := NewMutationJournal(t.TempDir(), WithMutationJournalSecurity(security)); !errors.Is(err, ErrInsecureState) {
-			t.Fatalf("NewMutationJournal validation error = %v", err)
-		}
-		if got, want := strings.Join(security.calls, ","), mutationJournalNewDirectorySecurityCalls(); got != want {
-			t.Fatalf("security calls = %q, want %q", got, want)
-		}
-	})
+func testMutationJournalProtectionFailure(t *testing.T) {
+	security := &recordingMutationJournalSecurity{mutationJournalTestSecurity: mutationJournalTestSecurity{protectErr: errors.New("cannot protect")}}
+	_, err := NewMutationJournal(t.TempDir(), WithMutationJournalSecurity(security))
+	assertMutationJournalProtectionError(t, err)
+	assertMutationJournalCalls(t, security, mutationJournalNewDirectoryProtectFailureCalls())
+}
 
-	t.Run("insecure existing directory is not blessed", func(t *testing.T) {
-		root := t.TempDir()
-		if err := os.Mkdir(filepath.Join(root, mutationDirName), 0700); err != nil {
-			t.Fatal(err)
+func assertMutationJournalProtectionError(t *testing.T, err error) {
+	t.Helper()
+	if mutationJournalUsesPostCreateProtection() {
+		if !errors.Is(err, ErrInsecureState) {
+			t.Fatalf("NewMutationJournal protection error = %v", err)
 		}
-		synthetic := errors.New("insecure pre-existing directory")
-		security := &recordingMutationJournalSecurity{mutationJournalTestSecurity: mutationJournalTestSecurity{dirErr: synthetic}}
-		if _, err := NewMutationJournal(root, WithMutationJournalSecurity(security)); !errors.Is(err, ErrInsecureState) {
-			t.Fatalf("NewMutationJournal existing directory error = %v", err)
-		}
-		if got, want := strings.Join(security.calls, ","), "validate"; got != want {
-			t.Fatalf("security calls = %q, want %q", got, want)
-		}
-	})
+	} else if err != nil {
+		t.Fatalf("NewMutationJournal atomic Windows creation error = %v", err)
+	}
+}
+
+func assertMutationJournalCalls(t *testing.T, security *recordingMutationJournalSecurity, want string) {
+	t.Helper()
+	if got := strings.Join(security.calls, ","); got != want {
+		t.Fatalf("security calls = %q, want %q", got, want)
+	}
+}
+
+func testMutationJournalValidationFailure(t *testing.T) {
+	security := &recordingMutationJournalSecurity{mutationJournalTestSecurity: mutationJournalTestSecurity{dirErr: errors.New("invalid protection proof")}}
+	if _, err := NewMutationJournal(t.TempDir(), WithMutationJournalSecurity(security)); !errors.Is(err, ErrInsecureState) {
+		t.Fatalf("NewMutationJournal validation error = %v", err)
+	}
+	assertMutationJournalCalls(t, security, mutationJournalNewDirectorySecurityCalls())
+}
+
+func testExistingMutationJournalDirectory(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, mutationDirName), 0700); err != nil {
+		t.Fatal(err)
+	}
+	synthetic := errors.New("insecure pre-existing directory")
+	security := &recordingMutationJournalSecurity{mutationJournalTestSecurity: mutationJournalTestSecurity{dirErr: synthetic}}
+	if _, err := NewMutationJournal(root, WithMutationJournalSecurity(security)); !errors.Is(err, ErrInsecureState) {
+		t.Fatalf("NewMutationJournal existing directory error = %v", err)
+	}
+	assertMutationJournalCalls(t, security, "validate")
 }
 
 func TestMutationJournalRejectsMalformedProtectedRecords(t *testing.T) {

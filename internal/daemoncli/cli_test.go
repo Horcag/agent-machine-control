@@ -64,44 +64,7 @@ func TestDaemonCLI_RunStatusStop_Lifecycle(t *testing.T) {
 		done <- code
 	}()
 
-	// Wait for daemon to become ready
-	var statusStdout, statusStderr bytes.Buffer
-	var running bool
-	readyDeadline := time.NewTimer(30 * time.Second)
-	defer readyDeadline.Stop()
-	readyPoll := time.NewTicker(10 * time.Millisecond)
-	defer readyPoll.Stop()
-	for {
-		select {
-		case code := <-done:
-			t.Fatalf("daemon run exited before becoming ready with code %d; run stdout: %s, stderr: %s, status output: %s", code, runStdout.String(), runStderr.String(), statusStdout.String())
-		default:
-		}
-
-		statusStdout.Reset()
-		statusStderr.Reset()
-		code := daemoncli.Run([]string{"status", "--state-dir", dir, "--json"}, &statusStdout, &statusStderr)
-		if code == daemoncli.ExitSuccess && strings.Contains(statusStdout.String(), `"status":"ok"`) {
-			running = true
-			break
-		}
-
-		select {
-		case code := <-done:
-			t.Fatalf("daemon run exited before becoming ready with code %d; run stdout: %s, stderr: %s, status output: %s", code, runStdout.String(), runStderr.String(), statusStdout.String())
-		case <-readyPoll.C:
-		case <-readyDeadline.C:
-			select {
-			case code := <-done:
-				t.Fatalf("daemon failed to start and exited with code %d; run stdout: %s, stderr: %s, status output: %s", code, runStdout.String(), runStderr.String(), statusStdout.String())
-			default:
-				t.Fatalf("daemon failed to start before deadline; run goroutine is still active, status output: %s", statusStdout.String())
-			}
-		}
-	}
-	if !running {
-		t.Fatal("daemon readiness loop exited without observing a running status")
-	}
+	waitForDaemonReady(t, dir, &runStdout, &runStderr, done)
 
 	// Stop daemon
 	var stopStdout, stopStderr bytes.Buffer
@@ -117,6 +80,42 @@ func TestDaemonCLI_RunStatusStop_Lifecycle(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatalf("timed out waiting for daemon to exit after stop")
+	}
+}
+
+func waitForDaemonReady(t *testing.T, dir string, runStdout, runStderr *bytes.Buffer, done <-chan int) {
+	t.Helper()
+	var statusStdout, statusStderr bytes.Buffer
+	readyDeadline := time.NewTimer(30 * time.Second)
+	defer readyDeadline.Stop()
+	readyPoll := time.NewTicker(10 * time.Millisecond)
+	defer readyPoll.Stop()
+	for {
+		select {
+		case code := <-done:
+			t.Fatalf("daemon run exited before becoming ready with code %d; run stdout: %s, stderr: %s, status output: %s", code, runStdout.String(), runStderr.String(), statusStdout.String())
+		default:
+		}
+
+		statusStdout.Reset()
+		statusStderr.Reset()
+		code := daemoncli.Run([]string{"status", "--state-dir", dir, "--json"}, &statusStdout, &statusStderr)
+		if code == daemoncli.ExitSuccess && strings.Contains(statusStdout.String(), `"status":"ok"`) {
+			return
+		}
+
+		select {
+		case code := <-done:
+			t.Fatalf("daemon run exited before becoming ready with code %d; run stdout: %s, stderr: %s, status output: %s", code, runStdout.String(), runStderr.String(), statusStdout.String())
+		case <-readyPoll.C:
+		case <-readyDeadline.C:
+			select {
+			case code := <-done:
+				t.Fatalf("daemon failed to start and exited with code %d; run stdout: %s, stderr: %s, status output: %s", code, runStdout.String(), runStderr.String(), statusStdout.String())
+			default:
+				t.Fatalf("daemon failed to start before deadline; run goroutine is still active, status output: %s", statusStdout.String())
+			}
+		}
 	}
 }
 

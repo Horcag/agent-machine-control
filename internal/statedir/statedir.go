@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/Horcag/agent-machine-control/internal/wslruntime"
@@ -204,58 +205,79 @@ func createAndValidateDirWith(
 		return err
 	}
 
+	missing, err := missingStateDirComponents(dir, allowTargetInheritance, validateExisting)
+	if err != nil {
+		return err
+	}
+	for _, current := range slices.Backward(missing) {
+		inheritance := current == dir && allowTargetInheritance
+		if err := createAndValidateMissingStateDir(current, inheritance, createPrivateDirectory, validateExisting); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func missingStateDirComponents(
+	dir string,
+	allowTargetInheritance bool,
+	validateExisting func(string, os.FileInfo, bool) error,
+) ([]string, error) {
 	missing := make([]string, 0, 1)
 	for current := dir; ; current = filepath.Dir(current) {
 		fi, err := os.Lstat(current)
 		switch {
 		case err == nil:
 			if len(missing) == 0 {
-				return validateExisting(dir, fi, allowTargetInheritance)
+				return nil, validateExisting(dir, fi, allowTargetInheritance)
 			}
 			if !fi.IsDir() {
-				return fmt.Errorf("state path component %q exists and is not a directory", current)
+				return nil, fmt.Errorf("state path component %q exists and is not a directory", current)
 			}
-			goto createMissing
+			return missing, nil
 		case os.IsNotExist(err):
 			missing = append(missing, current)
 			if parent := filepath.Dir(current); parent == current {
-				return fmt.Errorf("failed to find existing parent for state directory %q", dir)
+				return nil, fmt.Errorf("failed to find existing parent for state directory %q", dir)
 			}
 		default:
-			return fmt.Errorf("failed to access state directory %q: %w", current, err)
+			return nil, fmt.Errorf("failed to access state directory %q: %w", current, err)
 		}
 	}
+}
 
-createMissing:
-	for index := len(missing) - 1; index >= 0; index-- {
-		current := missing[index]
-		inheritance := current == dir && allowTargetInheritance
-		err := createPrivateDirectory(current, inheritance)
-		switch {
-		case err == nil:
-			if err := validateNoSymlinkComponents(current); err != nil {
-				return err
-			}
-			fi, err := os.Lstat(current)
-			if err != nil {
-				return fmt.Errorf("failed to inspect newly created state directory %q: %w", current, err)
-			}
-			if err := validateExisting(current, fi, inheritance); err != nil {
-				return err
-			}
-		case errors.Is(err, os.ErrExist):
-			fi, statErr := os.Lstat(current)
-			if statErr != nil {
-				return fmt.Errorf("failed to inspect concurrently created state directory %q: %w", current, statErr)
-			}
-			if err := validateExisting(current, fi, inheritance); err != nil {
-				return err
-			}
-		default:
-			return fmt.Errorf("failed to create state directory %q: %w", current, err)
+func createAndValidateMissingStateDir(
+	dir string,
+	allowTargetInheritance bool,
+	createPrivateDirectory func(string, bool) error,
+	validateExisting func(string, os.FileInfo, bool) error,
+) error {
+	if err := createPrivateDirectory(dir, allowTargetInheritance); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return validateConcurrentlyCreatedStateDir(dir, allowTargetInheritance, validateExisting)
 		}
+		return fmt.Errorf("failed to create state directory %q: %w", dir, err)
 	}
-	return nil
+	return validateNewStateDir(dir, allowTargetInheritance, validateExisting)
+}
+
+func validateNewStateDir(dir string, allowTargetInheritance bool, validateExisting func(string, os.FileInfo, bool) error) error {
+	if err := validateNoSymlinkComponents(dir); err != nil {
+		return err
+	}
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return fmt.Errorf("failed to inspect newly created state directory %q: %w", dir, err)
+	}
+	return validateExisting(dir, fi, allowTargetInheritance)
+}
+
+func validateConcurrentlyCreatedStateDir(dir string, allowTargetInheritance bool, validateExisting func(string, os.FileInfo, bool) error) error {
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return fmt.Errorf("failed to inspect concurrently created state directory %q: %w", dir, err)
+	}
+	return validateExisting(dir, fi, allowTargetInheritance)
 }
 
 // Root returns the root state directory path.

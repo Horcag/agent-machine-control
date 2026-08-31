@@ -124,6 +124,13 @@ func doJSONReq(t *testing.T, method, url, token string, body any) (int, []byte) 
 	return resp.StatusCode, respBytes
 }
 
+func requireJSONOK(t *testing.T, status int, data []byte, action string) {
+	t.Helper()
+	if status != http.StatusOK {
+		t.Fatalf("%s failed status %d: %s", action, status, string(data))
+	}
+}
+
 func TestDaemonSessions_EndToEnd(t *testing.T) {
 	srv, endpoint, token, fakeSSH := setupTestDaemonWithSSH(t)
 	defer func() {
@@ -143,9 +150,7 @@ func TestDaemonSessions_EndToEnd(t *testing.T) {
 		Term:           "xterm-256color",
 	}
 	status, data := doJSONReq(t, http.MethodPost, endpoint+"/v1/sessions", token, openReq)
-	if status != http.StatusOK {
-		t.Fatalf("Open failed status %d: %s", status, string(data))
-	}
+	requireJSONOK(t, status, data, "Open")
 
 	var openResp daemon.SessionOpenResponse
 	if err := json.Unmarshal(data, &openResp); err != nil {
@@ -160,15 +165,11 @@ func TestDaemonSessions_EndToEnd(t *testing.T) {
 	status, data = doJSONReq(t, http.MethodPost, fmt.Sprintf("%s/v1/sessions/%s/wait", endpoint, sessID), token, daemon.SessionWaitRequest{
 		Regex: "PS C:", TimeoutMillis: 1000,
 	})
-	if status != http.StatusOK {
-		t.Fatalf("Wait for initial prompt failed status %d: %s", status, string(data))
-	}
+	requireJSONOK(t, status, data, "Wait for initial prompt")
 
 	// 3. Read initial prompt.
 	status, data = doJSONReq(t, http.MethodGet, fmt.Sprintf("%s/v1/sessions/%s/read?after_seq=0", endpoint, sessID), token, nil)
-	if status != http.StatusOK {
-		t.Fatalf("Read failed status %d: %s", status, string(data))
-	}
+	requireJSONOK(t, status, data, "Read")
 	var readResp daemon.SessionReadResponse
 	_ = json.Unmarshal(data, &readResp)
 	if len(readResp.Chunks) == 0 {
@@ -178,29 +179,21 @@ func TestDaemonSessions_EndToEnd(t *testing.T) {
 	// 4. Write data
 	writeReq := daemon.SessionWriteRequest{Data: "dir\r\n", Reason: "list files", IdempotencyKey: "key-w-1"}
 	status, data = doJSONReq(t, http.MethodPost, fmt.Sprintf("%s/v1/sessions/%s/write", endpoint, sessID), token, writeReq)
-	if status != http.StatusOK {
-		t.Fatalf("Write failed status %d: %s", status, string(data))
-	}
+	requireJSONOK(t, status, data, "Write")
 
 	// 5. Control key
 	ctrlReq := daemon.SessionControlRequest{Key: "ctrl-c", Reason: "cancel command", IdempotencyKey: "key-c-1"}
 	status, data = doJSONReq(t, http.MethodPost, fmt.Sprintf("%s/v1/sessions/%s/control", endpoint, sessID), token, ctrlReq)
-	if status != http.StatusOK {
-		t.Fatalf("Control failed status %d: %s", status, string(data))
-	}
+	requireJSONOK(t, status, data, "Control")
 
 	// 6. Wait settle with a test-owned deadline.
 	waitReq := daemon.SessionWaitRequest{SettleMs: 100, AfterSeq: readResp.NextSeq, TimeoutMillis: 1000}
 	status, data = doJSONReq(t, http.MethodPost, fmt.Sprintf("%s/v1/sessions/%s/wait", endpoint, sessID), token, waitReq)
-	if status != http.StatusOK {
-		t.Fatalf("Wait failed status %d: %s", status, string(data))
-	}
+	requireJSONOK(t, status, data, "Wait")
 
 	// 7. List and Get
 	status, data = doJSONReq(t, http.MethodGet, endpoint+"/v1/sessions", token, nil)
-	if status != http.StatusOK {
-		t.Fatalf("List failed status %d: %s", status, string(data))
-	}
+	requireJSONOK(t, status, data, "List")
 	var listResp daemon.SessionListResponse
 	_ = json.Unmarshal(data, &listResp)
 	if len(listResp.Sessions) != 1 {
@@ -208,16 +201,12 @@ func TestDaemonSessions_EndToEnd(t *testing.T) {
 	}
 
 	status, data = doJSONReq(t, http.MethodGet, fmt.Sprintf("%s/v1/sessions/%s", endpoint, sessID), token, nil)
-	if status != http.StatusOK {
-		t.Fatalf("Get failed status %d: %s", status, string(data))
-	}
+	requireJSONOK(t, status, data, "Get")
 
 	// 8. Close Session
 	closeReq := daemon.SessionCloseRequest{Reason: "finished e2e test", IdempotencyKey: "key-close-1"}
 	status, data = doJSONReq(t, http.MethodPost, fmt.Sprintf("%s/v1/sessions/%s/close", endpoint, sessID), token, closeReq)
-	if status != http.StatusOK {
-		t.Fatalf("Close failed status %d: %s", status, string(data))
-	}
+	requireJSONOK(t, status, data, "Close")
 	var closeResp daemon.SessionCloseResponse
 	_ = json.Unmarshal(data, &closeResp)
 	if closeResp.Session.State != "closed" {
