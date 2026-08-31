@@ -3,6 +3,7 @@ package hyperv_test
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -253,7 +254,8 @@ func (e noCallExecutor) Execute(context.Context, string, []string, []string) ([]
 }
 
 func TestNilExecutorOptionFallsBackToDefault(t *testing.T) {
-	adapter := hyperv.New(hyperv.WithExecutor(nil), hyperv.WithExecutablePath("amc-definitely-missing-powershell"))
+	missingExecutable := filepath.Join(t.TempDir(), "missing-powershell.exe")
+	adapter := hyperv.New(hyperv.WithExecutor(nil), hyperv.WithExecutablePath(missingExecutable))
 	if _, err := adapter.ListMachines(context.Background()); err == nil {
 		t.Fatal("expected execution error, not nil executor panic")
 	}

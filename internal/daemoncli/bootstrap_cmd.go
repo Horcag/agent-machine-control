@@ -149,6 +149,9 @@ func reportBootstrapError(stderr io.Writer, err error) int {
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, app.ErrBootstrapUnhealthy):
 		fmt.Fprintln(stderr, "amcd bootstrap: operation timed out")
 		return ExitTimeout
+	case errors.Is(err, app.ErrBootstrapPriorFailed):
+		fmt.Fprintln(stderr, "amcd bootstrap: prior exact attempt failed; use a new idempotency key for a new intent")
+		return ExitConflict
 	case errors.Is(err, app.ErrBootstrapDrift):
 		fmt.Fprintln(stderr, "amcd bootstrap: owned state drift detected; no ambiguous mutation was performed")
 		return ExitConflict

@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -15,7 +14,13 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/statedir"
 )
 
-const bootstrapTarget = domain.MachineRef("local-host")
+const (
+	bootstrapTarget            = domain.MachineRef("local-host")
+	bootstrapStopGraceInterval = 5 * time.Second
+	bootstrapPollInterval      = 25 * time.Millisecond
+)
+
+type bootstrapPoller func(context.Context, time.Duration, func(context.Context) (bool, error)) (bool, error)
 
 type BootstrapService struct {
 	adapter      BootstrapAdapter
@@ -23,13 +28,29 @@ type BootstrapService struct {
 	auditStore   *audit.Store
 	receiptStore *receipt.Store
 	now          func() time.Time
+	stopGrace    time.Duration
+	poll         bootstrapPoller
 }
 
-func NewBootstrapService(adapter BootstrapAdapter, daemon BootstrapDaemon, auditStore *audit.Store, receiptStore *receipt.Store) *BootstrapService {
-	return &BootstrapService{
-		adapter: adapter, daemon: daemon, auditStore: auditStore, receiptStore: receiptStore,
-		now: time.Now,
+type BootstrapServiceOption func(*BootstrapService)
+
+func WithBootstrapClock(now func() time.Time) BootstrapServiceOption {
+	return func(service *BootstrapService) {
+		if now != nil {
+			service.now = now
+		}
 	}
+}
+
+func NewBootstrapService(adapter BootstrapAdapter, daemon BootstrapDaemon, auditStore *audit.Store, receiptStore *receipt.Store, options ...BootstrapServiceOption) *BootstrapService {
+	service := &BootstrapService{
+		adapter: adapter, daemon: daemon, auditStore: auditStore, receiptStore: receiptStore,
+		now: time.Now, stopGrace: bootstrapStopGraceInterval, poll: pollBootstrapCondition,
+	}
+	for _, option := range options {
+		option(service)
+	}
+	return service
 }
 
 func (s *BootstrapService) Status(ctx context.Context, stateDir string) (BootstrapResult, error) {
@@ -56,10 +77,14 @@ func (s *BootstrapService) Remove(ctx context.Context, req BootstrapMutationRequ
 	return s.mutate(ctx, "bootstrap.remove", req, s.removeEffect)
 }
 
-type bootstrapEffect func(context.Context, BootstrapSpec) error
+type bootstrapEffectOutcome struct {
+	taskStopApplied bool
+}
+
+type bootstrapEffect func(context.Context, BootstrapSpec) (bootstrapEffectOutcome, error)
 
 func (s *BootstrapService) mutate(ctx context.Context, kind string, req BootstrapMutationRequest, effect bootstrapEffect) (BootstrapResult, error) {
-	if err := validateBootstrapMutation(req); err != nil {
+	if err := s.validateMutation(req); err != nil {
 		return BootstrapResult{}, err
 	}
 	ctx, cancel := context.WithDeadline(ctx, req.Deadline)
@@ -92,12 +117,16 @@ func (s *BootstrapService) mutate(ctx context.Context, kind string, req Bootstra
 		return BootstrapResult{}, fmt.Errorf("bootstrap: admission audit failed: %w", err)
 	}
 	startedAt := s.now().UTC()
-	effectErr := effect(ctx, spec)
-	result, observeErr := s.observe(ctx, spec)
+	effectOutcome, effectErr := effect(ctx, spec)
+	finalizationCtx, cancelFinalization := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancelFinalization()
+	result, observeErr := s.observe(finalizationCtx, spec)
+	result.TaskStopApplied = effectOutcome.taskStopApplied
 	if effectErr == nil {
 		effectErr = observeErr
 	}
-	receiptRecord, receiptErr := s.finalize(ctx, op, startedAt, effectErr)
+	result = normalizeBootstrapMutationResult(kind, result, effectErr)
+	receiptRecord, receiptErr := s.finalize(finalizationCtx, op, startedAt, result, effectErr)
 	if receiptRecord != nil {
 		result.ReceiptID = string(receiptRecord.ReceiptID)
 	}
@@ -105,6 +134,14 @@ func (s *BootstrapService) mutate(ctx context.Context, kind string, req Bootstra
 		return result, fmt.Errorf("bootstrap: effect committed but terminal evidence failed: %w", receiptErr)
 	}
 	return result, effectErr
+}
+
+func normalizeBootstrapMutationResult(kind string, result BootstrapResult, effectErr error) BootstrapResult {
+	if kind == "bootstrap.stop" && effectErr == nil && result.Status == BootstrapAbsent {
+		result.Status = BootstrapStopped
+		result.Reason = BootstrapReasonStopped
+	}
+	return result
 }
 
 func (s *BootstrapService) replayPrior(ctx context.Context, op domain.Operation, spec BootstrapSpec) (BootstrapResult, bool, error) {
@@ -118,13 +155,30 @@ func (s *BootstrapService) replayPrior(ctx context.Context, op domain.Operation,
 	if err := s.auditStore.EnsureTerminalOutcomeContext(ctx, *prior); err != nil {
 		return BootstrapResult{}, true, fmt.Errorf("bootstrap: reconcile terminal audit: %w", err)
 	}
-	result, observeErr := s.observe(ctx, spec)
-	result.ReceiptID = string(prior.ReceiptID)
-	result.Replayed = true
+	result := BootstrapResult{
+		SchemaVersion:   1,
+		TaskPath:        spec.TaskPath,
+		TaskName:        spec.TaskName,
+		ReceiptID:       string(prior.ReceiptID),
+		Replayed:        true,
+		TaskStopApplied: bootstrapReceiptContainsEvidence(*prior, "bootstrap-task-stop-applied"),
+	}
 	if prior.Outcome.Status != domain.OutcomeSuccess {
+		result.Status = BootstrapFailed
+		result.Reason = ErrBootstrapPriorFailed.Error()
 		return result, true, ErrBootstrapPriorFailed
 	}
-	return result, true, observeErr
+	switch prior.OperationKind {
+	case domain.OperationKind("bootstrap.ensure"), domain.OperationKind("bootstrap.start"):
+		result.Status, result.Reason = BootstrapHealthy, BootstrapReasonHealthy
+	case domain.OperationKind("bootstrap.stop"):
+		result.Status, result.Reason = BootstrapStopped, BootstrapReasonStopped
+	case domain.OperationKind("bootstrap.remove"):
+		result.Status, result.Reason = BootstrapAbsent, BootstrapReasonAbsent
+	default:
+		return result, true, fmt.Errorf("bootstrap: unsupported replay operation %q", prior.OperationKind)
+	}
+	return result, true, nil
 }
 
 func (s *BootstrapService) resolve(ctx context.Context, stateDir string) (BootstrapIdentity, BootstrapSpec, error) {
@@ -150,7 +204,10 @@ func (s *BootstrapService) observe(ctx context.Context, spec BootstrapSpec) (Boo
 	if err != nil {
 		return BootstrapResult{}, err
 	}
-	result := BootstrapResult{SchemaVersion: 1, Status: observation.State, Reason: observation.Reason, TaskPath: spec.TaskPath, TaskName: spec.TaskName}
+	result := BootstrapResult{
+		SchemaVersion: 1, Status: observation.State, Reason: observation.Reason,
+		TaskRunning: observation.TaskRunning, TaskPath: spec.TaskPath, TaskName: spec.TaskName,
+	}
 	if observation.State == BootstrapAbsent {
 		result.Reason = BootstrapReasonAbsent
 		return result, nil
@@ -164,7 +221,7 @@ func (s *BootstrapService) observe(ctx context.Context, spec BootstrapSpec) (Boo
 	}
 	healthy, healthErr := s.daemon.Healthy(ctx, spec.StateDir)
 	if healthErr != nil {
-		return BootstrapResult{}, healthErr
+		return result, healthErr
 	}
 	if healthy && observation.TaskRunning {
 		result.Status, result.Reason = BootstrapHealthy, BootstrapReasonHealthy
@@ -174,8 +231,8 @@ func (s *BootstrapService) observe(ctx context.Context, spec BootstrapSpec) (Boo
 	return result, nil
 }
 
-func validateBootstrapMutation(req BootstrapMutationRequest) error {
-	if req.Deadline.IsZero() || !req.Deadline.After(time.Now()) {
+func (s *BootstrapService) validateMutation(req BootstrapMutationRequest) error {
+	if req.Deadline.IsZero() || !req.Deadline.After(s.now()) {
 		return domain.ErrMissingDeadline
 	}
 	if err := domain.ValidateReason(req.Reason); err != nil {
@@ -185,8 +242,7 @@ func validateBootstrapMutation(req BootstrapMutationRequest) error {
 }
 
 func bootstrapOperation(kind string, req BootstrapMutationRequest, identity BootstrapIdentity, spec BootstrapSpec) (domain.Operation, error) {
-	actorDigest := sha256.Sum256([]byte(identity.SID))
-	actor := domain.ActorID("windows-user-" + hex.EncodeToString(actorDigest[:8]))
+	actor := domain.ActorID("windows-sid:" + identity.SID)
 	actorCtx, err := domain.NewActorContext(actor, actor, nil, nil)
 	if err != nil {
 		return domain.Operation{}, err
@@ -198,7 +254,7 @@ func bootstrapOperation(kind string, req BootstrapMutationRequest, identity Boot
 	return domain.Operation{
 		Kind: domain.OperationKind(kind), Target: bootstrapTarget, Actor: actorCtx,
 		Reason: req.Reason, Deadline: req.Deadline, IdempotencyKey: req.IdempotencyKey,
-		Classification: domain.ClassReversibleMutation,
+		Classification: domain.ClassDestructivePrivileged,
 		Parameters:     map[string]any{"spec_fingerprint": specDigest},
 	}, nil
 }
@@ -212,148 +268,91 @@ func bootstrapSpecFingerprint(spec BootstrapSpec) (string, error) {
 	return "sha256:" + hex.EncodeToString(digest[:]), nil
 }
 
-func (s *BootstrapService) finalize(ctx context.Context, op domain.Operation, startedAt time.Time, effectErr error) (*domain.Receipt, error) {
-	receiptID, err := domain.GenerateReceiptID()
-	if err != nil {
-		return nil, err
-	}
-	fingerprint, err := op.Fingerprint()
-	if err != nil {
-		return nil, err
-	}
-	idempotencyFingerprint, err := domain.ComputeIdempotencyFingerprint(op)
-	if err != nil {
-		return nil, err
-	}
-	outcome := domain.OutcomeSuccess
-	exitCode := 0
-	rollbackRef := "bootstrap-task-owned"
-	if effectErr != nil {
-		outcome = domain.OutcomeFailed
-		exitCode = 1
-		rollbackRef = ""
-	}
-	record := domain.Receipt{
-		ReceiptID: receiptID, OperationKind: op.Kind, Fingerprint: fingerprint,
-		IdempotencyFingerprint: idempotencyFingerprint, IdempotencyKey: op.IdempotencyKey,
-		Actor: op.Actor.EffectiveActor, Target: op.Target, Class: op.Classification,
-		EffectiveBackend: "windows-task-scheduler", StartedAt: startedAt, CompletedAt: s.now().UTC(),
-		Outcome: domain.ExecutionOutcome{Status: outcome, ExitCode: exitCode}, ObservationType: domain.ObservationObserved,
-		RollbackRef: rollbackRef, RedactionStatus: domain.RedactionApplied,
-	}
-	if err := s.receiptStore.EnsureContext(ctx, record); err != nil {
-		return &record, err
-	}
-	if err := s.auditStore.EnsureTerminalOutcomeContext(ctx, record); err != nil {
-		return &record, err
-	}
-	return &record, nil
-}
-
-func (s *BootstrapService) ensureEffect(ctx context.Context, spec BootstrapSpec) error {
+func (s *BootstrapService) ensureEffect(ctx context.Context, spec BootstrapSpec) (bootstrapEffectOutcome, error) {
 	obs, err := s.adapter.Inspect(ctx, spec)
 	if err != nil {
-		return err
+		return bootstrapEffectOutcome{}, err
 	}
 	switch obs.State {
 	case BootstrapAbsent:
 		healthy, healthErr := s.daemon.Healthy(ctx, spec.StateDir)
 		if healthErr != nil {
-			return healthErr
+			return bootstrapEffectOutcome{}, healthErr
 		}
 		if healthy {
-			return fmt.Errorf("%w: daemon exists without the owned task", ErrBootstrapDrift)
+			return bootstrapEffectOutcome{}, fmt.Errorf("%w: daemon exists without the owned task", ErrBootstrapDrift)
 		}
 		if err := s.adapter.Install(ctx, spec); err != nil {
-			return err
+			return bootstrapEffectOutcome{}, err
 		}
 	case BootstrapDrift:
-		return ErrBootstrapDrift
+		return bootstrapEffectOutcome{}, ErrBootstrapDrift
 	default:
 		if !obs.Exact {
-			return ErrBootstrapDrift
+			return bootstrapEffectOutcome{}, ErrBootstrapDrift
 		}
 	}
 	return s.startEffect(ctx, spec)
 }
 
-func (s *BootstrapService) startEffect(ctx context.Context, spec BootstrapSpec) error {
+func (s *BootstrapService) startEffect(ctx context.Context, spec BootstrapSpec) (bootstrapEffectOutcome, error) {
 	obs, err := s.requireExact(ctx, spec)
 	if err != nil {
-		return err
+		return bootstrapEffectOutcome{}, err
 	}
 	if obs.TaskRunning {
 		healthy, healthErr := s.daemon.Healthy(ctx, spec.StateDir)
 		if healthErr == nil && healthy {
-			return nil
+			return bootstrapEffectOutcome{}, nil
 		}
 	}
 	if err := s.adapter.StartTask(ctx, spec); err != nil {
-		return err
+		return bootstrapEffectOutcome{}, err
 	}
-	return s.waitHealth(ctx, spec.StateDir, true)
+	return bootstrapEffectOutcome{}, s.waitHealth(ctx, spec.StateDir, true)
 }
 
-func (s *BootstrapService) stopEffect(ctx context.Context, spec BootstrapSpec) error {
-	obs, err := s.requireExact(ctx, spec)
-	if err != nil {
-		if errors.Is(err, ErrBootstrapAbsent) {
-			return nil
-		}
-		return err
-	}
-	healthy, err := s.daemon.Healthy(ctx, spec.StateDir)
-	if err != nil {
-		return err
-	}
-	if healthy {
-		_ = s.daemon.Stop(ctx, spec.StateDir)
-	}
-	stillHealthy, healthErr := s.daemon.Healthy(ctx, spec.StateDir)
-	if healthErr != nil {
-		if errors.Is(healthErr, ErrBootstrapDrift) {
-			stillHealthy = true
-		} else {
-			return healthErr
-		}
-	}
-	obs, err = s.requireExact(ctx, spec)
-	if err != nil {
-		return err
-	}
-	if stillHealthy || obs.TaskRunning {
-		if err := s.adapter.StopTask(ctx, spec); err != nil {
-			return err
-		}
-	}
-	return s.waitHealth(ctx, spec.StateDir, false)
-}
-
-func (s *BootstrapService) removeEffect(ctx context.Context, spec BootstrapSpec) error {
+func (s *BootstrapService) removeEffect(ctx context.Context, spec BootstrapSpec) (bootstrapEffectOutcome, error) {
+	outcome := bootstrapEffectOutcome{}
 	obs, err := s.adapter.Inspect(ctx, spec)
 	if err != nil {
-		return err
+		return outcome, err
 	}
 	if obs.State == BootstrapAbsent {
-		return nil
+		return outcome, nil
 	}
 	if _, err := s.requireExact(ctx, spec); err != nil {
-		return err
+		return outcome, err
 	}
-	if err := s.stopEffect(ctx, spec); err != nil {
-		return err
+	outcome, err = s.stopEffect(ctx, spec)
+	if err != nil {
+		return outcome, err
 	}
 	if err := s.adapter.Remove(ctx, spec); err != nil {
-		return err
+		return outcome, err
 	}
 	obs, err = s.adapter.Inspect(ctx, spec)
 	if err != nil {
-		return err
+		return outcome, err
 	}
 	if obs.State != BootstrapAbsent {
-		return ErrBootstrapDrift
+		return outcome, ErrBootstrapDrift
 	}
-	return nil
+	return outcome, nil
+}
+
+func (s *BootstrapService) inspectExactOrAbsent(ctx context.Context, spec BootstrapSpec) (BootstrapObservation, error) {
+	obs, err := s.adapter.Inspect(ctx, spec)
+	if err != nil {
+		return BootstrapObservation{}, err
+	}
+	if obs.State == BootstrapAbsent {
+		return obs, nil
+	}
+	if obs.State == BootstrapDrift || !obs.Exact {
+		return obs, ErrBootstrapDrift
+	}
+	return obs, nil
 }
 
 func (s *BootstrapService) requireExact(ctx context.Context, spec BootstrapSpec) (BootstrapObservation, error) {
@@ -376,18 +375,34 @@ func (s *BootstrapService) waitHealth(ctx context.Context, stateDir string, want
 	for {
 		healthy, err := s.daemon.Healthy(ctx, stateDir)
 		if err != nil {
-			if !want && errors.Is(err, ErrBootstrapDrift) {
-				healthy = true
-			} else {
-				return err
-			}
+			return err
 		}
 		if healthy == want {
 			return nil
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("%w: %v", ErrBootstrapUnhealthy, ctx.Err())
+			return fmt.Errorf("%w: %w", ErrBootstrapUnhealthy, ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+func pollBootstrapCondition(ctx context.Context, timeout time.Duration, check func(context.Context) (bool, error)) (bool, error) {
+	ticker := time.NewTicker(bootstrapPollInterval)
+	defer ticker.Stop()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for {
+		done, err := check(ctx)
+		if done || err != nil {
+			return done, err
+		}
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-timer.C:
+			return false, nil
 		case <-ticker.C:
 		}
 	}

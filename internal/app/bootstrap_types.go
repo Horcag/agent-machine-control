@@ -11,11 +11,12 @@ import (
 )
 
 var (
-	ErrBootstrapDrift       = errors.New("bootstrap: owned task state has drifted")
-	ErrBootstrapUnsupported = errors.New("bootstrap: WSL host integration is unavailable")
-	ErrBootstrapUnhealthy   = errors.New("bootstrap: daemon did not reach the required health state")
-	ErrBootstrapAbsent      = errors.New("bootstrap: owned task is absent")
-	ErrBootstrapPriorFailed = errors.New("bootstrap: prior exact attempt failed")
+	ErrBootstrapDrift               = errors.New("bootstrap: owned task state has drifted")
+	ErrBootstrapUnsupported         = errors.New("bootstrap: WSL host integration is unavailable")
+	ErrBootstrapUnhealthy           = errors.New("bootstrap: daemon did not reach the required health state")
+	ErrBootstrapAbsent              = errors.New("bootstrap: owned task is absent")
+	ErrBootstrapEndpointUnavailable = errors.New("bootstrap: daemon endpoint is unavailable")
+	ErrBootstrapPriorFailed         = errors.New("bootstrap: prior exact attempt failed")
 )
 
 type BootstrapState string
@@ -25,7 +26,23 @@ const (
 	BootstrapStopped BootstrapState = "stopped"
 	BootstrapHealthy BootstrapState = "healthy"
 	BootstrapDrift   BootstrapState = "drift"
+	BootstrapFailed  BootstrapState = "failed"
 )
+
+type BootstrapDaemonReleaseState string
+
+const (
+	BootstrapDaemonReleased            BootstrapDaemonReleaseState = "released"
+	BootstrapDaemonHealthy             BootstrapDaemonReleaseState = "healthy"
+	BootstrapDaemonShutdownPending     BootstrapDaemonReleaseState = "shutdown_pending"
+	BootstrapDaemonEndpointUnavailable BootstrapDaemonReleaseState = "endpoint_unavailable"
+	BootstrapDaemonRetainedOwned       BootstrapDaemonReleaseState = "retained_owned"
+	BootstrapDaemonReleaseDrift        BootstrapDaemonReleaseState = "drift"
+)
+
+type BootstrapDaemonReleaseObservation struct {
+	State BootstrapDaemonReleaseState
+}
 
 const (
 	BootstrapReasonAbsent       = "owned task and artifacts are absent"
@@ -111,7 +128,7 @@ func (s BootstrapSpec) validatePrincipal(identity BootstrapIdentity) error {
 }
 
 func (s BootstrapSpec) validateSettings() error {
-	if !s.StartWhenAvailable || s.MultipleInstances != "IgnoreNew" || s.RestartCount < 1 {
+	if !s.StartWhenAvailable || s.MultipleInstances != "IgnoreNew" || s.RestartCount != 3 || s.RestartInterval != "PT1M" {
 		return fmt.Errorf("%w: task settings are not lifecycle-safe", ErrBootstrapDrift)
 	}
 	if s.ExecutionTimeLimit != "PT0S" || !s.AllowStartOnBatteries || !s.DontStopOnBatteries {
@@ -150,13 +167,15 @@ type BootstrapObservation struct {
 }
 
 type BootstrapResult struct {
-	SchemaVersion int            `json:"schema_version"`
-	Status        BootstrapState `json:"status"`
-	Reason        string         `json:"reason,omitempty"`
-	TaskPath      string         `json:"task_path,omitempty"`
-	TaskName      string         `json:"task_name,omitempty"`
-	ReceiptID     string         `json:"receipt_id,omitempty"`
-	Replayed      bool           `json:"replayed,omitempty"`
+	SchemaVersion   int            `json:"schema_version"`
+	Status          BootstrapState `json:"status"`
+	Reason          string         `json:"reason,omitempty"`
+	TaskRunning     bool           `json:"task_running"`
+	TaskPath        string         `json:"task_path,omitempty"`
+	TaskName        string         `json:"task_name,omitempty"`
+	ReceiptID       string         `json:"receipt_id,omitempty"`
+	Replayed        bool           `json:"replayed,omitempty"`
+	TaskStopApplied bool           `json:"task_stop_applied,omitempty"`
 }
 
 type BootstrapMutationRequest struct {
@@ -178,5 +197,6 @@ type BootstrapAdapter interface {
 
 type BootstrapDaemon interface {
 	Healthy(context.Context, string) (bool, error)
+	ObserveRelease(context.Context, string) (BootstrapDaemonReleaseObservation, error)
 	Stop(context.Context, string) error
 }

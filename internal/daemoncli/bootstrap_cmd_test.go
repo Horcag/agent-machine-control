@@ -59,6 +59,32 @@ func TestBootstrapCLIInvokesEnsureWithDeadline(t *testing.T) {
 	}
 }
 
+func TestBootstrapCLIPriorFailureEmitsDurableFailedReplay(t *testing.T) {
+	service := &fakeBootstrapCommandService{
+		result: app.BootstrapResult{
+			SchemaVersion: 1, Status: app.BootstrapFailed, Reason: app.ErrBootstrapPriorFailed.Error(),
+			ReceiptID: "rcpt-synthetic-prior", Replayed: true,
+		},
+		err: app.ErrBootstrapPriorFailed,
+	}
+	restoreBootstrapFactory(t, service)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"bootstrap", "start", "--state-dir", t.TempDir(), "--reason", "retry historical start",
+		"--idempotency-key", "prior-failed-cli", "--timeout", "5s", "--json",
+	}, &stdout, &stderr)
+	if code != ExitConflict {
+		t.Fatalf("Run() code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"status":"failed"`) || !strings.Contains(stdout.String(), `"receipt_id":"rcpt-synthetic-prior"`) {
+		t.Fatalf("Run() output = %s", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "prior exact attempt failed") {
+		t.Fatalf("Run() stderr = %s", stderr.String())
+	}
+}
+
 func TestBootstrapCLIDispatchesEveryLifecycleAction(t *testing.T) {
 	service := &fakeBootstrapCommandService{result: app.BootstrapResult{SchemaVersion: 1, Status: app.BootstrapStopped}}
 	req := app.BootstrapMutationRequest{Deadline: time.Now().Add(time.Minute)}
@@ -87,19 +113,24 @@ func TestBootstrapCLIHelpUnknownAndErrorMapping(t *testing.T) {
 	}
 
 	tests := []struct {
-		err  error
-		code int
+		err     error
+		code    int
+		message string
 	}{
-		{context.DeadlineExceeded, ExitTimeout},
-		{app.ErrBootstrapDrift, ExitConflict},
-		{app.ErrBootstrapAbsent, ExitNotFound},
-		{app.ErrBootstrapUnsupported, ExitBackendUnavailable},
-		{errors.New("synthetic"), ExitBackendUnavailable},
+		{context.DeadlineExceeded, ExitTimeout, "timed out"},
+		{app.ErrBootstrapPriorFailed, ExitConflict, "prior exact attempt failed"},
+		{app.ErrBootstrapDrift, ExitConflict, "drift detected"},
+		{app.ErrBootstrapAbsent, ExitNotFound, "owned task is absent"},
+		{app.ErrBootstrapUnsupported, ExitBackendUnavailable, "not a supported"},
+		{errors.New("synthetic"), ExitBackendUnavailable, "lifecycle operation failed"},
 	}
 	for _, tc := range tests {
 		stderr.Reset()
 		if code := reportBootstrapError(&stderr, tc.err); code != tc.code {
 			t.Fatalf("reportBootstrapError(%v)=%d, want %d", tc.err, code, tc.code)
+		}
+		if !strings.Contains(stderr.String(), tc.message) {
+			t.Fatalf("reportBootstrapError(%v) message=%q, want %q", tc.err, stderr.String(), tc.message)
 		}
 	}
 	stdout.Reset()

@@ -26,8 +26,13 @@ const (
 	taskName = "amcd-current-user"
 )
 
+//go:embed task_fingerprint.ps1
+var taskFingerprintScript string
+
 //go:embed task_scheduler.ps1
-var taskSchedulerScript string
+var taskSchedulerEntryScript string
+
+var taskSchedulerScript = taskFingerprintScript + "\n" + taskSchedulerEntryScript
 
 type commandRunner interface {
 	Run(context.Context, string, map[string]string) ([]byte, error)

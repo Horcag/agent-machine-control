@@ -239,6 +239,8 @@ func TestTaskSchedulerScriptPinsOwnedTaskSecurityContract(t *testing.T) {
 	for _, required := range []string{
 		"WindowsIdentity]::GetCurrent", "-LogonType S4U", "-RunLevel Limited", "New-ScheduledTaskTrigger -AtLogOn",
 		"-StartWhenAvailable", "-MultipleInstances IgnoreNew", "Test-PrivateAcl", "Test-Hash", "Unregister-ScheduledTask",
+		"AreAccessRulesCanonical", "FileSystemRights]::FullControl", "Test-OwnedTaskFingerprint", "AllowDemandStart",
+		"UseUnifiedSchedulingEngine",
 	} {
 		if !strings.Contains(taskSchedulerScript, required) {
 			t.Errorf("task scheduler script missing %q", required)
