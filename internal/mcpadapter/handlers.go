@@ -39,7 +39,8 @@ func (a *Adapter) Doctor(ctx context.Context, _ *mcp.CallToolRequest, _ DoctorIn
 }
 
 func (a *Adapter) MachineStart(ctx context.Context, _ *mcp.CallToolRequest, in MachineStartInput) (*mcp.CallToolResult, MachineMutationResult, error) {
-	if err := a.validateMutationTarget(ctx, in.ID, in.Reason, in.IdempotencyKey); err != nil {
+	target, err := a.resolveMutationTarget(ctx, in.ID, in.Reason, in.IdempotencyKey)
+	if err != nil {
 		return mcpToolError(err), MachineMutationResult{}, nil
 	}
 	if err := domain.ValidateOperationParameters("machine.start", nil); err != nil {
@@ -57,7 +58,7 @@ func (a *Adapter) MachineStart(ctx context.Context, _ *mcp.CallToolRequest, in M
 
 	request := daemon.CreateOperationRequest{
 		Kind:           "machine.start",
-		Target:         in.ID,
+		Target:         target,
 		Reason:         in.Reason,
 		IdempotencyKey: in.IdempotencyKey,
 		TimeoutSeconds: int(timeout.Seconds()),
@@ -106,7 +107,8 @@ func (a *Adapter) MachineStart(ctx context.Context, _ *mcp.CallToolRequest, in M
 
 //nolint:dupl
 func (a *Adapter) MachineStop(ctx context.Context, _ *mcp.CallToolRequest, in MachineStopInput) (*mcp.CallToolResult, MachineMutationResult, error) {
-	if err := a.validateMutationTarget(ctx, in.ID, in.Reason, in.IdempotencyKey); err != nil {
+	target, err := a.resolveMutationTarget(ctx, in.ID, in.Reason, in.IdempotencyKey)
+	if err != nil {
 		return mcpToolError(err), MachineMutationResult{}, nil
 	}
 	if err := domain.ValidateOperationParameters("machine.stop", map[string]any{"mode": in.Mode}); err != nil {
@@ -124,7 +126,7 @@ func (a *Adapter) MachineStop(ctx context.Context, _ *mcp.CallToolRequest, in Ma
 
 	request := daemon.CreateOperationRequest{
 		Kind:           "machine.stop",
-		Target:         in.ID,
+		Target:         target,
 		Reason:         in.Reason,
 		IdempotencyKey: in.IdempotencyKey,
 		TimeoutSeconds: int(timeout.Seconds()),
@@ -173,7 +175,8 @@ func (a *Adapter) MachineStop(ctx context.Context, _ *mcp.CallToolRequest, in Ma
 }
 
 func (a *Adapter) CheckpointCreate(ctx context.Context, _ *mcp.CallToolRequest, in CheckpointCreateInput) (*mcp.CallToolResult, CheckpointMutationResult, error) {
-	if err := a.validateMutationTarget(ctx, in.ID, in.Reason, in.IdempotencyKey); err != nil {
+	target, err := a.resolveMutationTarget(ctx, in.ID, in.Reason, in.IdempotencyKey)
+	if err != nil {
 		return mcpToolError(err), CheckpointMutationResult{}, nil
 	}
 	if err := domain.ValidateOperationParameters("checkpoint.create", map[string]any{"name": in.Name}); err != nil {
@@ -191,7 +194,7 @@ func (a *Adapter) CheckpointCreate(ctx context.Context, _ *mcp.CallToolRequest, 
 
 	request := daemon.CreateOperationRequest{
 		Kind:           "checkpoint.create",
-		Target:         in.ID,
+		Target:         target,
 		Reason:         in.Reason,
 		IdempotencyKey: in.IdempotencyKey,
 		TimeoutSeconds: int(timeout.Seconds()),
@@ -236,7 +239,8 @@ func (a *Adapter) CheckpointCreate(ctx context.Context, _ *mcp.CallToolRequest, 
 
 //nolint:dupl
 func (a *Adapter) CheckpointRestore(ctx context.Context, _ *mcp.CallToolRequest, in CheckpointRestoreInput) (*mcp.CallToolResult, MachineMutationResult, error) {
-	if err := a.validateMutationTarget(ctx, in.ID, in.Reason, in.IdempotencyKey); err != nil {
+	target, err := a.resolveMutationTarget(ctx, in.ID, in.Reason, in.IdempotencyKey)
+	if err != nil {
 		return mcpToolError(err), MachineMutationResult{}, nil
 	}
 	if err := domain.ValidateOperationParameters("checkpoint.restore", map[string]any{"checkpoint_id": in.CheckpointID}); err != nil {
@@ -254,7 +258,7 @@ func (a *Adapter) CheckpointRestore(ctx context.Context, _ *mcp.CallToolRequest,
 
 	request := daemon.CreateOperationRequest{
 		Kind:           "checkpoint.restore",
-		Target:         in.ID,
+		Target:         target,
 		Reason:         in.Reason,
 		IdempotencyKey: in.IdempotencyKey,
 		TimeoutSeconds: int(timeout.Seconds()),

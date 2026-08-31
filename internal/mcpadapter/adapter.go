@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -33,7 +34,10 @@ type Adapter struct {
 	client                          *client.Client
 	discoveryService                *app.DiscoveryService
 	recoveryService                 *app.RecoveryService
+	targetServiceMu                 sync.Mutex
 	targetService                   *app.TargetService
+	targetServiceErr                error
+	targetServiceInitialized        bool
 	allowUnscopedTestTargetFallback bool
 }
 
