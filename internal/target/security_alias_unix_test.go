@@ -51,60 +51,64 @@ func TestVerifiedDarwinVarAlias(t *testing.T) {
 }
 
 func TestValidateNoSymlinkComponentsContinuesFromVerifiedAlias(t *testing.T) {
-	t.Run("continues from canonical alias target", func(t *testing.T) {
-		seen := make([]string, 0, 3)
-		modes := map[string]os.FileMode{
-			"/var":                         os.ModeSymlink,
-			"/private/var/folders":         os.ModeDir,
-			"/private/var/folders/session": os.ModeDir,
-		}
-		err := validateNoSymlinkComponentsWith("/var/folders/session", func(path string) (os.FileMode, error) {
-			seen = append(seen, path)
-			return modes[path], nil
-		}, func(path string) (string, bool, error) {
-			if path != "/var" {
-				t.Fatalf("alias path = %q, want /var", path)
-			}
-			return "/private/var", true, nil
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got, want := strings.Join(seen, ","), "/var,/private/var/folders,/private/var/folders/session"; got != want {
-			t.Fatalf("walked %q, want %q", got, want)
-		}
-	})
+	t.Run("continues from canonical alias target", testContinuesFromCanonicalAlias)
+	t.Run("rejects later symlink after canonical alias", testRejectsLaterSymlinkAfterCanonicalAlias)
+	t.Run("rejects every unapproved symlink", testRejectsEveryUnapprovedSymlink)
+}
 
-	t.Run("rejects later symlink after canonical alias", func(t *testing.T) {
-		var seen []string
-		err := validateNoSymlinkComponentsWith("/var/folders/attacker", func(path string) (os.FileMode, error) {
-			seen = append(seen, path)
-			if path == "/var" || path == "/private/var/folders/attacker" {
-				return os.ModeSymlink, nil
-			}
-			return os.ModeDir, nil
-		}, func(path string) (string, bool, error) {
-			if path == "/var" {
-				return "/private/var", true, nil
-			}
-			return "", false, nil
-		})
-		if err == nil || !strings.Contains(err.Error(), "/private/var/folders/attacker") {
-			t.Fatalf("walk error = %v", err)
+func testContinuesFromCanonicalAlias(t *testing.T) {
+	seen := make([]string, 0, 3)
+	modes := map[string]os.FileMode{
+		"/var":                         os.ModeSymlink,
+		"/private/var/folders":         os.ModeDir,
+		"/private/var/folders/session": os.ModeDir,
+	}
+	err := validateNoSymlinkComponentsWith("/var/folders/session", func(path string) (os.FileMode, error) {
+		seen = append(seen, path)
+		return modes[path], nil
+	}, func(path string) (string, bool, error) {
+		if path != "/var" {
+			t.Fatalf("alias path = %q, want /var", path)
 		}
-		if got := seen[len(seen)-1]; got != "/private/var/folders/attacker" {
-			t.Fatalf("last checked component = %q", got)
-		}
+		return "/private/var", true, nil
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(seen, ","), "/var,/private/var/folders,/private/var/folders/session"; got != want {
+		t.Fatalf("walked %q, want %q", got, want)
+	}
+}
 
-	t.Run("rejects every unapproved symlink", func(t *testing.T) {
-		err := validateNoSymlinkComponentsWith("/tmp/link", func(string) (os.FileMode, error) {
+func testRejectsLaterSymlinkAfterCanonicalAlias(t *testing.T) {
+	var seen []string
+	err := validateNoSymlinkComponentsWith("/var/folders/attacker", func(path string) (os.FileMode, error) {
+		seen = append(seen, path)
+		if path == "/var" || path == "/private/var/folders/attacker" {
 			return os.ModeSymlink, nil
-		}, func(string) (string, bool, error) {
-			return "", false, nil
-		})
-		if err == nil || !strings.Contains(err.Error(), "is a symlink") {
-			t.Fatalf("walk error = %v", err)
 		}
+		return os.ModeDir, nil
+	}, func(path string) (string, bool, error) {
+		if path == "/var" {
+			return "/private/var", true, nil
+		}
+		return "", false, nil
 	})
+	if err == nil || !strings.Contains(err.Error(), "/private/var/folders/attacker") {
+		t.Fatalf("walk error = %v", err)
+	}
+	if got := seen[len(seen)-1]; got != "/private/var/folders/attacker" {
+		t.Fatalf("last checked component = %q", got)
+	}
+}
+
+func testRejectsEveryUnapprovedSymlink(t *testing.T) {
+	err := validateNoSymlinkComponentsWith("/tmp/link", func(string) (os.FileMode, error) {
+		return os.ModeSymlink, nil
+	}, func(string) (string, bool, error) {
+		return "", false, nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "is a symlink") {
+		t.Fatalf("walk error = %v", err)
+	}
 }
