@@ -109,6 +109,15 @@ func TestToolList(t *testing.T) {
 		"operation_show":     true,
 		"operation_wait":     true,
 		"receipt_show":       true,
+		// Session tools
+		"session_open":    true,
+		"session_read":    true,
+		"session_write":   true,
+		"session_control": true,
+		"session_wait":    true,
+		"session_list":    true,
+		"session_show":    true,
+		"session_close":   true,
 	}
 
 	foundTools := make(map[string]bool)
@@ -123,6 +132,10 @@ func TestToolList(t *testing.T) {
 		if !foundTools[exp] {
 			t.Errorf("Expected tool %s was not exposed", exp)
 		}
+	}
+
+	if len(toolsResult.Tools) != 20 {
+		t.Errorf("expected exactly 20 tools, got %d", len(toolsResult.Tools))
 	}
 }
 
@@ -225,8 +238,9 @@ func TestObserveToolsDoctor(t *testing.T) {
 	ctx := t.Context()
 	mockObs := getTestObserver()
 	a := &Adapter{
-		discoveryService: app.NewDiscoveryService(mockObs),
-		recoveryService:  app.NewRecoveryService(mockObs, nil, nil, nil, nil),
+		allowUnscopedTestTargetFallback: true,
+		discoveryService:                app.NewDiscoveryService(mockObs),
+		recoveryService:                 app.NewRecoveryService(mockObs, nil, nil, nil, nil),
 	}
 
 	resCall, doctorRes, err := a.Doctor(ctx, nil, DoctorInput{})
@@ -245,8 +259,9 @@ func TestObserveToolsMachineList(t *testing.T) {
 	ctx := t.Context()
 	mockObs := getTestObserver()
 	a := &Adapter{
-		discoveryService: app.NewDiscoveryService(mockObs),
-		recoveryService:  app.NewRecoveryService(mockObs, nil, nil, nil, nil),
+		allowUnscopedTestTargetFallback: true,
+		discoveryService:                app.NewDiscoveryService(mockObs),
+		recoveryService:                 app.NewRecoveryService(mockObs, nil, nil, nil, nil),
 	}
 
 	resCall, listRes, err := a.MachineList(ctx, nil, MachineListInput{})
@@ -265,8 +280,9 @@ func TestObserveToolsMachineInspect(t *testing.T) {
 	ctx := t.Context()
 	mockObs := getTestObserver()
 	a := &Adapter{
-		discoveryService: app.NewDiscoveryService(mockObs),
-		recoveryService:  app.NewRecoveryService(mockObs, nil, nil, nil, nil),
+		allowUnscopedTestTargetFallback: true,
+		discoveryService:                app.NewDiscoveryService(mockObs),
+		recoveryService:                 app.NewRecoveryService(mockObs, nil, nil, nil, nil),
 	}
 
 	resCall, inspectRes, err := a.MachineInspect(ctx, nil, MachineInspectInput{ID: "c4a523d4-6b99-4d62-a5e2-4752c0f20001"})
@@ -294,8 +310,9 @@ func TestObserveToolsCheckpointList(t *testing.T) {
 	ctx := t.Context()
 	mockObs := getTestObserver()
 	a := &Adapter{
-		discoveryService: app.NewDiscoveryService(mockObs),
-		recoveryService:  app.NewRecoveryService(mockObs, nil, nil, nil, nil),
+		allowUnscopedTestTargetFallback: true,
+		discoveryService:                app.NewDiscoveryService(mockObs),
+		recoveryService:                 app.NewRecoveryService(mockObs, nil, nil, nil, nil),
 	}
 
 	resCall, chkListRes, err := a.CheckpointList(ctx, nil, CheckpointListInput{ID: "c4a523d4-6b99-4d62-a5e2-4752c0f20001"})
@@ -378,7 +395,7 @@ func TestMutationAndDurableToolsMachineStart(t *testing.T) {
 	server := setupMockDaemon(t, &lastReqPath)
 
 	cl := client.New(server.URL, "mock-agent-mcp-token")
-	a := &Adapter{client: cl}
+	a := &Adapter{client: cl, allowUnscopedTestTargetFallback: true}
 
 	resCall, mutationRes, err := a.MachineStart(ctx, nil, MachineStartInput{
 		ID:             "c4a523d4-6b99-4d62-a5e2-4752c0f20001",
@@ -406,7 +423,7 @@ func TestMutationAndDurableToolsMachineStop(t *testing.T) {
 	server := setupMockDaemon(t, &lastReqPath)
 
 	cl := client.New(server.URL, "mock-agent-mcp-token")
-	a := &Adapter{client: cl}
+	a := &Adapter{client: cl, allowUnscopedTestTargetFallback: true}
 
 	_, _, err := a.MachineStop(ctx, nil, MachineStopInput{
 		ID:             "c4a523d4-6b99-4d62-a5e2-4752c0f20001",
@@ -426,7 +443,7 @@ func TestMutationAndDurableToolsCheckpointCreate(t *testing.T) {
 	server := setupMockDaemon(t, &lastReqPath)
 
 	cl := client.New(server.URL, "mock-agent-mcp-token")
-	a := &Adapter{client: cl}
+	a := &Adapter{client: cl, allowUnscopedTestTargetFallback: true}
 
 	_, _, err := a.CheckpointCreate(ctx, nil, CheckpointCreateInput{
 		ID:             "c4a523d4-6b99-4d62-a5e2-4752c0f20001",
@@ -446,7 +463,7 @@ func TestMutationAndDurableToolsCheckpointRestore(t *testing.T) {
 	server := setupMockDaemon(t, &lastReqPath)
 
 	cl := client.New(server.URL, "mock-agent-mcp-token")
-	a := &Adapter{client: cl}
+	a := &Adapter{client: cl, allowUnscopedTestTargetFallback: true}
 
 	_, _, err := a.CheckpointRestore(ctx, nil, CheckpointRestoreInput{
 		ID:             "c4a523d4-6b99-4d62-a5e2-4752c0f20001",

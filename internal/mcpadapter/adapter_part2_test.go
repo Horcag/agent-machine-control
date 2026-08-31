@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -56,17 +55,7 @@ func TestHTTPTransportAndAuth(t *testing.T) {
 	}
 	defer os.RemoveAll(tempDir)
 
-	authDir := filepath.Join(tempDir, "auth")
-	if err := os.MkdirAll(authDir, 0700); err != nil {
-		t.Fatalf("failed to create auth dir: %v", err)
-	}
-
-	// Populate the mock token file
-	agentToken := strings.Repeat("a", 64)
-	tokenPath := filepath.Join(authDir, "agent-mcp.token")
-	if err := os.WriteFile(tokenPath, []byte(agentToken+"\n"), 0600); err != nil {
-		t.Fatalf("failed to write agent token: %v", err)
-	}
+	agentToken := createTestAgentToken(t, tempDir)
 
 	// Loopback validation check
 	if err := validateLoopbackAddress("127.0.0.1:0"); err != nil {
@@ -76,34 +65,33 @@ func TestHTTPTransportAndAuth(t *testing.T) {
 		t.Errorf("Expected 8.8.8.8:80 to be rejected as loopback")
 	}
 
-	// Start streamable HTTP server
-	// We bind to a loopback address using listener to find a free port
+	// Start the streamable HTTP server on a listener the test continues to own.
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("failed to start listener: %v", err)
 	}
 	addr := listener.Addr().String()
-	listener.Close()
 
 	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-
+	ready := make(chan struct{})
+	serverDone := make(chan int, 1)
+	a := NewAdapter(tempDir)
+	server := a.BuildServer()
 	go func() {
-		Run(tempDir, addr, io.Discard, io.Discard)
+		serverDone <- runHTTPListener(ctx, server, listener, agentToken, make(chan os.Signal), ready, io.Discard)
 	}()
-
-	// Wait for server to boot
-	time.Sleep(200 * time.Millisecond)
+	<-ready
 
 	// Test 1: Unauthenticated request
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+addr+"/sse", nil)
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	resp, err := http.DefaultClient.Do(req)
-	if err == nil {
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusUnauthorized {
-			t.Errorf("Expected HTTP 401 for unauthenticated request, got %d", resp.StatusCode)
-		}
+	if err != nil {
+		t.Fatalf("unauthenticated request failed before HTTP response: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("Expected HTTP 401 for unauthenticated request, got %d", resp.StatusCode)
 	}
 
 	// Test 2: Request with Origin header (forbidden)
@@ -112,11 +100,12 @@ func TestHTTPTransportAndAuth(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+agentToken)
 	req.Header.Set("Origin", "http://malicious-site.com")
 	resp, err = http.DefaultClient.Do(req)
-	if err == nil {
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusForbidden {
-			t.Errorf("Expected HTTP 403 for request with Origin header, got %d", resp.StatusCode)
-		}
+	if err != nil {
+		t.Fatalf("origin request failed before HTTP response: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("Expected HTTP 403 for request with Origin header, got %d", resp.StatusCode)
 	}
 
 	// Test 3: Request with valid token
@@ -129,9 +118,14 @@ func TestHTTPTransportAndAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed request with valid token: %v", err)
 	}
-	defer resp.Body.Close()
+	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("Expected HTTP 200 for valid token, got %d", resp.StatusCode)
+	}
+
+	cancel()
+	if code := <-serverDone; code != 0 {
+		t.Fatalf("listener-owned HTTP server exited with code %d", code)
 	}
 
 	// Test 4: Run HTTP with a directory that exists but has no auth token file
@@ -227,8 +221,9 @@ func TestHandlersErrorPaths(t *testing.T) {
 		chkListErr: errors.New("chklist failed"),
 	}
 	a := &Adapter{
-		discoveryService: app.NewDiscoveryService(mockObs),
-		recoveryService:  app.NewRecoveryService(mockObs, nil, nil, nil, nil),
+		allowUnscopedTestTargetFallback: true,
+		discoveryService:                app.NewDiscoveryService(mockObs),
+		recoveryService:                 app.NewRecoveryService(mockObs, nil, nil, nil, nil),
 	}
 
 	// 1. Discovery/Recovery Errors
@@ -352,7 +347,7 @@ func TestHandlersClientErrors(t *testing.T) {
 	defer server.Close()
 
 	cl := client.New(server.URL, "token")
-	a := &Adapter{client: cl}
+	a := &Adapter{client: cl, allowUnscopedTestTargetFallback: true}
 
 	// Stdio/client error cases where handlers return mcpToolError
 	if res, _, _ := a.MachineStart(ctx, nil, MachineStartInput{ID: "c4a523d4-6b99-4d62-a5e2-4752c0f20001", Reason: "reason", IdempotencyKey: "key", Timeout: "30s"}); res == nil || !res.IsError {

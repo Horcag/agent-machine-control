@@ -4,9 +4,9 @@ Agent Machine Control is a local-first control plane for virtual machines that g
 CLI automation, and MCP-capable agents the same policy-enforced operations.
 
 > [!WARNING]
-> This project is pre-alpha. The current binaries implement read-only discovery; mutations,
-> daemon/MCP/session/console control are not yet implemented. Do not use unreleased
-> development builds on production systems.
+> This project is pre-alpha. Discovery, privileged recovery mutations, daemon operations, MCP,
+> and persistent SSH/PTTY sessions are implemented, but live Windows acceptance and the remaining
+> release backlog are incomplete. Do not use unreleased development builds on production systems.
 
 ## Design goals
 
@@ -21,12 +21,12 @@ Hyper-V is the first backend and Windows 10 LTSC is the first acceptance target.
 leaves room for libvirt, VMware, and VirtualBox backends without pretending that their
 capabilities are identical.
 
-## Planned executables
+## Available executables
 
 | Binary | Purpose |
 | --- | --- |
 | `amc` | Human- and agent-friendly CLI, including local `--direct` recovery mode. |
-| `amcd` | Long-lived sessions, events, policy, audit, and operator UI. |
+| `amcd` | Authenticated operations, redacted receipts, audit, and persistent sessions. |
 | `amc-mcp` | Thin stdio and Streamable HTTP adapter over the shared application core. |
 
 ## Implemented commands
@@ -38,13 +38,17 @@ capabilities are identical.
 amc doctor
 amc doctor --json
 
-# List discovered virtual machines
+# Discover candidates before an operator enrolls one local target
+amc target candidates
+amc target candidates --json
+
+# After enrollment, ordinary reads expose only that target
 amc machine list
 amc machine list --json
 
-# Inspect a single virtual machine by GUID
-amc machine inspect c4a523d4-6b99-4d62-a5e2-4752c0f20001
-amc machine inspect c4a523d4-6b99-4d62-a5e2-4752c0f20001 --json
+# Inspect the enrolled target by default, exact alias, GUID, or canonical locator
+amc machine inspect
+amc machine inspect local --json
 
 # Direct recovery mutations (in-process fallback when daemon is down)
 amc --direct machine start <guid> --reason "recovering vm" --idempotency-key "k-1"
@@ -54,13 +58,49 @@ amc --direct checkpoint create <guid> --name "pre-maintenance" --reason "snapsho
 amc --direct checkpoint restore <guid> <checkpoint-guid> --reason "reverting vm" --idempotency-key "k-4"
 ```
 
+Target enrollment and clearing are separate operator-only, approval-bound authority mutations. In
+normal mode they use `amcd`; `--direct` uses the same protected local store and coordinator:
+
+```sh
+amc target approve enroll <guid> --alias local --reason "select recovery target" \
+  --idempotency-key "target-enroll-1" --valid-for 1m
+amc target enroll <guid> --alias local --reason "select recovery target" \
+  --idempotency-key "target-enroll-1" --approval-id <approval-id> --deadline <exact-deadline>
+```
+
+Daemon-backed CLI commands and the MCP adapter expose the same application service for managed
+operations, receipts, audit records, and persistent guest SSH/PTTY sessions. See
+[Persistent SSH sessions](docs/ssh-sessions.md) for session setup, security boundaries, and the
+`session open`, `read`, `write`, `control`, `wait`, `list`, `show`, `close`, and operator-only
+`session approve` commands.
+
+Privileged daemon machine/checkpoint mutations use a server-issued reference rather than a caller
+supplied approval object. An authenticated operator can prepare the exact current operation and then
+execute it with the returned ID and deadline:
+
+```sh
+amc operation approve machine.stop <guid> --mode turn-off \
+  --reason "emergency power off" --idempotency-key "power-off-1" --valid-for 1m
+
+amc machine stop <guid> --mode turn-off --reason "emergency power off" \
+  --idempotency-key "power-off-1" --approval-id <approval-id> --deadline <exact-deadline>
+```
+
+Use `--for-mcp` during issuance to bind the grant to `agent:mcp-local`. The existing MCP mutation
+tools accept the same optional `approval_id` plus exact `deadline`; MCP exposes no issuance tool.
+Automatic daemon CLI retry after an `approval_required` result remains deferred to the target/CLI UX
+slice, so this release uses the explicit two-step flow above. Direct mode retains its independent
+local confirmation and server-owned approval store.
+
 ### JSON mode
 
 Every command supports `--json` for machine-readable automation. Output envelopes conform to schema version `1`, emitting sorted arrays for `capabilities`, `machines`, `network_adapters`, and `ip_addresses`.
 
-### VM-GUID inspect requirement
+### Enrolled-target references
 
-The `amc machine inspect <guid>` command requires a valid 36-character Hyper-V VM GUID (for example `c4a523d4-6b99-4d62-a5e2-4752c0f20001`). Non-GUID inputs or missing arguments are rejected before invoking the provider.
+Before enrollment, ordinary machine and checkpoint reads and mutations fail closed. After enrollment,
+they accept only the omitted/default target, the stored exact alias, the exact enrolled GUID, or its
+canonical `local:<guid>` locator. Display names and fuzzy matching never select a target.
 
 ### Hyper-V and PowerShell prerequisites
 
@@ -84,9 +124,24 @@ Observation and recovery operations require `powershell.exe` in `PATH`, the Wind
 | `7` | `ExitDenied` | Policy evaluation denied the operation, or interactive confirmation was rejected. |
 | `8` | `ExitConflict` | Concurrent lease conflict, fencing violation, or idempotency key collision. |
 
-### Read-only and pre-alpha boundary
+### Privileged-operation boundary
 
-All implemented operations are strictly read-only observation commands (`host.diagnostics`, `machine.list`, `machine.inspect`, `network_adapter.observe`). Mutating, interactive, console, PTY, and sidecar operations are not supported in pre-alpha builds.
+Observation and mutation operations are scope-gated. Mutations carry an actor, reason, deadline,
+and idempotency key and pass through server-owned policy, lease, audit, approval, and redacted
+receipt handling. `amc --direct` keeps an independent in-process recovery path while using the same
+application contracts and shared host coordination. Persistent SSH/PTTY sessions require `amcd`;
+they do not make guest sidecars authoritative for policy, identity, approval, or audit truth.
+
+`amcd bootstrap ensure|status|start|stop|remove` manages the single current-user S4U Limited
+Scheduled Task that starts local WSL `amcd` automatically. It fingerprints the exact principal,
+logon trigger, settings, action, wrapper, metadata, binary, state directory, and process identity;
+drift is refused rather than repaired. See [Automatic local amcd bootstrap](docs/amcd-bootstrap.md).
+
+### Current release backlog
+
+Hyper-V console framebuffer capture and synthetic input, the optional Windows UIA sidecar, the
+operator web/MCP App UI, signed packaging, and the cross-client Windows canary are not complete.
+The repository does not claim live Windows acceptance for these capabilities.
 
 ## Build the bootstrap
 
@@ -109,6 +164,7 @@ The public API and command surface are not stable before `v0.1.0`.
 - [Development guide](docs/development.md)
 - [Quality system](docs/quality.md)
 - [Testing strategy](docs/testing.md)
+- [Automatic local amcd bootstrap](docs/amcd-bootstrap.md)
 - [Autonomous and parallel agent workflow](docs/agent-workflow.md)
 - [Recommended repository settings](docs/repository-settings.md)
 - [Open-source baseline research](docs/research/open-source-baseline.md)

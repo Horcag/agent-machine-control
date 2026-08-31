@@ -11,7 +11,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Horcag/agent-machine-control/internal/statedir"
 )
@@ -31,6 +33,7 @@ type Manager struct {
 	livenessChecker  LivenessChecker
 	identityProvider IdentityProvider
 	ownerPrefix      string
+	removeFn         func(string) error
 }
 
 // Option configures Manager behavior.
@@ -64,6 +67,11 @@ func WithOwnerPrefix(prefix string) Option {
 	}
 }
 
+// WithRemoveFunc injects transition-lock cleanup removal for deterministic failure tests.
+func WithRemoveFunc(fn func(string) error) Option {
+	return func(m *Manager) { m.removeFn = fn }
+}
+
 // NewManager creates a new lease Manager for the given leases directory.
 func NewManager(dir string, opts ...Option) *Manager {
 	m := &Manager{
@@ -72,6 +80,7 @@ func NewManager(dir string, opts ...Option) *Manager {
 		livenessChecker:  &DefaultLivenessChecker{},
 		identityProvider: &DefaultIdentityProvider{},
 		ownerPrefix:      "direct",
+		removeFn:         os.Remove,
 	}
 	for _, opt := range opts {
 		opt(m)
@@ -86,23 +95,49 @@ func (m *Manager) now() time.Time {
 	return time.Now().UTC()
 }
 
-func (m *Manager) leasePath(machineID string) string {
-	return filepath.Join(m.dir, fmt.Sprintf("%s.lease.json", machineID))
+func (m *Manager) leasePath(machineID string) (string, error) {
+	return m.stateFilePath(machineID, ".lease.json")
 }
 
-func (m *Manager) genPath(machineID string) string {
-	return filepath.Join(m.dir, fmt.Sprintf("%s.gen.json", machineID))
+func (m *Manager) genPath(machineID string) (string, error) {
+	return m.stateFilePath(machineID, ".gen.json")
 }
 
-func (m *Manager) lockPath(machineID string) string {
-	return filepath.Join(m.dir, fmt.Sprintf("%s.lock", machineID))
+func (m *Manager) stateFilePath(machineID, suffix string) (string, error) {
+	filename := machineID + suffix
+	if !filepath.IsLocal(filename) || filepath.Base(filename) != filename {
+		return "", errors.New("lease: state file path escapes the leases directory")
+	}
+	return filepath.Join(m.dir, filename), nil
+}
+
+func (m *Manager) lockPath(machineID string) (string, error) {
+	if _, err := validatedStateMachineID(machineID); err != nil {
+		return "", err
+	}
+	return m.stateFilePath(machineID, ".lock")
+}
+
+func validatedStateMachineID(machineID string) (string, error) {
+	if machineID == "" {
+		return "", errors.New("lease: machineID cannot be empty")
+	}
+	if machineID == "." || machineID == ".." || strings.ContainsAny(machineID, `/\\:`) || strings.IndexFunc(machineID, unicode.IsSpace) >= 0 || strings.IndexFunc(machineID, unicode.IsControl) >= 0 {
+		return "", errors.New("lease: machineID must be a single local state path component")
+	}
+	if !filepath.IsLocal(machineID) || filepath.Base(machineID) != machineID {
+		return "", errors.New("lease: machineID must be a single local state path component")
+	}
+	return machineID, nil
 }
 
 // Acquire attempts to acquire a host-visible lease on a machine.
 func (m *Manager) Acquire(ctx context.Context, machineID string, opKind string, fingerprint string, ttl time.Duration) (*Lease, error) {
-	if machineID == "" {
-		return nil, errors.New("lease: machineID cannot be empty")
+	validatedMachineID, err := validatedStateMachineID(machineID)
+	if err != nil {
+		return nil, err
 	}
+	machineID = validatedMachineID
 	if ttl <= 0 {
 		ttl = DefaultLeaseTTL
 	}
@@ -116,7 +151,10 @@ func (m *Manager) Acquire(ctx context.Context, machineID string, opKind string, 
 
 	var acquiredLease *Lease
 	err = m.withLock(ctx, machineID, func() error {
-		path := m.leasePath(machineID)
+		path, pathErr := m.leasePath(machineID)
+		if pathErr != nil {
+			return pathErr
+		}
 		existing, err := m.readLeaseFile(path)
 		if err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("%w: %v", ErrInvalidLeaseData, err)
@@ -168,9 +206,16 @@ func (m *Manager) Release(ctx context.Context, l *Lease) error {
 	if l == nil {
 		return nil
 	}
+	validatedMachineID, err := validatedStateMachineID(l.MachineID)
+	if err != nil {
+		return err
+	}
 
-	return m.withLock(ctx, l.MachineID, func() error {
-		path := m.leasePath(l.MachineID)
+	return m.withLock(ctx, validatedMachineID, func() error {
+		path, pathErr := m.leasePath(validatedMachineID)
+		if pathErr != nil {
+			return pathErr
+		}
 		existing, err := m.readLeaseFile(path)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -184,7 +229,7 @@ func (m *Manager) Release(ctx context.Context, l *Lease) error {
 		}
 
 		now := m.now()
-		if err := m.writeGeneration(l.MachineID, existing.FencingGeneration, now); err != nil {
+		if err := m.writeGeneration(validatedMachineID, existing.FencingGeneration, now); err != nil {
 			return fmt.Errorf("lease: failed to persist generation tombstone: %w", err)
 		}
 
@@ -200,7 +245,10 @@ func (m *Manager) Release(ctx context.Context, l *Lease) error {
 }
 
 func (m *Manager) readGeneration(machineID string) (uint64, error) {
-	path := m.genPath(machineID)
+	path, err := m.genPath(machineID)
+	if err != nil {
+		return 0, err
+	}
 	fi, err := os.Lstat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -234,7 +282,10 @@ func (m *Manager) readGeneration(machineID string) (uint64, error) {
 }
 
 func (m *Manager) writeGeneration(machineID string, gen uint64, now time.Time) error {
-	path := m.genPath(machineID)
+	path, err := m.genPath(machineID)
+	if err != nil {
+		return err
+	}
 	rec := GenerationRecord{
 		SchemaVersion:  SchemaVersion,
 		MachineID:      machineID,

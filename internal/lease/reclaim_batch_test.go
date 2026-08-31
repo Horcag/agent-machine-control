@@ -2,6 +2,8 @@ package lease_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -75,5 +77,40 @@ func TestManager_ReclaimStaleLeases_Batch(t *testing.T) {
 
 	if len(reclaimed) != 1 || reclaimed[0] != m1 {
 		t.Fatalf("expected only m1 to be reclaimed, got: %v", reclaimed)
+	}
+}
+
+func TestManager_ReclaimStaleLeases_IgnoresUnsafeDerivedMachineIDs(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	validMachineID := "11111111-1111-1111-1111-111111111111"
+	unsafeMachineID := `nested\\child`
+	checker := &mockLivenessChecker{aliveMap: map[int]bool{1001: false}}
+	mgr := lease.NewManager(dir,
+		lease.WithClock(func() time.Time { return now }),
+		lease.WithIdentityProvider(&mockIdentityProvider{runtimeID: "runtime-local", pid: 1001, startTime: "100"}),
+		lease.WithLivenessChecker(checker),
+	)
+
+	if _, err := mgr.Acquire(context.Background(), validMachineID, "machine.start", "fp-1", time.Minute); err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	unsafeLeasePath := filepath.Join(dir, unsafeMachineID+".lease.json")
+	if err := os.WriteFile(unsafeLeasePath, []byte(`{}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	reclaimed, err := mgr.ReclaimStaleLeases(context.Background())
+	if err != nil {
+		t.Fatalf("ReclaimStaleLeases() error = %v", err)
+	}
+	if len(reclaimed) != 1 || reclaimed[0] != validMachineID {
+		t.Fatalf("ReclaimStaleLeases() = %v, want [%s]", reclaimed, validMachineID)
+	}
+	if _, err := os.Stat(unsafeLeasePath); err != nil {
+		t.Fatalf("unsafe lease fixture = %v, want unchanged", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, unsafeMachineID+".lock")); !os.IsNotExist(err) {
+		t.Fatalf("unsafe machine ID created a transition lock: %v", err)
 	}
 }

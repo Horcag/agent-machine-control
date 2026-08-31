@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"time"
 )
@@ -16,6 +18,15 @@ func (id ReceiptID) String() string {
 // Validate checks that the ReceiptID is a valid canonical identifier.
 func (id ReceiptID) Validate() error {
 	return ValidateReceiptID(string(id))
+}
+
+// GenerateReceiptID creates a new canonical ReceiptID (rcpt-<32 hex chars>).
+func GenerateReceiptID() (ReceiptID, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to generate receipt id: %w", err)
+	}
+	return ReceiptID(fmt.Sprintf("rcpt-%s", hex.EncodeToString(b))), nil
 }
 
 // ObservationType distinguishes verified direct observations from inferred assertions.
@@ -152,15 +163,51 @@ func (r Receipt) validateHeader() error {
 }
 
 func (r Receipt) validateOutcomeFields() error {
-	if r.Outcome.Status == OutcomeDenied {
-		if err := ValidateBoundedString(r.Outcome.ErrorCategory, 1, 256, ErrInvalidReceiptID); err != nil {
-			return fmt.Errorf("invalid error category: %w", err)
+	switch r.Outcome.Status {
+	case OutcomeDenied:
+		return validateDeniedOutcome(r.Outcome)
+	case OutcomeAborted:
+		return validateAbortedOutcome(r.Outcome)
+	case OutcomeFailed:
+		return validateFailedOutcome(r.Outcome)
+	default:
+		if r.Outcome.ErrorCategory != "" || r.Outcome.ErrorMessage != "" {
+			return fmt.Errorf("%w: error category and message must be empty for non-denied outcomes", ErrInvalidReceiptID)
 		}
-		if err := ValidateBoundedString(r.Outcome.ErrorMessage, 1, 1024, ErrInvalidReceiptID); err != nil {
-			return fmt.Errorf("invalid error message: %w", err)
-		}
-	} else if r.Outcome.ErrorCategory != "" || r.Outcome.ErrorMessage != "" {
-		return fmt.Errorf("%w: error category and message must be empty for non-denied outcomes", ErrInvalidReceiptID)
+	}
+	return nil
+}
+
+func validateDeniedOutcome(outcome ExecutionOutcome) error {
+	if err := ValidateBoundedString(outcome.ErrorCategory, 1, 256, ErrInvalidReceiptID); err != nil {
+		return fmt.Errorf("invalid error category: %w", err)
+	}
+	if err := ValidateBoundedString(outcome.ErrorMessage, 1, 1024, ErrInvalidReceiptID); err != nil {
+		return fmt.Errorf("invalid error message: %w", err)
+	}
+	return nil
+}
+
+func validateAbortedOutcome(outcome ExecutionOutcome) error {
+	if outcome.ErrorCategory == "" && outcome.ErrorMessage == "" {
+		return nil
+	}
+	if outcome.ErrorCategory != FailureCategoryCallerCanceled && outcome.ErrorCategory != FailureCategoryDeadlineExceeded {
+		return fmt.Errorf("%w: aborted outcome requires canonical cancellation provenance", ErrInvalidReceiptID)
+	}
+	if err := ValidateBoundedString(outcome.ErrorMessage, 1, 1024, ErrInvalidReceiptID); err != nil {
+		return fmt.Errorf("invalid aborted outcome message: %w", err)
+	}
+	return nil
+}
+
+func validateFailedOutcome(outcome ExecutionOutcome) error {
+	if outcome.ErrorCategory == "" && outcome.ErrorMessage == "" {
+		return nil
+	}
+	message, ok := CanonicalFailureMessage(outcome.ErrorCategory)
+	if !ok || outcome.ErrorMessage != message {
+		return fmt.Errorf("%w: failed outcome requires canonical failure provenance", ErrInvalidReceiptID)
 	}
 	return nil
 }

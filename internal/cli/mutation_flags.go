@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Horcag/agent-machine-control/internal/daemon"
 	"github.com/Horcag/agent-machine-control/internal/domain"
 )
 
@@ -21,6 +22,8 @@ type CommonFlags struct {
 	IdempotencyKey string
 	Timeout        time.Duration
 	Approval       *domain.Approval
+	ApprovalID     string
+	Deadline       time.Time
 	JSON           bool
 	Async          bool
 }
@@ -70,12 +73,40 @@ var knownValueFlags = map[string]bool{
 	"-idempotency-key":  true,
 	"--timeout":         true,
 	"-timeout":          true,
+	"--valid-for":       true,
+	"-valid-for":        true,
 	"--mode":            true,
 	"-mode":             true,
 	"--name":            true,
 	"-name":             true,
 	"--state-dir":       true,
 	"-state-dir":        true,
+	"--approval-file":   true,
+	"-approval-file":    true,
+	"--approval-id":     true,
+	"-approval-id":      true,
+	"--deadline":        true,
+	"-deadline":         true,
+	"--term":            true,
+	"-term":             true,
+	"--cols":            true,
+	"-cols":             true,
+	"--rows":            true,
+	"-rows":             true,
+	"--data":            true,
+	"-data":             true,
+	"--after-seq":       true,
+	"-after-seq":        true,
+	"--limit":           true,
+	"-limit":            true,
+	"--settle-ms":       true,
+	"-settle-ms":        true,
+	"--regex":           true,
+	"-regex":            true,
+	"--machine":         true,
+	"-machine":          true,
+	"--alias":           true,
+	"-alias":            true,
 }
 
 func splitPositionalAndFlags(args []string) ([]string, []string) {
@@ -102,6 +133,8 @@ func parseCommonFlags(fs *flag.FlagSet, args []string, stderr io.Writer, opName 
 	timeoutStr := fs.String("timeout", "30s", "maximum operation duration (e.g. 30s, 1m)")
 	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON output")
 	asyncFlag := fs.Bool("async", false, "return operation handle immediately without waiting")
+	approvalID := fs.String("approval-id", "", "server-issued approval reference")
+	deadlineText := fs.String("deadline", "", "exact deadline returned with --approval-id")
 	_ = fs.String("state-dir", "", "state directory path")
 
 	if err := fs.Parse(args); err != nil {
@@ -131,15 +164,51 @@ func parseCommonFlags(fs *flag.FlagSet, args []string, stderr io.Writer, opName 
 		fmt.Fprintf(stderr, "amc %s: invalid --timeout %q\n", opName, *timeoutStr)
 		return nil, errors.New("invalid --timeout")
 	}
+	var deadline time.Time
+	if *approvalID != "" || *deadlineText != "" {
+		if *approvalID == "" || *deadlineText == "" {
+			fmt.Fprintf(stderr, "amc %s: --approval-id and --deadline must be provided together\n", opName)
+			return nil, errors.New("incomplete approval reference")
+		}
+		if err := domain.ValidateApprovalID(*approvalID); err != nil {
+			fmt.Fprintf(stderr, "amc %s: invalid --approval-id\n", opName)
+			return nil, err
+		}
+		deadline, err = time.Parse(time.RFC3339Nano, *deadlineText)
+		if err != nil || deadline.UTC().Format(time.RFC3339Nano) != *deadlineText {
+			fmt.Fprintf(stderr, "amc %s: invalid --deadline; use the exact UTC value returned by approval issuance\n", opName)
+			return nil, errors.New("invalid approval deadline")
+		}
+	}
 
 	return &CommonFlags{
 		Reason:         *reason,
 		IdempotencyKey: *idempotencyKey,
 		Timeout:        timeout,
 		Approval:       nil,
+		ApprovalID:     *approvalID,
+		Deadline:       deadline,
 		JSON:           *jsonOutput,
 		Async:          *asyncFlag,
 	}, nil
+}
+
+func applyDaemonApprovalReference(req *daemon.CreateOperationRequest, common *CommonFlags) {
+	if req == nil || common == nil || common.ApprovalID == "" {
+		return
+	}
+	req.TimeoutSeconds = 0
+	req.ApprovalID = common.ApprovalID
+	deadline := common.Deadline
+	req.Deadline = &deadline
+}
+
+func rejectDirectApprovalReference(common *CommonFlags, stderr io.Writer, opName string) bool {
+	if common == nil || common.ApprovalID == "" {
+		return false
+	}
+	fmt.Fprintf(stderr, "amc %s: --approval-id execution requires daemon mode\n", opName)
+	return true
 }
 
 func promptForApproval(

@@ -30,7 +30,10 @@ type Manager struct {
 
 	closing      atomic.Bool
 	liveOpsCount atomic.Int64
+	capacity     chan struct{}
 	wg           sync.WaitGroup
+	drainOnce    sync.Once
+	drained      chan struct{}
 
 	mu                 sync.Mutex
 	inFlight           map[string]*inFlightEntry // keyed globally by IdempotencyKey
@@ -67,6 +70,8 @@ func NewManager(
 		inFlight:           make(map[string]*inFlightEntry),
 		liveCancels:        make(map[string]context.CancelCauseFunc),
 		finalizationErrors: make(map[string]error),
+		capacity:           make(chan struct{}, 100),
+		drained:            make(chan struct{}),
 	}
 	for _, opt := range opts {
 		opt(m)
@@ -93,15 +98,23 @@ func validateSubmission(op domain.Operation) (domain.Fingerprint, error) {
 
 // Submit submits an operation for execution. Exact in-flight or completed retries are attached/returned.
 func (m *Manager) Submit(ctx context.Context, op domain.Operation, timeout time.Duration) (*domain.OperationRecord, bool, error) {
+	return m.submit(ctx, op, timeout, "", nil)
+}
+
+// SubmitWithApprovalReference submits an operation and resolves authority only after exact retries are checked.
+func (m *Manager) SubmitWithApprovalReference(ctx context.Context, op domain.Operation, timeout time.Duration, approvalID string, resolver ApprovalResolver) (*domain.OperationRecord, bool, error) {
+	return m.submit(ctx, op, timeout, domain.ApprovalID(approvalID), resolver)
+}
+
+func (m *Manager) submit(ctx context.Context, op domain.Operation, timeout time.Duration, approvalID domain.ApprovalID, resolver ApprovalResolver) (*domain.OperationRecord, bool, error) {
 	if m.closing.Load() {
 		return nil, false, ErrManagerShuttingDown
 	}
-	if m.liveOpsCount.Load() >= 100 {
-		return nil, false, ErrManagerBusy
-	}
-
 	fp, err := validateSubmission(op)
 	if err != nil {
+		return nil, false, err
+	}
+	if err := validateApprovalResolver(approvalID, resolver); err != nil {
 		return nil, false, err
 	}
 
@@ -111,41 +124,83 @@ func (m *Manager) Submit(ctx context.Context, op domain.Operation, timeout time.
 	if m.closing.Load() {
 		return nil, false, ErrManagerShuttingDown
 	}
-	if m.liveOpsCount.Load() >= 100 {
+	// 1. Check in-flight and on-disk idempotency
+	if op.IdempotencyKey != "" {
+		if rec, found, matchErr := m.checkInFlightAndDisk(op, fp, approvalID); found || matchErr != nil {
+			return rec, found, matchErr
+		}
+		if rec, found, matchErr := m.checkCachedReceipt(op, approvalID); found || matchErr != nil {
+			return rec, found, matchErr
+		}
+	}
+	if !m.reserveCapacity() {
 		return nil, false, ErrManagerBusy
 	}
 
-	// 1. Check in-flight and on-disk idempotency
-	if op.IdempotencyKey != "" {
-		if rec, found, matchErr := m.checkInFlightAndDisk(op, fp); found || matchErr != nil {
-			return rec, found, matchErr
-		}
-		if rec, found, matchErr := m.checkCachedReceipt(op); found || matchErr != nil {
-			return rec, found, matchErr
-		}
+	resolvedApproval, approvalErr, fatalErr := resolveSubmissionApproval(ctx, approvalID, resolver)
+	if fatalErr != nil {
+		<-m.capacity
+		return nil, false, fatalErr
 	}
 
-	rec, execCtx, err := m.initializeNewRecord(ctx, op, fp)
+	rec, execCtx, stopDeadline, err := m.initializeNewRecord(ctx, op, fp, approvalID)
 	if err != nil {
+		<-m.capacity
 		return nil, false, err
 	}
 
 	// Launch async execution
 	returnCopy := rec.Clone()
-	go m.executeOperation(execCtx, returnCopy, op, timeout)
+	go m.executeOperation(execCtx, stopDeadline, returnCopy, op, timeout, resolvedApproval, approvalErr)
 
 	return &returnCopy, false, nil
 }
 
-func (m *Manager) initializeNewRecord(ctx context.Context, op domain.Operation, fp domain.Fingerprint) (*domain.OperationRecord, context.Context, error) {
+func validateApprovalResolver(approvalID domain.ApprovalID, resolver ApprovalResolver) error {
+	if approvalID == "" {
+		return nil
+	}
+	if err := approvalID.Validate(); err != nil {
+		return err
+	}
+	if resolver == nil {
+		return domain.ErrInvalidApprovalRecord
+	}
+	return nil
+}
+
+func (m *Manager) reserveCapacity() bool {
+	select {
+	case m.capacity <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func resolveSubmissionApproval(ctx context.Context, approvalID domain.ApprovalID, resolver ApprovalResolver) (*domain.Approval, error, error) {
+	if approvalID == "" {
+		return nil, nil, nil
+	}
+	resolved, resolutionErr := resolver(ctx)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, nil, ctxErr
+	}
+	if resolved != nil && resolved.ID != approvalID {
+		return nil, app.ErrInvalidOperationApprovalReference, nil
+	}
+	return resolved, resolutionErr, nil
+}
+
+func (m *Manager) initializeNewRecord(ctx context.Context, op domain.Operation, fp domain.Fingerprint, approvalID domain.ApprovalID) (*domain.OperationRecord, context.Context, context.CancelFunc, error) {
 	opID, err := generateOpID()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	idFp, err := domain.ComputeIdempotencyFingerprint(op)
 	if err != nil {
-		return nil, nil, fmt.Errorf("operations: failed to compute idempotency fingerprint: %w", err)
+		return nil, nil, nil, fmt.Errorf("operations: failed to compute idempotency fingerprint: %w", err)
 	}
 
 	now := m.now()
@@ -160,6 +215,7 @@ func (m *Manager) initializeNewRecord(ctx context.Context, op domain.Operation, 
 		Fingerprint:            fp,
 		IdempotencyFingerprint: idFp,
 		IdempotencyKey:         op.IdempotencyKey,
+		ApprovalID:             approvalID,
 		Deadline:               op.Deadline,
 		State:                  domain.OpStatePending,
 		CreatedAt:              now,
@@ -167,7 +223,7 @@ func (m *Manager) initializeNewRecord(ctx context.Context, op domain.Operation, 
 	}
 
 	if err := SaveRecord(m.dir, *rec); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	if m.eventHub != nil {
@@ -178,11 +234,16 @@ func (m *Manager) initializeNewRecord(ctx context.Context, op domain.Operation, 
 			State:       domain.OpStatePending,
 		}); err != nil {
 			_ = os.Remove(filepath.Join(m.dir, fmt.Sprintf("%s.json", opID)))
-			return nil, nil, fmt.Errorf("operations: failed to publish initial pending event: %w", err)
+			return nil, nil, nil, fmt.Errorf("operations: failed to publish initial pending event: %w", err)
 		}
 	}
 
-	execCtx, cancelFunc := context.WithCancelCause(context.Background())
+	executionDeadline := op.Deadline
+	if approvalID != "" && !executionDeadline.After(now) {
+		executionDeadline = now.Add(5 * time.Second)
+	}
+	deadlineCtx, stopDeadline := context.WithDeadlineCause(context.Background(), executionDeadline, context.DeadlineExceeded)
+	execCtx, cancelFunc := context.WithCancelCause(deadlineCtx)
 	m.liveCancels[opID] = cancelFunc
 
 	if op.IdempotencyKey != "" {
@@ -193,6 +254,7 @@ func (m *Manager) initializeNewRecord(ctx context.Context, op domain.Operation, 
 			target:                 op.Target,
 			kind:                   op.Kind,
 			actor:                  op.Actor.EffectiveActor,
+			approvalID:             approvalID,
 			record:                 rec,
 		}
 	}
@@ -200,7 +262,7 @@ func (m *Manager) initializeNewRecord(ctx context.Context, op domain.Operation, 
 	m.liveOpsCount.Add(1)
 	m.wg.Add(1)
 
-	return rec, execCtx, nil
+	return rec, execCtx, stopDeadline, nil
 }
 
 func isOperator(caller domain.ActorContext) bool {
@@ -219,15 +281,16 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	}
 	m.mu.Unlock()
 
-	done := make(chan struct{})
-	go func() {
-		m.wg.Wait()
-		close(done)
-	}()
+	m.drainOnce.Do(func() {
+		go func() {
+			m.wg.Wait()
+			close(m.drained)
+		}()
+	})
 
 	var errs []error
 	select {
-	case <-done:
+	case <-m.drained:
 	case <-ctx.Done():
 		errs = append(errs, fmt.Errorf("operations: shutdown timed out waiting for %d live operations: %w", m.liveOpsCount.Load(), ctx.Err()))
 	}
@@ -239,6 +302,12 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	m.mu.Unlock()
 
 	return errors.Join(errs...)
+}
+
+// Drained reports whether every admitted operation has finished execution and finalization.
+// Terminal finalization errors remain reportable but do not represent live owned work.
+func (m *Manager) Drained() bool {
+	return m == nil || m.liveOpsCount.Load() == 0
 }
 
 // Get returns the operation record for a given ID, checking permissions and in-memory freshness.
@@ -368,14 +437,13 @@ func matchIdempotency(actual, recFp, opFp, opIDFp domain.Fingerprint) bool {
 	return actual == opIDFp
 }
 
-func (m *Manager) checkInFlightAndDisk(op domain.Operation, fp domain.Fingerprint) (*domain.OperationRecord, bool, error) {
+func (m *Manager) checkInFlightAndDisk(op domain.Operation, fp domain.Fingerprint, approvalID domain.ApprovalID) (*domain.OperationRecord, bool, error) {
 	idFp, err := domain.ComputeIdempotencyFingerprint(op)
 	if err != nil {
 		return nil, false, err
 	}
 	if existing, ok := m.inFlight[op.IdempotencyKey]; ok {
-		if matchIdempotency(existing.idempotencyFingerprint, existing.fingerprint, fp, idFp) &&
-			existing.target == op.Target && existing.kind == op.Kind && existing.actor == op.Actor.EffectiveActor {
+		if inFlightMatches(existing, op, fp, idFp, approvalID) {
 			recCopy := existing.record.Clone()
 			return &recCopy, true, nil
 		}
@@ -389,8 +457,7 @@ func (m *Manager) checkInFlightAndDisk(op domain.Operation, fp domain.Fingerprin
 
 	for _, rec := range existingRecords {
 		if rec.IdempotencyKey == op.IdempotencyKey {
-			if matchIdempotency(rec.IdempotencyFingerprint, rec.Fingerprint, fp, idFp) &&
-				rec.Target == op.Target && rec.Kind == op.Kind && rec.Actor == op.Actor.EffectiveActor {
+			if operationRecordMatches(rec, op, fp, idFp, approvalID) {
 				recCopy := rec.Clone()
 				return &recCopy, true, nil
 			}
@@ -398,6 +465,16 @@ func (m *Manager) checkInFlightAndDisk(op domain.Operation, fp domain.Fingerprin
 		}
 	}
 	return nil, false, nil
+}
+
+func inFlightMatches(existing *inFlightEntry, op domain.Operation, fp, idFp domain.Fingerprint, approvalID domain.ApprovalID) bool {
+	return matchIdempotency(existing.idempotencyFingerprint, existing.fingerprint, fp, idFp) &&
+		existing.target == op.Target && existing.kind == op.Kind && existing.actor == op.Actor.EffectiveActor && existing.approvalID == approvalID
+}
+
+func operationRecordMatches(rec domain.OperationRecord, op domain.Operation, fp, idFp domain.Fingerprint, approvalID domain.ApprovalID) bool {
+	return matchIdempotency(rec.IdempotencyFingerprint, rec.Fingerprint, fp, idFp) &&
+		rec.Target == op.Target && rec.Kind == op.Kind && rec.Actor == op.Actor.EffectiveActor && rec.ApprovalID == approvalID
 }
 
 func generateOpID() (string, error) {

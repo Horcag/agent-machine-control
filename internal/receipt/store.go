@@ -1,12 +1,13 @@
 package receipt
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +22,9 @@ var (
 
 	// ErrReceiptNotFound indicates no receipt matches the requested ID.
 	ErrReceiptNotFound = errors.New("receipt: receipt not found")
+
+	// ErrReceiptCollision indicates an existing receipt ID contains different immutable data.
+	ErrReceiptCollision = errors.New("receipt: receipt ID collision with different terminal record")
 )
 
 // DTO is the on-disk and machine-readable JSON representation of a domain.Receipt.
@@ -124,6 +128,11 @@ func ConvertFromDTO(dto DTO) (domain.Receipt, error) {
 // Option configures Store dependencies.
 type Option func(*Store)
 
+// WithSaveHook injects a pre-save failure hook for deterministic durability tests.
+func WithSaveHook(fn func(domain.Receipt) error) Option {
+	return func(s *Store) { s.saveHook = fn }
+}
+
 // WithSyncDir configures a custom directory sync function on Store.
 func WithSyncDir(fn func(dir string) error) Option {
 	return func(s *Store) {
@@ -133,9 +142,22 @@ func WithSyncDir(fn func(dir string) error) Option {
 
 // Store manages persistence and idempotency retrieval of domain.Receipt records.
 type Store struct {
-	dir       string
-	syncDirFn func(dir string) error
-	mu        sync.RWMutex
+	dir        string
+	syncDirFn  func(dir string) error
+	saveHook   func(domain.Receipt) error
+	ensureHook func(context.Context, domain.Receipt) error
+	lookupHook func(context.Context) error
+	mu         sync.RWMutex
+}
+
+// WithLookupHook injects a context-aware lookup boundary for deterministic deadline tests.
+func WithLookupHook(fn func(context.Context) error) Option {
+	return func(s *Store) { s.lookupHook = fn }
+}
+
+// WithEnsureHook injects a context-aware pre-save boundary for deterministic deadline tests.
+func WithEnsureHook(fn func(context.Context, domain.Receipt) error) Option {
+	return func(s *Store) { s.ensureHook = fn }
 }
 
 // NewStore creates a new Receipt Store for the given receipts directory.
@@ -158,7 +180,11 @@ func (s *Store) Save(r domain.Receipt) error {
 	if err := r.Validate(); err != nil {
 		return fmt.Errorf("receipt: cannot save invalid receipt: %w", err)
 	}
-
+	if s.saveHook != nil {
+		if err := s.saveHook(r); err != nil {
+			return err
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -192,10 +218,137 @@ func (s *Store) Save(r domain.Receipt) error {
 		syncFn = statedir.SyncDir
 	}
 	if err := syncFn(s.dir); err != nil {
-		return fmt.Errorf("receipt: failed to sync directory %q: %w", s.dir, err)
+		return fmt.Errorf("receipt: receipt committed but failed to sync directory %q: %w", s.dir, err)
 	}
 
 	return nil
+}
+
+// Ensure idempotently persists the exact receipt and rejects conflicting reuse of its ID.
+func (s *Store) Ensure(r domain.Receipt) error {
+	return s.EnsureContext(context.Background(), r)
+}
+
+// EnsureContext idempotently persists the exact receipt within the caller's deadline.
+func (s *Store) EnsureContext(ctx context.Context, r domain.Receipt) error {
+	if err := r.Validate(); err != nil {
+		return fmt.Errorf("receipt: cannot ensure invalid receipt: %w", err)
+	}
+	if err := lockReceiptStoreContext(ctx, &s.mu); err != nil {
+		return err
+	}
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	finalPath := filepath.Join(s.dir, fmt.Sprintf("%s.json", r.ReceiptID))
+	found, err := s.exactReceiptExistsContext(ctx, finalPath, r)
+	if err != nil || found {
+		return err
+	}
+	if err := s.runEnsureHooksContext(ctx, r); err != nil {
+		return err
+	}
+	return s.persistEnsuredReceiptContext(ctx, finalPath, r)
+}
+
+func (s *Store) exactReceiptExistsContext(ctx context.Context, finalPath string, receipt domain.Receipt) (bool, error) {
+	existing, err := s.readReceiptFileContext(ctx, finalPath)
+	if err == nil {
+		if reflect.DeepEqual(ConvertToDTO(*existing), ConvertToDTO(receipt)) {
+			return true, nil
+		}
+		return false, ErrReceiptCollision
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
+}
+
+func (s *Store) runEnsureHooksContext(ctx context.Context, receipt domain.Receipt) error {
+	if s.ensureHook != nil {
+		if err := s.ensureHook(ctx, receipt); err != nil {
+			return err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.saveHook != nil {
+		if err := s.saveHook(receipt); err != nil {
+			return err
+		}
+	}
+	return ctx.Err()
+}
+
+func (s *Store) persistEnsuredReceiptContext(ctx context.Context, finalPath string, receipt domain.Receipt) error {
+	data, err := json.MarshalIndent(ConvertToDTO(receipt), "", "  ")
+	if err != nil {
+		return fmt.Errorf("receipt: failed to marshal receipt: %w", err)
+	}
+	tmpPath := filepath.Join(s.dir, fmt.Sprintf("%s.tmp.%d", receipt.ReceiptID, time.Now().UnixNano()))
+	if err := s.writeReceiptTempContext(ctx, tmpPath, data); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("receipt: failed to write receipt temp file: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Rename(tmpPath, finalPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("receipt: failed to commit receipt file: %w", err)
+	}
+	syncFn := s.syncDirFn
+	if syncFn == nil {
+		syncFn = statedir.SyncDir
+	}
+	if err := syncFn(s.dir); err != nil {
+		return fmt.Errorf("receipt: receipt committed but failed to sync directory %q: %w", s.dir, err)
+	}
+	return nil
+}
+
+func lockReceiptStoreContext(ctx context.Context, mu *sync.RWMutex) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if mu.TryLock() {
+			return nil
+		}
+		timer := time.NewTimer(time.Millisecond)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func (s *Store) writeReceiptTempContext(ctx context.Context, tmpPath string, data []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	if _, err = f.Write(data); err == nil {
+		err = ctx.Err()
+	}
+	if err == nil {
+		err = f.Sync()
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	return err
 }
 
 func (s *Store) writeReceiptTemp(tmpPath string, data []byte) error {
@@ -220,8 +373,30 @@ func (s *Store) writeReceiptTemp(tmpPath string, data []byte) error {
 // - (nil, nil) if no prior record with this key exists.
 // - (nil, ErrIdempotencyCollision) if the key exists but actor, target, or parameters differ.
 func (s *Store) LookupIdempotency(op domain.Operation) (*domain.Receipt, error) {
+	return s.LookupIdempotencyContext(context.Background(), op)
+}
+
+// LookupIdempotencyContext checks prior executions within the caller's deadline.
+func (s *Store) LookupIdempotencyContext(ctx context.Context, op domain.Operation) (*domain.Receipt, error) {
 	if op.IdempotencyKey == "" {
 		return nil, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := validateReceiptRoot(s.dir); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if s.lookupHook != nil {
+		if err := s.lookupHook(ctx); err != nil {
+			return nil, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	fp, err := op.Fingerprint()
@@ -239,14 +414,24 @@ func (s *Store) LookupIdempotency(op domain.Operation) (*domain.Receipt, error) 
 		}
 		return nil, fmt.Errorf("receipt: failed to read receipts directory: %w", err)
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
+	return s.findIdempotentReceipt(ctx, entries, op, fp)
+}
+
+func (s *Store) findIdempotentReceipt(ctx context.Context, entries []os.DirEntry, op domain.Operation, fp domain.Fingerprint) (*domain.Receipt, error) {
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") || strings.Contains(entry.Name(), ".tmp.") {
 			continue
 		}
 
 		filePath := filepath.Join(s.dir, entry.Name())
-		matched, rcpt, err := s.inspectReceiptFile(filePath, op, fp)
+		matched, rcpt, err := s.inspectReceiptFileContext(ctx, filePath, op, fp)
 		if err != nil {
 			return nil, err
 		}
@@ -254,7 +439,6 @@ func (s *Store) LookupIdempotency(op domain.Operation) (*domain.Receipt, error) 
 			return rcpt, nil
 		}
 	}
-
 	return nil, nil
 }
 
@@ -278,61 +462,24 @@ func matchReceipt(rcpt domain.Receipt, op domain.Operation, fp domain.Fingerprin
 	return true, nil
 }
 
-func (s *Store) inspectReceiptFile(filePath string, op domain.Operation, fp domain.Fingerprint) (bool, *domain.Receipt, error) {
-	fi, err := os.Lstat(filePath)
+func (s *Store) inspectReceiptFileContext(ctx context.Context, filePath string, op domain.Operation, fp domain.Fingerprint) (bool, *domain.Receipt, error) {
+	receipt, err := s.readReceiptFileContext(ctx, filePath)
+	if os.IsNotExist(err) {
+		return false, nil, nil
+	}
 	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil, nil
-		}
-		return false, nil, fmt.Errorf("receipt: failed to stat receipt file %s: %w", filePath, err)
+		return false, nil, err
 	}
-
-	if fi.Mode()&os.ModeSymlink != 0 {
-		return false, nil, fmt.Errorf("receipt: symlink detected for receipt file %s", filePath)
-	}
-
-	if fi.Size() > MaxReceiptFileSize {
-		return false, nil, fmt.Errorf("receipt: receipt file %s exceeds maximum size limit (%d bytes)", filePath, fi.Size())
-	}
-
-	file, err := os.Open(filePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil, nil
-		}
-		return false, nil, fmt.Errorf("receipt: failed to open receipt file %s: %w", filePath, err)
-	}
-	defer file.Close()
-
-	var dto DTO
-	dec := json.NewDecoder(io.LimitReader(file, MaxReceiptFileSize+1))
-	dec.DisallowUnknownFields()
-
-	if err := dec.Decode(&dto); err != nil {
-		return false, nil, fmt.Errorf("receipt: corrupt receipt record in %s: %w", filePath, err)
-	}
-
-	var trailing any
-	if err := dec.Decode(&trailing); err != io.EOF {
-		return false, nil, fmt.Errorf("receipt: trailing data in receipt file %s", filePath)
-	}
-
-	receipt, err := ConvertFromDTO(dto)
-	if err != nil {
-		return false, nil, fmt.Errorf("receipt: invalid cached receipt structure in %s: %w", filePath, err)
-	}
-
-	if err := receipt.Validate(); err != nil {
-		return false, nil, fmt.Errorf("receipt: cached receipt validation failed in %s: %w", filePath, err)
-	}
-
-	matched, err := matchReceipt(receipt, op, fp)
+	matched, err := matchReceipt(*receipt, op, fp)
 	if err != nil {
 		return false, nil, err
 	}
 	if !matched {
 		return false, nil, nil
 	}
+	if err := ctx.Err(); err != nil {
+		return false, nil, err
+	}
 
-	return true, &receipt, nil
+	return true, receipt, nil
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,43 +13,77 @@ import (
 )
 
 func (m *Manager) withLock(ctx context.Context, machineID string, fn func() error) error {
-	lockDir := m.lockPath(machineID)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	lockDir, err := m.lockPath(machineID)
+	if err != nil {
+		return err
+	}
 	ownerPath := filepath.Join(lockDir, "owner.json")
 	runtimeID, pid, startTime := m.identityProvider.CurrentIdentity()
 	now := m.now()
+	if err := m.acquireTransitionLock(ctx, lockDir, ownerPath, runtimeID, pid, startTime, now); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return errors.Join(err, m.releaseLock(ownerPath, lockDir, runtimeID, pid, startTime, now))
+	}
+	operationErr := fn()
+	cleanupErr := m.releaseLock(ownerPath, lockDir, runtimeID, pid, startTime, now)
+	return errors.Join(operationErr, cleanupErr)
+}
 
+func (m *Manager) acquireTransitionLock(ctx context.Context, lockDir, ownerPath, runtimeID string, pid int, startTime string, now time.Time) error {
 	deadline := time.Now().Add(5 * time.Second)
 	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
 		deadline = ctxDeadline
 	}
-
 	for {
-		if err := os.Mkdir(lockDir, 0700); err == nil {
-			if recErr := m.recordLockOwner(ownerPath, runtimeID, pid, startTime, now); recErr != nil {
-				_ = os.Remove(ownerPath)
-				_ = os.Remove(lockDir)
-				return recErr
-			}
-			defer m.releaseLock(ownerPath, lockDir, runtimeID, pid, startTime, now)
-			return fn()
-		} else if !os.IsExist(err) {
-			return fmt.Errorf("failed to create lock directory %q: %w", lockDir, err)
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-
-		if m.tryReclaimDeadLock(ownerPath, lockDir, runtimeID) {
+		created, err := m.tryCreateTransitionLock(ctx, lockDir, ownerPath, runtimeID, pid, startTime, now)
+		if err != nil {
+			return err
+		}
+		if created {
+			return nil
+		}
+		reclaimed, reclaimErr := m.tryReclaimDeadLock(ownerPath, lockDir, runtimeID)
+		if reclaimErr != nil {
+			return reclaimErr
+		}
+		if reclaimed {
 			continue
 		}
-
 		if time.Now().After(deadline) || ctx.Err() != nil {
 			return fmt.Errorf("timed out waiting for lease transition lock: %w", ErrLeaseConflict)
 		}
-
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
+}
+
+func (m *Manager) tryCreateTransitionLock(ctx context.Context, lockDir, ownerPath, runtimeID string, pid int, startTime string, now time.Time) (bool, error) {
+	created, err := createTransitionLockDir(lockDir)
+	if err != nil {
+		return false, fmt.Errorf("failed to create lock directory %q: %w", lockDir, err)
+	}
+	if !created {
+		return false, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return false, errors.Join(err, m.removeOwnedPath(lockDir))
+	}
+	if err := m.recordLockOwner(ownerPath, runtimeID, pid, startTime, now); err != nil {
+		cleanupErr := errors.Join(m.removeOwnedPath(ownerPath), m.removeOwnedPath(lockDir))
+		return false, errors.Join(err, cleanupErr)
+	}
+	return true, nil
 }
 
 func (m *Manager) recordLockOwner(ownerPath, runtimeID string, pid int, startTime string, now time.Time) error {
@@ -79,54 +114,75 @@ func (m *Manager) recordLockOwner(ownerPath, runtimeID string, pid int, startTim
 	return f.Close()
 }
 
-func (m *Manager) tryReclaimDeadLock(ownerPath, lockDir, runtimeID string) bool {
-	ownerData, err := os.ReadFile(ownerPath)
+func (m *Manager) tryReclaimDeadLock(ownerPath, lockDir, runtimeID string) (bool, error) {
+	ownerData, err := readTransitionLockOwner(ownerPath)
 	if err != nil {
-		return false
+		return false, nil
 	}
 	var ownerRec LockOwnerRecord
 	dec := json.NewDecoder(bytes.NewReader(ownerData))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&ownerRec); err != nil {
-		return false
+		return false, nil
 	}
 	var trailing any
 	if err := dec.Decode(&trailing); err != io.EOF {
-		return false
+		return false, nil
 	}
 	if ownerRec.SchemaVersion != SchemaVersion || ownerRec.RuntimeID != runtimeID || ownerRec.PID <= 0 {
-		return false
+		return false, nil
 	}
 	alive, checkErr := m.livenessChecker.IsAlive(ownerRec.PID, ownerRec.ProcessStartTime)
 	if checkErr != nil || alive {
-		return false
+		return false, nil
 	}
-	_ = os.Remove(ownerPath)
-	_ = os.Remove(lockDir)
-	return true
+	if err := m.removeOwnedPath(ownerPath); err != nil {
+		return false, fmt.Errorf("lease: failed to remove stale lock owner: %w", err)
+	}
+	if err := m.removeOwnedPath(lockDir); err != nil {
+		return false, fmt.Errorf("lease: failed to remove stale lock directory: %w", err)
+	}
+	return true, nil
 }
 
-func (m *Manager) releaseLock(ownerPath, lockDir, runtimeID string, pid int, startTime string, acquiredAt time.Time) {
-	ownerData, err := os.ReadFile(ownerPath)
+func (m *Manager) releaseLock(ownerPath, lockDir, runtimeID string, pid int, startTime string, acquiredAt time.Time) error {
+	ownerData, err := readTransitionLockOwner(ownerPath)
 	if err != nil {
-		return
+		return fmt.Errorf("lease: failed to read lock owner during release: %w", err)
 	}
 	var ownerRec LockOwnerRecord
 	dec := json.NewDecoder(bytes.NewReader(ownerData))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&ownerRec); err != nil {
-		return
+		return fmt.Errorf("lease: failed to decode lock owner during release: %w", err)
 	}
 	var trailing any
 	if err := dec.Decode(&trailing); err != io.EOF {
-		return
+		return errors.New("lease: lock owner has trailing data during release")
 	}
 	if ownerRec.SchemaVersion == SchemaVersion &&
 		ownerRec.RuntimeID == runtimeID &&
 		ownerRec.PID == pid &&
 		ownerRec.ProcessStartTime == startTime &&
 		ownerRec.AcquiredAt.Equal(acquiredAt) {
-		_ = os.Remove(ownerPath)
-		_ = os.Remove(lockDir)
+		if err := m.removeOwnedPath(ownerPath); err != nil {
+			return fmt.Errorf("lease: failed to remove lock owner: %w", err)
+		}
+		if err := m.removeOwnedPath(lockDir); err != nil {
+			return fmt.Errorf("lease: failed to remove lock directory: %w", err)
+		}
+		return nil
 	}
+	return errors.New("lease: lock ownership changed before release")
+}
+
+func (m *Manager) removeOwnedPath(path string) error {
+	removeFn := m.removeFn
+	if removeFn == nil {
+		removeFn = os.Remove
+	}
+	if err := removePathBounded(removeFn, path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }

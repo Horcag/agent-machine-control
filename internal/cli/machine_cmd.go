@@ -14,12 +14,14 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/app"
 	"github.com/Horcag/agent-machine-control/internal/backends/hyperv"
 	"github.com/Horcag/agent-machine-control/internal/domain"
+	"github.com/Horcag/agent-machine-control/internal/target"
 )
 
 func runMachine(
 	ctx context.Context,
 	discoverySvc *app.DiscoveryService,
 	recoverySvc *app.RecoveryService,
+	targetSvc *app.TargetService,
 	actor domain.ActorContext,
 	prompter Prompter,
 	nowFn func() time.Time,
@@ -35,9 +37,9 @@ func runMachine(
 
 	switch args[0] {
 	case "list":
-		return runMachineList(ctx, discoverySvc, args[1:], stdout, stderr)
+		return runMachineList(ctx, discoverySvc, targetSvc, args[1:], stdout, stderr)
 	case "inspect":
-		return runMachineInspect(ctx, discoverySvc, args[1:], stdout, stderr)
+		return runMachineInspect(ctx, discoverySvc, targetSvc, args[1:], stdout, stderr)
 	case "start":
 		return runMachineStart(ctx, recoverySvc, actor, prompter, nowFn, directMode, stateDir, args[1:], stdout, stderr)
 	case "stop":
@@ -51,7 +53,7 @@ func runMachine(
 	}
 }
 
-func runMachineList(ctx context.Context, service *app.DiscoveryService, args []string, stdout, stderr io.Writer) int {
+func runMachineList(ctx context.Context, service *app.DiscoveryService, targetSvc *app.TargetService, args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("machine list", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	jsonOutput := flags.Bool("json", false, "emit machine-readable JSON")
@@ -64,7 +66,18 @@ func runMachineList(ctx context.Context, service *app.DiscoveryService, args []s
 		return ExitUsage
 	}
 
-	machines, err := service.List(ctx)
+	var machines []domain.MachineObservation
+	var err error
+	if targetSvc == nil {
+		machines, err = service.List(ctx)
+	} else {
+		resolution, resolveErr := targetSvc.ShowDefaultTarget(ctx)
+		if resolveErr != nil {
+			return mapCLIError(resolveErr, stderr, "machine list")
+		}
+		observed, inspectErr := service.Inspect(ctx, resolution.ProviderVMID)
+		machines, err = []domain.MachineObservation{observed}, inspectErr
+	}
 	if err != nil {
 		return mapCLIError(err, stderr, "machine list")
 	}
@@ -115,7 +128,7 @@ func runMachineList(ctx context.Context, service *app.DiscoveryService, args []s
 	return ExitSuccess
 }
 
-func runMachineInspect(ctx context.Context, service *app.DiscoveryService, args []string, stdout, stderr io.Writer) int {
+func runMachineInspect(ctx context.Context, service *app.DiscoveryService, targetSvc *app.TargetService, args []string, stdout, stderr io.Writer) int {
 	var jsonOutput bool
 	var positional []string
 
@@ -131,19 +144,9 @@ func runMachineInspect(ctx context.Context, service *app.DiscoveryService, args 
 		}
 	}
 
-	if len(positional) == 0 {
-		fmt.Fprintln(stderr, "amc machine inspect: missing required machine GUID")
-		return ExitUsage
-	}
-	if len(positional) > 1 {
-		fmt.Fprintf(stderr, "amc machine inspect: unexpected argument %q\n", positional[1])
-		return ExitUsage
-	}
-
-	targetID := positional[0]
-	if err := domain.ValidateMachineGUID(targetID); err != nil {
-		fmt.Fprintf(stderr, "amc machine inspect: invalid machine GUID %q\n", targetID)
-		return ExitUsage
+	targetID, exitCode := resolveMachineInspectTarget(ctx, targetSvc, positional, stderr)
+	if exitCode != ExitSuccess {
+		return exitCode
 	}
 
 	m, err := service.Inspect(ctx, targetID)
@@ -166,6 +169,33 @@ func runMachineInspect(ctx context.Context, service *app.DiscoveryService, args 
 
 	printHumanInspect(stdout, m)
 	return ExitSuccess
+}
+
+func resolveMachineInspectTarget(ctx context.Context, targetSvc *app.TargetService, positional []string, stderr io.Writer) (string, int) {
+	if len(positional) > 1 {
+		fmt.Fprintf(stderr, "amc machine inspect: unexpected argument %q\n", positional[1])
+		return "", ExitUsage
+	}
+	reference := ""
+	if len(positional) == 1 {
+		reference = positional[0]
+	}
+	if targetSvc == nil {
+		if reference == "" {
+			fmt.Fprintln(stderr, "amc machine inspect: missing required machine GUID")
+			return "", ExitUsage
+		}
+		if domain.ValidateMachineGUID(reference) != nil {
+			fmt.Fprintf(stderr, "amc machine inspect: invalid machine GUID %q\n", reference)
+			return "", ExitUsage
+		}
+		return reference, ExitSuccess
+	}
+	resolution, err := targetSvc.ResolveTarget(ctx, reference)
+	if err != nil {
+		return "", mapCLIError(err, stderr, "machine inspect")
+	}
+	return resolution.ProviderVMID, ExitSuccess
 }
 
 func printHumanInspect(w io.Writer, m domain.MachineObservation) {
@@ -212,6 +242,30 @@ func printNetworkAdapters(w io.Writer, adapters []domain.NetworkAdapterSummary) 
 }
 
 func mapCLIError(err error, stderr io.Writer, opName string) int {
+	if code, ok := mapTargetCLIError(err, stderr, opName); ok {
+		return code
+	}
+	return mapHyperVCLIError(err, stderr, opName)
+}
+
+func mapTargetCLIError(err error, stderr io.Writer, opName string) (int, bool) {
+	if errors.Is(err, target.ErrNoDefault) {
+		fmt.Fprintf(stderr, "amc %s: no target is enrolled; enroll a local target first\n", opName)
+		return ExitConflict, true
+	}
+	if errors.Is(err, target.ErrDifferentTarget) || errors.Is(err, domain.ErrMachineReferenceMiss) {
+		fmt.Fprintf(stderr, "amc %s: machine reference does not identify the enrolled target\n", opName)
+		return ExitNotFound, true
+	}
+	if errors.Is(err, target.ErrInventoryRefresh) || errors.Is(err, domain.ErrMachineReferenceStale) ||
+		errors.Is(err, domain.ErrMachineHostUnavailable) || errors.Is(err, domain.ErrMachineAccessDenied) {
+		fmt.Fprintf(stderr, "amc %s: enrolled target inventory is unavailable\n", opName)
+		return ExitBackendUnavailable, true
+	}
+	return 0, false
+}
+
+func mapHyperVCLIError(err error, stderr io.Writer, opName string) int {
 	if errors.Is(err, hyperv.ErrMachineNotFound) {
 		fmt.Fprintf(stderr, "amc %s: machine not found\n", opName)
 		return ExitNotFound

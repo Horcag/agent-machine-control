@@ -13,6 +13,7 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/domain"
 	"github.com/Horcag/agent-machine-control/internal/events"
 	"github.com/Horcag/agent-machine-control/internal/operations"
+	"github.com/Horcag/agent-machine-control/internal/target"
 )
 
 func (s *Server) handleCreateOperation(w http.ResponseWriter, r *http.Request) {
@@ -30,21 +31,36 @@ func (s *Server) handleCreateOperation(w http.ResponseWriter, r *http.Request) {
 
 	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
 	var req CreateOperationRequest
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
+	if err := decodeStrictJSONObject(r.Body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_argument", "invalid request body")
 		return
 	}
-	var trailing any
-	if err := dec.Decode(&trailing); err != io.EOF {
-		writeError(w, http.StatusBadRequest, "invalid_argument", "trailing data in request body")
+	if err := validateCreateOperationRequestFields(req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_argument", "invalid operation request")
 		return
 	}
 
-	op, timeout := buildOperationFromRequest(req, caller, s.now())
+	op, timeout, err := buildOperationFromRequest(req, caller, s.now())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_argument", "invalid operation deadline")
+		return
+	}
+	canonicalTarget, err := s.recoveryService.ResolveTargetReference(r.Context(), req.Target)
+	if err != nil {
+		writeTargetResolutionError(w, err)
+		return
+	}
+	op.Target = canonicalTarget
 
-	rec, wasExisting, err := s.opMgr.Submit(r.Context(), op, timeout)
+	var rec *domain.OperationRecord
+	var wasExisting bool
+	if req.ApprovalID == "" {
+		rec, wasExisting, err = s.opMgr.Submit(r.Context(), op, timeout)
+	} else {
+		rec, wasExisting, err = s.opMgr.SubmitWithApprovalReference(r.Context(), op, timeout, req.ApprovalID, func(ctx context.Context) (*domain.Approval, error) {
+			return s.recoveryService.LoadOperationApprovalReference(ctx, op, req.ApprovalID)
+		})
+	}
 	if err != nil {
 		if errors.Is(err, operations.ErrOperationConflict) {
 			writeError(w, http.StatusConflict, "conflict", "idempotency key conflict")
@@ -71,6 +87,38 @@ func (s *Server) handleCreateOperation(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status, dto)
 }
 
+func validateCreateOperationRequestFields(req CreateOperationRequest) error {
+	if req.Kind == "" || req.Target == "" || req.Reason == "" || req.IdempotencyKey == "" {
+		return errors.New("operation request requires kind, target, reason, and idempotency_key")
+	}
+	if req.ApprovalID == "" {
+		return nil
+	}
+	if err := domain.ValidateApprovalID(req.ApprovalID); err != nil {
+		return err
+	}
+	if req.Deadline == nil || req.Deadline.IsZero() || req.TimeoutSeconds != 0 {
+		return domain.ErrMissingDeadline
+	}
+	if req.Deadline.UTC().Format(time.RFC3339Nano) != req.deadlineText {
+		return domain.ErrMissingDeadline
+	}
+	return nil
+}
+
+func writeTargetResolutionError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, target.ErrNoDefault):
+		writeError(w, http.StatusConflict, "target_not_enrolled", "no target is enrolled; enroll a local target first")
+	case errors.Is(err, target.ErrDifferentTarget):
+		writeError(w, http.StatusBadRequest, "target_mismatch", "target reference does not identify the enrolled target")
+	case errors.Is(err, target.ErrInventoryRefresh), errors.Is(err, domain.ErrMachineHostUnavailable), errors.Is(err, domain.ErrMachineAccessDenied):
+		writeError(w, http.StatusServiceUnavailable, "target_unavailable", "enrolled target inventory is unavailable")
+	default:
+		writeError(w, http.StatusBadRequest, "invalid_target", "target reference is invalid or stale")
+	}
+}
+
 func (s *Server) handleListOperations(w http.ResponseWriter, r *http.Request) {
 	caller, ok := getCallerContext(r.Context())
 	if !ok {
@@ -80,9 +128,14 @@ func (s *Server) handleListOperations(w http.ResponseWriter, r *http.Request) {
 
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
+	machine, err := s.normalizeOperationMachineFilter(r.Context(), q.Get("machine"))
+	if err != nil {
+		writeTargetResolutionError(w, err)
+		return
+	}
 	opts := operations.ListOptions{
 		State:   domain.OperationState(q.Get("state")),
-		Machine: domain.MachineRef(q.Get("machine")),
+		Machine: machine,
 		Limit:   limit,
 	}
 
@@ -101,6 +154,13 @@ func (s *Server) handleListOperations(w http.ResponseWriter, r *http.Request) {
 		SchemaVersion: SchemaVersion,
 		Operations:    dtos,
 	})
+}
+
+func (s *Server) normalizeOperationMachineFilter(ctx context.Context, reference string) (domain.MachineRef, error) {
+	if reference == "" {
+		return "", nil
+	}
+	return s.recoveryService.ResolveTargetReference(ctx, reference)
 }
 
 func (s *Server) handleGetOperation(w http.ResponseWriter, r *http.Request, opID string) {
@@ -265,17 +325,41 @@ func streamSSEEvents(ctx context.Context, w io.Writer, flusher http.Flusher, ch 
 	}
 }
 
-func buildOperationFromRequest(req CreateOperationRequest, caller domain.ActorContext, now time.Time) (domain.Operation, time.Duration) {
-	timeout := 30 * time.Second
-	if req.TimeoutSeconds > 0 {
+const (
+	defaultOperationTimeout = 30 * time.Second
+	maxOperationTimeout     = time.Hour
+)
+
+func resolveOperationDeadline(req CreateOperationRequest, now time.Time) (time.Time, time.Duration, error) {
+	if req.TimeoutSeconds < 0 || req.TimeoutSeconds > int(maxOperationTimeout/time.Second) {
+		return time.Time{}, 0, errors.New("operation timeout is outside the allowed range")
+	}
+	if req.TimeoutSeconds != 0 && req.Deadline != nil {
+		return time.Time{}, 0, errors.New("operation timeout and deadline are mutually exclusive")
+	}
+	if req.Deadline != nil {
+		deadline := req.Deadline.UTC()
+		remaining := deadline.Sub(now)
+		if remaining > maxOperationTimeout || (remaining <= 0 && (req.ApprovalID == "" || now.Sub(deadline) > 5*time.Minute)) {
+			return time.Time{}, 0, errors.New("operation deadline is outside the allowed range")
+		}
+		if remaining <= 0 {
+			return deadline, 5 * time.Second, nil
+		}
+		return deadline, remaining, nil
+	}
+
+	timeout := defaultOperationTimeout
+	if req.TimeoutSeconds != 0 {
 		timeout = time.Duration(req.TimeoutSeconds) * time.Second
 	}
-	deadline := now.Add(timeout)
-	if req.Deadline != nil && !req.Deadline.IsZero() {
-		deadline = req.Deadline.UTC()
-		if remaining := time.Until(deadline); remaining > 0 {
-			timeout = remaining
-		}
+	return now.Add(timeout), timeout, nil
+}
+
+func buildOperationFromRequest(req CreateOperationRequest, caller domain.ActorContext, now time.Time) (domain.Operation, time.Duration, error) {
+	deadline, timeout, err := resolveOperationDeadline(req, now)
+	if err != nil {
+		return domain.Operation{}, 0, err
 	}
 	initialClass, capStr := resolveCapabilityAndClass(req.Kind, req.Parameters)
 
@@ -292,7 +376,7 @@ func buildOperationFromRequest(req CreateOperationRequest, caller domain.ActorCo
 		EvidenceSensitivity: domain.EvidenceSensitivityStandard,
 		Parameters:          req.Parameters,
 	}
-	return op, timeout
+	return op, timeout, nil
 }
 
 func resolveCapabilityAndClass(kind string, params map[string]any) (domain.OperationClass, string) {

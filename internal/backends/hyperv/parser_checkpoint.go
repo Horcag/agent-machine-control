@@ -169,7 +169,7 @@ func convertRawCheckpoint(raw rawCheckpoint, observedAt time.Time) (domain.Check
 		Name:            raw.Name,
 		VMID:            raw.VMID,
 		ParentID:        raw.ParentID,
-		CheckpointType:  raw.CheckpointType,
+		CheckpointType:  normalizeCheckpointType(raw.CheckpointType),
 		CreatedAt:       createdAt,
 		ObservedAt:      observedAt,
 		ObservationType: domain.ObservationObserved,
@@ -180,4 +180,11 @@ func convertRawCheckpoint(raw rawCheckpoint, observedAt time.Time) (domain.Check
 	}
 
 	return obs, nil
+}
+
+func normalizeCheckpointType(checkpointType string) string {
+	if checkpointType == "Microsoft:Hyper-V:Snapshot:Missing" {
+		return ""
+	}
+	return checkpointType
 }

@@ -175,3 +175,36 @@ func TestValidation_ParamCheckpointRestore(t *testing.T) {
 		t.Errorf("expected ErrInvalidOperationKind, got %v", err)
 	}
 }
+
+func TestValidateOperationApprovalIssuanceParameters(t *testing.T) {
+	valid := map[string]any{
+		"approval_id":          "app-operation-0123456789abcdef0123456789abcdef",
+		"approved_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"approved_kind":        "machine.stop", "beneficiary": "agent:mcp-local",
+		"deadline": "2026-08-31T03:00:00Z",
+	}
+	for _, kind := range []domain.OperationKind{"operation.approval.issue", "session.approval.issue"} {
+		if err := domain.ValidateOperationParameters(kind, valid); err != nil {
+			t.Fatalf("valid %s params: %v", kind, err)
+		}
+	}
+	tests := []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "missing", mutate: func(values map[string]any) { delete(values, "deadline") }},
+		{name: "non-string", mutate: func(values map[string]any) { values["approved_kind"] = 1 }},
+		{name: "approval id", mutate: func(values map[string]any) { values["approval_id"] = "../bad" }},
+		{name: "fingerprint", mutate: func(values map[string]any) { values["approved_fingerprint"] = "bad" }},
+		{name: "kind", mutate: func(values map[string]any) { values["approved_kind"] = "" }},
+		{name: "beneficiary", mutate: func(values map[string]any) { values["beneficiary"] = "" }},
+		{name: "deadline", mutate: func(values map[string]any) { values["deadline"] = "2026-08-31T04:00:00+01:00" }},
+	}
+	for _, test := range tests {
+		values := domain.DeepCloneMap(valid)
+		test.mutate(values)
+		if err := domain.ValidateOperationParameters("operation.approval.issue", values); err == nil {
+			t.Fatalf("%s params unexpectedly valid: %+v", test.name, values)
+		}
+	}
+}

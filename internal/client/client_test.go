@@ -15,7 +15,11 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/daemon"
 	"github.com/Horcag/agent-machine-control/internal/domain"
 	"github.com/Horcag/agent-machine-control/internal/operations"
+	"github.com/Horcag/agent-machine-control/internal/statedir"
+	"github.com/Horcag/agent-machine-control/internal/target"
 )
+
+const clientTestVMID = "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
 
 type mockBackend struct{}
 
@@ -24,7 +28,13 @@ func (m *mockBackend) Doctor(_ context.Context) (app.DoctorReport, error) {
 }
 
 func (m *mockBackend) ListMachines(_ context.Context) ([]domain.MachineObservation, error) {
-	return nil, nil
+	locator, _ := domain.NewMachineLocator(domain.LocalHostID, clientTestVMID)
+	return []domain.MachineObservation{{
+		HostID: domain.LocalHostID, Locator: locator, ID: clientTestVMID, Name: "client-test-vm",
+		State: domain.MachineStateOff, RawState: "Off", Generation: 2, Version: "10.0",
+		MemoryAssignedBytes: 1024, Capabilities: domain.DirectMachineCapabilities(),
+		ObservedAt: time.Date(2026, 8, 31, 4, 0, 0, 0, time.UTC), ObservationType: domain.ObservationObserved,
+	}}, nil
 }
 
 func (m *mockBackend) InspectMachine(_ context.Context, _ string) (domain.MachineObservation, error) {
@@ -67,6 +77,22 @@ func (m *mockBackend) RestoreCheckpoint(_ context.Context, _ string, _ string) (
 
 func setupDaemon(t *testing.T) (*daemon.Server, string) {
 	dir := t.TempDir()
+	state, err := statedir.Resolve(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := target.NewStore(state.TargetsDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	locator, _ := domain.NewMachineLocator(domain.LocalHostID, clientTestVMID)
+	value, _ := target.NewDefault(locator, nil)
+	if _, err := store.Save(context.Background(), value); err != nil {
+		t.Fatal(err)
+	}
 	srv, err := daemon.NewServer(daemon.Config{
 		StateDir:   dir,
 		ListenAddr: "127.0.0.1:0",
@@ -323,5 +349,69 @@ func TestClient_Health(t *testing.T) {
 	}
 	if h.Status != "ok" {
 		t.Errorf("expected status ok, got %s", h.Status)
+	}
+}
+
+func TestClientIssueOperationApproval(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/operation-approvals" {
+			http.NotFound(w, r)
+			return
+		}
+		var request daemon.OperationApprovalIssueRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if request.Beneficiary != "agent:mcp-local" || request.Parameters["mode"] != "turn-off" {
+			t.Fatalf("request = %+v", request)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"schema_version":"1","approval_id":"app-operation-0123456789abcdef0123456789abcdef","deadline":"2026-08-31T03:00:00Z","expires_at":"2026-08-31T03:00:00Z","operation":{"kind":"machine.stop","target":"local:c4a523d4-6b99-4d62-a5e2-4752c0f20001","reason":"typed client issuance","idempotency_key":"typed-client-issuance","parameters":{"mode":"turn-off"}}}`))
+	}))
+	defer server.Close()
+
+	cl := client.New(server.URL, strings.Repeat("a", 64))
+	grant, err := cl.IssueOperationApproval(context.Background(), daemon.OperationApprovalIssueRequest{
+		Kind: "machine.stop", Target: clientTestVMID, Reason: "typed client issuance",
+		IdempotencyKey: "typed-client-issuance", ValidForMillis: 60_000,
+		Beneficiary: "agent:mcp-local", Parameters: map[string]any{"mode": "turn-off"},
+	})
+	if err != nil || grant.ApprovalID == "" || grant.Operation.Target == clientTestVMID {
+		t.Fatalf("grant=%+v err=%v", grant, err)
+	}
+}
+
+func TestClientCreateOperationCanonicalizesApprovalDeadline(t *testing.T) {
+	deadline := time.Date(2026, 8, 31, 4, 5, 6, 700_000_000, time.FixedZone("UTC+01", 3600))
+	wantDeadline := deadline.UTC().Format(time.RFC3339Nano)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/operations" {
+			http.NotFound(w, r)
+			return
+		}
+		var request map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		var gotDeadline string
+		if err := json.Unmarshal(request["deadline"], &gotDeadline); err != nil {
+			t.Fatal(err)
+		}
+		if gotDeadline != wantDeadline {
+			t.Fatalf("deadline = %q, want canonical %q", gotDeadline, wantDeadline)
+		}
+		_, _ = w.Write([]byte(`{"schema_version":"1"}`))
+	}))
+	defer server.Close()
+
+	cl := client.New(server.URL, strings.Repeat("a", 64))
+	if _, err := cl.CreateOperation(context.Background(), daemon.CreateOperationRequest{
+		Kind: "machine.stop", Target: clientTestVMID, Reason: "typed client canonical deadline",
+		IdempotencyKey: "typed-client-canonical-deadline",
+		ApprovalID:     "app-operation-0123456789abcdef0123456789abcdef",
+		Deadline:       &deadline,
+		Parameters:     map[string]any{"mode": "turn-off"},
+	}); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -236,24 +236,26 @@ func TestCli_DefaultRun_ExecutableMissing_DoctorJSON(t *testing.T) {
 
 func TestCli_DefaultRun_ExecutableMissing_MachineList(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
+	stateDir := t.TempDir()
 	var stdout, stderr bytes.Buffer
-	code := cli.Run([]string{"machine", "list"}, &stdout, &stderr)
-	if code != cli.ExitBackendUnavailable {
-		t.Fatalf("expected ExitBackendUnavailable (4), got %d", code)
+	code := cli.Run([]string{"--state-dir", stateDir, "machine", "list"}, &stdout, &stderr)
+	if code != cli.ExitConflict {
+		t.Fatalf("expected ExitConflict (8), got %d", code)
 	}
-	if !strings.Contains(stderr.String(), "powershell.exe") {
-		t.Errorf("expected powershell.exe message on stderr, got %q", stderr.String())
+	if !strings.Contains(stderr.String(), "no target is enrolled; enroll a local target first") {
+		t.Errorf("expected sanitized target message on stderr, got %q", stderr.String())
 	}
 }
 
 func TestCli_DefaultRun_ExecutableMissing_MachineInspect(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
+	stateDir := t.TempDir()
 	var stdout, stderr bytes.Buffer
-	code := cli.Run([]string{"machine", "inspect", "c4a523d4-6b99-4d62-a5e2-4752c0f20001"}, &stdout, &stderr)
-	if code != cli.ExitBackendUnavailable {
-		t.Fatalf("expected ExitBackendUnavailable (4), got %d", code)
+	code := cli.Run([]string{"--state-dir", stateDir, "machine", "inspect", "c4a523d4-6b99-4d62-a5e2-4752c0f20001"}, &stdout, &stderr)
+	if code != cli.ExitConflict {
+		t.Fatalf("expected ExitConflict (8), got %d", code)
 	}
-	if !strings.Contains(stderr.String(), "powershell.exe") {
-		t.Errorf("expected powershell.exe message on stderr, got %q", stderr.String())
+	if !strings.Contains(stderr.String(), "no target is enrolled; enroll a local target first") {
+		t.Errorf("expected sanitized target message on stderr, got %q", stderr.String())
 	}
 }

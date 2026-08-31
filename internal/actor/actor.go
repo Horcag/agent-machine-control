@@ -35,6 +35,7 @@ func (r *DefaultResolver) Resolve() (domain.ActorContext, error) {
 	scopes := domain.NewScopeSet(
 		"machine:read",
 		"machine:write",
+		"target:admin",
 	)
 
 	return domain.NewActorContext(actorID, actorID, scopes, scopes)

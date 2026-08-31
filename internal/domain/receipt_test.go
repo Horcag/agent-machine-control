@@ -108,6 +108,41 @@ func TestReceipt_Validate(t *testing.T) {
 			wantErrIs: domain.ErrInvalidReceiptID,
 		},
 		{
+			name: "valid failed deadline provenance",
+			mutate: func(r *domain.Receipt) {
+				r.Outcome.Status = domain.OutcomeFailed
+				r.Outcome.ErrorCategory = "deadline_exceeded"
+				r.Outcome.ErrorMessage = "operation deadline exceeded"
+			},
+			wantErrIs: nil,
+		},
+		{
+			name: "failed provenance rejects unknown category",
+			mutate: func(r *domain.Receipt) {
+				r.Outcome.Status = domain.OutcomeFailed
+				r.Outcome.ErrorCategory = "backend_timeout"
+				r.Outcome.ErrorMessage = "operation deadline exceeded"
+			},
+			wantErrIs: domain.ErrInvalidReceiptID,
+		},
+		{
+			name: "failed provenance rejects noncanonical message",
+			mutate: func(r *domain.Receipt) {
+				r.Outcome.Status = domain.OutcomeFailed
+				r.Outcome.ErrorCategory = "deadline_exceeded"
+				r.Outcome.ErrorMessage = "raw backend deadline text"
+			},
+			wantErrIs: domain.ErrInvalidReceiptID,
+		},
+		{
+			name: "failed provenance rejects partial pair",
+			mutate: func(r *domain.Receipt) {
+				r.Outcome.Status = domain.OutcomeFailed
+				r.Outcome.ErrorCategory = "deadline_exceeded"
+			},
+			wantErrIs: domain.ErrInvalidReceiptID,
+		},
+		{
 			name: "invalid time order (completed before started)",
 			mutate: func(r *domain.Receipt) {
 				r.StartedAt = completed

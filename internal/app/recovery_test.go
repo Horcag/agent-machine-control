@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -100,7 +101,7 @@ func (m *mockBackend) RestoreCheckpoint(ctx context.Context, id string, checkpoi
 	return domain.MachineObservation{ID: id, State: domain.MachineStateRunning}, nil
 }
 
-func setupTestRecovery(t *testing.T, backend app.Backend) (*app.RecoveryService, string) {
+func setupTestRecovery(t *testing.T, backend app.Backend, auditOpts ...audit.Option) (*app.RecoveryService, string) {
 	t.Helper()
 	dir := t.TempDir()
 	leasesDir := dir + "/leases"
@@ -115,7 +116,8 @@ func setupTestRecovery(t *testing.T, backend app.Backend) (*app.RecoveryService,
 
 	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	leaseMgr := lease.NewManager(leasesDir, lease.WithClock(func() time.Time { return now }))
-	auditStore := audit.NewStore(auditDir, audit.WithClock(func() time.Time { return now }))
+	auditOptions := append([]audit.Option{audit.WithClock(func() time.Time { return now })}, auditOpts...)
+	auditStore := audit.NewStore(auditDir, auditOptions...)
 	receiptStore := receipt.NewStore(receiptsDir)
 	approvalStore := approval.NewStore(approvalsDir)
 
@@ -262,12 +264,9 @@ func TestRecoveryService_UnwritableAudit_FailsClosed_ZeroProviderCalls(t *testin
 		},
 	}
 
-	svc, dir := setupTestRecovery(t, backend)
-
-	// Make audit directory read-only
-	auditDir := dir + "/audit"
-	_ = os.Chmod(auditDir, 0500)
-	defer func() { _ = os.Chmod(auditDir, 0700) }()
+	svc, _ := setupTestRecovery(t, backend, audit.WithWritableHook(func(context.Context) error {
+		return audit.ErrAuditUnavailable
+	}))
 
 	actor, _ := domain.NewActorContext("user:admin", "user:admin", domain.NewScopeSet("machine:write"), domain.NewScopeSet("machine:write"))
 	req := app.MutationRequest{
@@ -290,7 +289,7 @@ func TestRecoveryService_UnwritableAudit_FailsClosed_ZeroProviderCalls(t *testin
 func TestRecoveryService_StopMachine_TurnOff_RequiresApproval(t *testing.T) {
 	targetID := "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
 	backend := &mockBackend{}
-	svc, _ := setupTestRecovery(t, backend)
+	svc, dir := setupTestRecovery(t, backend)
 
 	actor, _ := domain.NewActorContext("user:admin", "user:admin", domain.NewScopeSet("machine:write"), domain.NewScopeSet("machine:write"))
 	req := app.MutationRequest{
@@ -337,6 +336,9 @@ func TestRecoveryService_StopMachine_TurnOff_RequiresApproval(t *testing.T) {
 	req.Deadline = op.Deadline
 	req.Approval = &appr
 	req.IdempotencyKey = "key-stop-turnoff-2"
+	if err := approval.NewStore(filepath.Join(dir, "approvals")).Issue(appr); err != nil {
+		t.Fatal(err)
+	}
 
 	rcpt, obs, err := svc.StopMachine(context.Background(), req, "turn-off")
 	if err != nil {

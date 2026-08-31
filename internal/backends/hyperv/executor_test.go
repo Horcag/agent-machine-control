@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 )
@@ -43,6 +44,26 @@ func TestDefaultExecutor_Execute_SuccessAndEnv(t *testing.T) {
 	}
 	if len(stderr) != 0 {
 		t.Errorf("expected empty stderr, got %q", string(stderr))
+	}
+}
+
+func TestDefaultExecutor_ExecuteForwardsAMCVariablesWhenWSLEnvironmentIsStripped(t *testing.T) {
+	shPath, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not available in environment")
+	}
+	t.Setenv("WSL_DISTRO_NAME", "")
+	t.Setenv("WSL_INTEROP", "")
+
+	execInstance := &DefaultExecutor{wslRuntime: func() bool { return true }}
+	stdout, stderr, err := execInstance.Execute(
+		t.Context(), shPath, []string{"-c", "printf %s \"$WSLENV\""}, []string{"AMC_TARGET_VM_ID=vm-1"},
+	)
+	if err != nil {
+		t.Fatalf("Execute() error = %v, stderr = %s", err, stderr)
+	}
+	if !strings.Contains(string(stdout), "AMC_TARGET_VM_ID") {
+		t.Fatalf("WSLENV = %q, want AMC_TARGET_VM_ID entry", stdout)
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/app"
@@ -19,9 +20,11 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/backends/hyperv"
 	"github.com/Horcag/agent-machine-control/internal/domain"
 	"github.com/Horcag/agent-machine-control/internal/events"
+	guestssh "github.com/Horcag/agent-machine-control/internal/guest/ssh"
 	"github.com/Horcag/agent-machine-control/internal/lease"
 	"github.com/Horcag/agent-machine-control/internal/operations"
 	"github.com/Horcag/agent-machine-control/internal/receipt"
+	"github.com/Horcag/agent-machine-control/internal/sessions"
 	"github.com/Horcag/agent-machine-control/internal/statedir"
 )
 
@@ -29,30 +32,45 @@ type contextKey string
 
 const callerContextKey contextKey = "callerContext"
 
+var (
+	// ErrShutdownIncomplete means admitted operations, sessions, or transport cleanup remain live.
+	// Endpoint and singleton ownership are intentionally retained so the same process can retry.
+	ErrShutdownIncomplete = errors.New("daemon: shutdown drain incomplete")
+)
+
 // Server is the HTTP/1.1 daemon server for Agent Machine Control.
 type Server struct {
-	cfg              Config
-	stateDir         *statedir.StateDir
-	authStore        *auth.Store
-	leaseMgr         *lease.Manager
-	auditStore       *audit.Store
-	receiptStore     *receipt.Store
-	approvalStore    *approval.Store
-	recoveryService  *app.RecoveryService
-	eventHub         *events.Hub
-	opMgr            *operations.Manager
-	singletonLock    *SingletonLock
-	httpServer       *http.Server
-	listener         net.Listener
-	endpoint         string
-	startedAt        time.Time
-	pid              int
-	runtimeID        string
-	startTime        string
-	shutdownChan     chan struct{}
-	shutdownOnce     sync.Once
-	semaphore        chan struct{}
-	identityProvider lease.IdentityProvider
+	cfg               Config
+	stateDir          *statedir.StateDir
+	authStore         *auth.Store
+	leaseMgr          *lease.Manager
+	auditStore        *audit.Store
+	receiptStore      *receipt.Store
+	approvalStore     *approval.Store
+	recoveryService   *app.RecoveryService
+	targetService     *app.TargetService
+	targetCoordinator *app.TargetCoordinator
+	eventHub          *events.Hub
+	opMgr             *operations.Manager
+	sessionMgr        *sessions.Manager
+	sessionService    *app.SessionService
+	singletonLock     *SingletonLock
+	httpServer        *http.Server
+	listener          net.Listener
+	endpoint          string
+	startedAt         time.Time
+	pid               int
+	runtimeID         string
+	startTime         string
+	shutdownChan      chan struct{}
+	shutdownOnce      sync.Once
+	admissionClosed   atomic.Bool
+	semaphore         chan struct{}
+	identityProvider  lease.IdentityProvider
+	shutdownHTTP      func(context.Context) error
+	closeHTTP         func() error
+
+	afterEarlyMutationAdmissionCheck func()
 
 	serveErrMu sync.Mutex
 	serveErr   error
@@ -117,45 +135,89 @@ func NewServer(cfg Config) (*Server, error) {
 	if backend == nil {
 		backend = hyperv.New()
 	}
+	targetService, targetCoordinator, err := initializeTargetSubsystem(sd, backend, auditStore, receiptStore, approvalStore, cfg.Clock)
+	if err != nil {
+		_ = lock.Release()
+		return nil, err
+	}
 
-	recoverySvc := app.NewRecoveryService(backend, leaseMgr, auditStore, receiptStore, approvalStore)
+	recoverySvc := app.NewRecoveryService(backend, leaseMgr, auditStore, receiptStore, approvalStore, app.WithRecoveryTargetResolver(targetService))
 	opMgr := operations.NewManager(sd.OperationsDir(), recoverySvc, receiptStore, auditStore, eventHub)
 
-	// 3. Fail-closed startup crash recovery & stale lease reclamation
-	if _, err := operations.ReconcileCrashedOperations(context.Background(), sd.OperationsDir(), receiptStore, auditStore, eventHub, now); err != nil {
-		_ = lock.Release()
-		return nil, fmt.Errorf("daemon: failed to reconcile crashed operations: %w", err)
+	keyProvider := cfg.KeyProvider
+	if keyProvider == nil {
+		keyProvider = guestssh.NewLocalKeyProvider(sd)
 	}
-	if _, err := leaseMgr.ReclaimStaleLeases(context.Background()); err != nil {
+	transport := cfg.Transport
+	if transport == nil {
+		transport = guestssh.NewTransport(keyProvider)
+	}
+	safetyResolver := app.NewDefaultSafetyResolver(sshSafetyConfigLoader{provider: keyProvider}, backend)
+	sanitizerConfig := daemonSessionSanitizerConfig(authStore, cfg.SessionSanitizerConfig)
+	sessionMgr := sessions.NewManager(sd.SessionsDir(), transport, cfg.Clock, sessions.WithSanitizerConfig(sanitizerConfig))
+	sessionSvc := app.NewSessionService(sessionMgr, safetyResolver, leaseMgr, auditStore, receiptStore, approvalStore,
+		app.WithSessionClock(cfg.Clock), app.WithSessionTargetResolver(targetService))
+
+	// 3. Fail-closed startup crash recovery & stale lease reclamation
+	if err := reconcileStartupState(sd, sessionSvc, receiptStore, auditStore, eventHub, leaseMgr, now); err != nil {
 		_ = lock.Release()
-		return nil, fmt.Errorf("daemon: failed to reclaim stale leases: %w", err)
+		return nil, err
 	}
 
 	runtimeID, pid, startTime := ident.CurrentIdentity()
 
 	srv := &Server{
-		cfg:              cfg,
-		stateDir:         sd,
-		authStore:        authStore,
-		leaseMgr:         leaseMgr,
-		auditStore:       auditStore,
-		receiptStore:     receiptStore,
-		approvalStore:    approvalStore,
-		recoveryService:  recoverySvc,
-		eventHub:         eventHub,
-		opMgr:            opMgr,
-		singletonLock:    lock,
-		startedAt:        now,
-		pid:              pid,
-		runtimeID:        runtimeID,
-		startTime:        startTime,
-		shutdownChan:     make(chan struct{}),
-		semaphore:        make(chan struct{}, 100),
-		identityProvider: ident,
+		cfg:               cfg,
+		stateDir:          sd,
+		authStore:         authStore,
+		leaseMgr:          leaseMgr,
+		auditStore:        auditStore,
+		receiptStore:      receiptStore,
+		approvalStore:     approvalStore,
+		recoveryService:   recoverySvc,
+		targetService:     targetService,
+		targetCoordinator: targetCoordinator,
+		eventHub:          eventHub,
+		opMgr:             opMgr,
+		sessionMgr:        sessionMgr,
+		sessionService:    sessionSvc,
+		singletonLock:     lock,
+		startedAt:         now,
+		pid:               pid,
+		runtimeID:         runtimeID,
+		startTime:         startTime,
+		shutdownChan:      make(chan struct{}),
+		semaphore:         make(chan struct{}, 100),
+		identityProvider:  ident,
 	}
 
 	srv.setupHTTPServer()
 	return srv, nil
+}
+
+func reconcileStartupState(
+	sd *statedir.StateDir,
+	sessionSvc *app.SessionService,
+	receiptStore *receipt.Store,
+	auditStore *audit.Store,
+	eventHub *events.Hub,
+	leaseMgr *lease.Manager,
+	now time.Time,
+) error {
+	ctx := context.Background()
+	if _, err := sessionSvc.ReconcileMutationFinalizations(ctx, now); err != nil {
+		return fmt.Errorf("daemon: failed to reconcile session mutations: %w", err)
+	}
+	if _, err := operations.ReconcileCrashedOperations(ctx, sd.OperationsDir(), receiptStore, auditStore, eventHub, now); err != nil {
+		return fmt.Errorf("daemon: failed to reconcile crashed operations: %w", err)
+	}
+	if _, err := sessions.ReconcileCrashedSessions(ctx, sd.SessionsDir(), now); err != nil {
+		return fmt.Errorf("daemon: failed to reconcile crashed sessions: %w", err)
+	}
+	if _, err := leaseMgr.ReclaimStaleLeases(ctx); err != nil {
+		return fmt.Errorf("daemon: failed to reclaim stale leases: %w", err)
+	}
+	return nil
 }
 
 func (s *Server) setupHTTPServer() {
@@ -169,42 +231,8 @@ func (s *Server) setupHTTPServer() {
 		MaxHeaderBytes:    16 * 1024,
 		TLSNextProto:      make(map[string]func(*http.Server, *tls.Conn, http.Handler)),
 	}
-}
-
-func (s *Server) authMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Reject browser Origin
-		if r.Header.Get("Origin") != "" {
-			writeError(w, http.StatusForbidden, "forbidden", "browser Origin headers are forbidden")
-			return
-		}
-
-		// Require Bearer auth
-		authHeader := r.Header.Get("Authorization")
-		if !strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
-			writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid authorization header")
-			return
-		}
-
-		token := strings.TrimSpace(authHeader[7:])
-		caller, _, ok := s.authStore.Authenticate(token)
-		if !ok || caller == nil {
-			writeError(w, http.StatusUnauthorized, "unauthorized", "invalid bearer token")
-			return
-		}
-
-		// Concurrency limit
-		select {
-		case s.semaphore <- struct{}{}:
-			defer func() { <-s.semaphore }()
-		default:
-			writeError(w, http.StatusTooManyRequests, "concurrency_limit_exceeded", "server is busy")
-			return
-		}
-
-		ctx := context.WithValue(r.Context(), callerContextKey, *caller)
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
+	s.shutdownHTTP = s.httpServer.Shutdown
+	s.closeHTTP = s.httpServer.Close
 }
 
 func (s *Server) dispatchV1(w http.ResponseWriter, r *http.Request) {
@@ -214,37 +242,55 @@ func (s *Server) dispatchV1(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case path == "health" && r.Method == http.MethodGet:
 		s.handleHealth(w, r)
-
 	case path == "events" && r.Method == http.MethodGet:
 		s.handleGlobalEvents(w, r)
-
 	case path == "operations" || strings.HasPrefix(path, "operations/"):
 		s.dispatchOperations(w, r, path)
+	case path == "sessions" || strings.HasPrefix(path, "sessions/"):
+		s.dispatchSessions(w, r, path)
+	case path == "session-approvals":
+		if r.Method == http.MethodPost {
+			s.handleIssueSessionApproval(w, r)
+		} else {
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+		}
+	case path == "operation-approvals":
+		if r.Method == http.MethodPost {
+			s.handleIssueOperationApproval(w, r)
+		} else {
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+		}
+	default:
+		s.dispatchOtherV1(w, r, path)
+	}
+}
 
+func (s *Server) dispatchOtherV1(w http.ResponseWriter, r *http.Request, path string) {
+	switch {
 	case path == "audit":
 		if r.Method == http.MethodGet {
 			s.handleGetAudit(w, r)
 		} else {
 			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 		}
-
 	case path == "receipts":
 		if r.Method == http.MethodGet {
 			s.handleListReceipts(w, r)
 		} else {
 			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 		}
-
 	case strings.HasPrefix(path, "receipts/"):
 		s.dispatchReceiptSubroute(w, r, strings.TrimPrefix(path, "receipts/"))
-
 	case path == "daemon/stop":
 		if r.Method == http.MethodPost {
 			s.handleStopDaemon(w, r)
 		} else {
 			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 		}
-
+	case path == "target-approvals":
+		s.dispatchTargetApproval(w, r)
+	case path == "target":
+		s.dispatchTarget(w, r)
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "endpoint not found")
 	}
@@ -344,7 +390,7 @@ func (s *Server) Start() error {
 	}
 
 	go func() {
-		if err := s.httpServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := s.httpServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
 			s.serveErrMu.Lock()
 			s.serveErr = err
 			s.serveErrMu.Unlock()
@@ -368,56 +414,9 @@ func (s *Server) PID() int {
 // TriggerShutdown initiates an asynchronous server shutdown.
 func (s *Server) TriggerShutdown() {
 	s.shutdownOnce.Do(func() {
+		s.admissionClosed.Store(true)
 		close(s.shutdownChan)
 	})
-}
-
-// Shutdown gracefully stops the daemon and removes the endpoint and lock files.
-func (s *Server) Shutdown(ctx context.Context) error {
-	s.TriggerShutdown()
-
-	var errs []error
-
-	// 1. Drain & shutdown operations manager (cancels active operations, publishes terminal events, cleans leases)
-	if s.opMgr != nil {
-		if err := s.opMgr.Shutdown(ctx); err != nil {
-			errs = append(errs, fmt.Errorf("daemon: operations manager shutdown error: %w", err))
-		}
-	}
-
-	// 2. Close event hub to close all subscriber channels and unblock waiting SSE handlers
-	if s.eventHub != nil {
-		if err := s.eventHub.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("daemon: event hub close error: %w", err))
-		}
-	}
-
-	// 3. Gracefully shutdown HTTP server
-	if s.httpServer != nil {
-		if err := s.httpServer.Shutdown(ctx); err != nil {
-			errs = append(errs, fmt.Errorf("daemon: http server shutdown failed: %w", err))
-		}
-	}
-
-	// 4. Remove endpoint file if owned
-	if err := RemoveEndpointFileIfOwned(s.stateDir.DaemonDir(), s.pid, s.runtimeID, s.startTime); err != nil {
-		errs = append(errs, err)
-	}
-
-	// 5. Release singleton lock
-	if s.singletonLock != nil {
-		if err := s.singletonLock.Release(); err != nil {
-			errs = append(errs, err)
-		}
-	}
-
-	s.serveErrMu.Lock()
-	if s.serveErr != nil {
-		errs = append(errs, s.serveErr)
-	}
-	s.serveErrMu.Unlock()
-
-	return errors.Join(errs...)
 }
 
 // Wait blocks until the daemon receives a stop signal or shutdown request.

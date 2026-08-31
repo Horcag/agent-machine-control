@@ -19,6 +19,16 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/receipt"
 )
 
+type cachedReceiptCase struct {
+	name                  string
+	outcomeStatus         domain.OutcomeStatus
+	receiptErrorCategory  string
+	receiptErrorMessage   string
+	expectedState         domain.OperationState
+	expectedErrorCategory string
+	expectedErrorMessage  string
+}
+
 func TestManager_CachedReceiptOutcomes(t *testing.T) {
 	b := &mockBackend{}
 	dir := t.TempDir()
@@ -60,24 +70,20 @@ func TestManager_CachedReceiptOutcomes(t *testing.T) {
 		EvidenceSensitivity: domain.EvidenceSensitivityStandard,
 	}
 
-	cases := []struct {
-		name          string
-		outcomeStatus domain.OutcomeStatus
-		errorCategory string
-		errorMessage  string
-		expectedState domain.OperationState
-	}{
+	cases := []cachedReceiptCase{
 		{
 			name:          "success outcome maps to completed state",
 			outcomeStatus: domain.OutcomeSuccess,
 			expectedState: domain.OpStateCompleted,
 		},
 		{
-			name:          "denied outcome maps to failed state and restores errors",
-			outcomeStatus: domain.OutcomeDenied,
-			errorCategory: "policy_denial",
-			errorMessage:  "operation was denied by policy",
-			expectedState: domain.OpStateFailed,
+			name:                  "denied outcome maps to failed state and restores errors",
+			outcomeStatus:         domain.OutcomeDenied,
+			receiptErrorCategory:  "policy_denial",
+			receiptErrorMessage:   "operation was denied by policy",
+			expectedState:         domain.OpStateFailed,
+			expectedErrorCategory: "policy_denial",
+			expectedErrorMessage:  "operation was denied by policy",
 		},
 		{
 			name:          "failed outcome maps to failed state",
@@ -85,9 +91,27 @@ func TestManager_CachedReceiptOutcomes(t *testing.T) {
 			expectedState: domain.OpStateFailed,
 		},
 		{
-			name:          "aborted outcome maps to cancelled state",
+			name:          "legacy aborted outcome maps to cancelled state",
 			outcomeStatus: domain.OutcomeAborted,
 			expectedState: domain.OpStateCancelled,
+		},
+		{
+			name:                  "caller cancelled outcome preserves cancellation provenance",
+			outcomeStatus:         domain.OutcomeAborted,
+			receiptErrorCategory:  "caller_canceled",
+			receiptErrorMessage:   "operation cancelled by caller",
+			expectedState:         domain.OpStateCancelled,
+			expectedErrorCategory: "cancelled",
+			expectedErrorMessage:  "operation cancelled",
+		},
+		{
+			name:                  "deadline outcome preserves timeout provenance",
+			outcomeStatus:         domain.OutcomeAborted,
+			receiptErrorCategory:  "deadline_exceeded",
+			receiptErrorMessage:   "operation deadline exceeded",
+			expectedState:         domain.OpStateFailed,
+			expectedErrorCategory: "timeout",
+			expectedErrorMessage:  "operation deadline exceeded",
 		},
 	}
 
@@ -98,13 +122,7 @@ func TestManager_CachedReceiptOutcomes(t *testing.T) {
 	}
 }
 
-func runCachedReceiptTestCase(t *testing.T, i int, tc struct {
-	name          string
-	outcomeStatus domain.OutcomeStatus
-	errorCategory string
-	errorMessage  string
-	expectedState domain.OperationState
-}, op domain.Operation, act domain.ActorContext, dir string, recoverySvc *app.RecoveryService, rcptStore *receipt.Store, auditStore *audit.Store, eventHub *events.Hub, mgr *operations.Manager) {
+func runCachedReceiptTestCase(t *testing.T, i int, tc cachedReceiptCase, op domain.Operation, act domain.ActorContext, dir string, recoverySvc *app.RecoveryService, rcptStore *receipt.Store, auditStore *audit.Store, eventHub *events.Hub, mgr *operations.Manager) {
 	testOp := op
 	testOp.IdempotencyKey = fmt.Sprintf("key-cached-%d", i)
 
@@ -132,8 +150,8 @@ func runCachedReceiptTestCase(t *testing.T, i int, tc struct {
 		CompletedAt:            now.Add(2 * time.Second),
 		Outcome: domain.ExecutionOutcome{
 			Status:        tc.outcomeStatus,
-			ErrorCategory: tc.errorCategory,
-			ErrorMessage:  tc.errorMessage,
+			ErrorCategory: tc.receiptErrorCategory,
+			ErrorMessage:  tc.receiptErrorMessage,
 		},
 		ObservationType: domain.ObservationObserved,
 		RedactionStatus: domain.RedactionApplied,
@@ -162,11 +180,11 @@ func runCachedReceiptTestCase(t *testing.T, i int, tc struct {
 		t.Errorf("expected existing record reconstructed from cache, got new submission")
 	}
 
-	assertRecordFields(t, rec, tc.expectedState, rcpt.ReceiptID, tc.errorCategory, tc.errorMessage)
+	assertRecordFields(t, rec, tc.expectedState, rcpt.ReceiptID, tc.expectedErrorCategory, tc.expectedErrorMessage)
 
 	// Create a fresh manager/store and try to Get/List the reconstructed record.
 	mgrFresh := operations.NewManager(dir, recoverySvc, rcptStore, auditStore, eventHub)
-	verifyGetAndList(t, mgrFresh, rec, act, rcpt.ReceiptID, tc.expectedState, tc.errorCategory, tc.errorMessage)
+	verifyGetAndList(t, mgrFresh, rec, act, rcpt.ReceiptID, tc.expectedState, tc.expectedErrorCategory, tc.expectedErrorMessage)
 
 	// Verify that the same receipt reconstructs the same ID on repeated manager creation/restart.
 	mgrRestarted := operations.NewManager(dir, recoverySvc, rcptStore, auditStore, eventHub)
@@ -180,7 +198,7 @@ func runCachedReceiptTestCase(t *testing.T, i int, tc struct {
 	if recRestarted.ID != rec.ID {
 		t.Errorf("expected same reconstructed operation ID after manager restart, got %q and %q", rec.ID, recRestarted.ID)
 	}
-	assertRecordFields(t, recRestarted, tc.expectedState, rcpt.ReceiptID, tc.errorCategory, tc.errorMessage)
+	assertRecordFields(t, recRestarted, tc.expectedState, rcpt.ReceiptID, tc.expectedErrorCategory, tc.expectedErrorMessage)
 
 	// Add a semantic-change collision assertion
 	collisionOp := testOp

@@ -19,6 +19,7 @@ import (
 func runCheckpoint(
 	ctx context.Context,
 	recoverySvc *app.RecoveryService,
+	targetSvc *app.TargetService,
 	actor domain.ActorContext,
 	prompter Prompter,
 	nowFn func() time.Time,
@@ -34,7 +35,7 @@ func runCheckpoint(
 
 	switch args[0] {
 	case "list":
-		return runCheckpointList(ctx, recoverySvc, args[1:], stdout, stderr)
+		return runCheckpointList(ctx, recoverySvc, targetSvc, args[1:], stdout, stderr)
 	case "create":
 		return runCheckpointCreate(ctx, recoverySvc, actor, prompter, nowFn, directMode, stateDir, args[1:], stdout, stderr)
 	case "restore":
@@ -48,7 +49,7 @@ func runCheckpoint(
 	}
 }
 
-func runCheckpointList(ctx context.Context, recoverySvc *app.RecoveryService, args []string, stdout, stderr io.Writer) int {
+func runCheckpointList(ctx context.Context, recoverySvc *app.RecoveryService, targetSvc *app.TargetService, args []string, stdout, stderr io.Writer) int {
 	var jsonOutput bool
 	var positional []string
 
@@ -64,21 +65,10 @@ func runCheckpointList(ctx context.Context, recoverySvc *app.RecoveryService, ar
 		}
 	}
 
-	if len(positional) == 0 {
-		fmt.Fprintln(stderr, "amc checkpoint list: missing required machine GUID")
-		return ExitUsage
+	targetID, exitCode := resolveCheckpointListTarget(ctx, targetSvc, positional, stderr)
+	if exitCode != ExitSuccess {
+		return exitCode
 	}
-	if len(positional) > 1 {
-		fmt.Fprintf(stderr, "amc checkpoint list: unexpected argument %q\n", positional[1])
-		return ExitUsage
-	}
-
-	targetID := positional[0]
-	if err := domain.ValidateMachineGUID(targetID); err != nil {
-		fmt.Fprintf(stderr, "amc checkpoint list: invalid machine GUID %q\n", targetID)
-		return ExitUsage
-	}
-
 	checkpoints, err := recoverySvc.ListCheckpoints(ctx, targetID)
 	if err != nil {
 		return mapCLIError(err, stderr, "checkpoint list")
@@ -125,6 +115,29 @@ func runCheckpointList(ctx context.Context, recoverySvc *app.RecoveryService, ar
 	return ExitSuccess
 }
 
+func resolveCheckpointListTarget(ctx context.Context, targetSvc *app.TargetService, positional []string, stderr io.Writer) (string, int) {
+	if len(positional) == 0 && targetSvc == nil {
+		fmt.Fprintln(stderr, "amc checkpoint list: missing required machine reference")
+		return "", ExitUsage
+	}
+	if len(positional) > 1 {
+		fmt.Fprintf(stderr, "amc checkpoint list: unexpected argument %q\n", positional[1])
+		return "", ExitUsage
+	}
+	reference := ""
+	if len(positional) == 1 {
+		reference = positional[0]
+	}
+	if targetSvc == nil {
+		return reference, ExitSuccess
+	}
+	resolution, err := targetSvc.ResolveTarget(ctx, reference)
+	if err != nil {
+		return "", mapCLIError(err, stderr, "checkpoint list")
+	}
+	return resolution.ProviderVMID, ExitSuccess
+}
+
 func runCheckpointCreate(
 	ctx context.Context,
 	recoverySvc *app.RecoveryService,
@@ -152,36 +165,43 @@ func runCheckpointCreate(
 		return ExitUsage
 	}
 	if len(positionals) != 1 {
-		fmt.Fprintln(stderr, "amc checkpoint create: requires exactly one machine GUID")
+		fmt.Fprintln(stderr, "amc checkpoint create: requires exactly one machine reference")
 		return ExitUsage
 	}
 
 	targetID := positionals[0]
-	if err := domain.ValidateMachineGUID(targetID); err != nil {
-		fmt.Fprintf(stderr, "amc checkpoint create: invalid machine GUID %q\n", targetID)
-		return ExitUsage
-	}
 
 	if !directMode {
 		return executeDaemonCheckpointCreate(ctx, stateDir, targetID, *name, common, stdout, stderr)
+	}
+	if rejectDirectApprovalReference(common, stderr, "checkpoint create") {
+		return ExitUsage
+	}
+	canonicalTarget, err := recoverySvc.ResolveTargetReference(ctx, targetID)
+	if err != nil {
+		return mapMutationError(err, stderr, "checkpoint create")
 	}
 
 	appr := common.Approval
 	var reqDeadline time.Time
 	if appr == nil && prompter != nil {
-		promptMsg := fmt.Sprintf("Destructive operation checkpoint.create on %s requires confirmation", targetID)
+		promptMsg := fmt.Sprintf("Destructive operation checkpoint.create on %s requires confirmation", canonicalTarget)
 		params := map[string]any{"name": *name}
-		promptedAppr, dl, ok := promptForApproval(prompter, nowFn, actor, targetID, "checkpoint.create", domain.CapabilityCheckpointCreate, domain.ClassDestructivePrivileged, common.Reason, common.IdempotencyKey, common.Timeout, params, promptMsg)
+		promptedAppr, dl, ok := promptForApproval(prompter, nowFn, actor, string(canonicalTarget), "checkpoint.create", domain.CapabilityCheckpointCreate, domain.ClassDestructivePrivileged, common.Reason, common.IdempotencyKey, common.Timeout, params, promptMsg)
 		if !ok {
 			fmt.Fprintln(stderr, "amc checkpoint create: operation aborted by operator")
 			return ExitDenied
 		}
 		appr = promptedAppr
+		if err := recoverySvc.IssueApproval(ctx, *appr); err != nil {
+			fmt.Fprintln(stderr, "amc checkpoint create: failed to issue server approval")
+			return ExitBackendUnavailable
+		}
 		reqDeadline = dl
 	}
 
 	req := app.MutationRequest{
-		TargetID:       targetID,
+		TargetID:       string(canonicalTarget),
 		Actor:          actor,
 		Reason:         common.Reason,
 		IdempotencyKey: common.IdempotencyKey,
@@ -232,6 +252,7 @@ func executeDaemonCheckpointCreate(
 		TimeoutSeconds: int(common.Timeout.Seconds()),
 		Parameters:     map[string]any{"name": name},
 	}
+	applyDaemonApprovalReference(&dReq, common)
 	return executeDaemonMutation(
 		ctx,
 		stateDir,

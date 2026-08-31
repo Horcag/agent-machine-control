@@ -82,8 +82,13 @@ func (s *RecoveryService) executeMutation(
 	ctx context.Context,
 	op domain.Operation,
 	req MutationRequest,
+	providerTargetID string,
 	execFn func(context.Context) error,
 ) (domain.Receipt, error) {
+	execCtx, cancelExecution := s.mutationExecutionContext(ctx, op, req)
+	defer cancelExecution()
+	ctx = execCtx
+
 	if err := s.validateDependencies(); err != nil {
 		return domain.Receipt{}, err
 	}
@@ -94,55 +99,68 @@ func (s *RecoveryService) executeMutation(
 	}
 
 	// 1. Idempotency Check & 2. Audit Writability Check
-	if cached, err := s.checkPreconditions(op); err != nil || cached != nil {
+	if cached, err := s.checkPreconditions(ctx, op); err != nil || cached != nil {
 		if cached != nil {
-			if cached.Outcome.Status == domain.OutcomeDenied {
+			switch cached.Outcome.Status {
+			case domain.OutcomeDenied:
 				return *cached, &PolicyDeniedError{
 					Reason:  policy.DenialReason(cached.Outcome.ErrorCategory),
 					Message: cached.Outcome.ErrorMessage,
 				}
+			case domain.OutcomeAborted:
+				if cached.Outcome.ErrorCategory == "caller_canceled" {
+					return *cached, context.Canceled
+				}
+				return *cached, context.DeadlineExceeded
 			}
 			return *cached, nil
 		}
-		return domain.Receipt{}, err
+		return s.preProviderFailure(ctx, op, fp, policy.Decision{}, s.now(), err, "", req.ApprovalID)
 	}
 
 	now := s.now()
 
 	// 3. Rollback discovery & 4. Policy evaluation & 5. Approval check
-	decision, rollbackRef, err := s.prepareAndAuthorizeMutation(ctx, op, req, now)
+	decision, rollbackRef, err := s.prepareAndAuthorizeMutation(ctx, op, req, providerTargetID, now)
 	if err != nil {
 		var deniedErr *PolicyDeniedError
 		if errors.As(err, &deniedErr) {
-			receiptRecord, persistErr := s.persistOutcome(op, fp, decision, now, now, err, rollbackRef)
+			finalizationCtx, cancel := boundedMutationFinalizationContext(ctx)
+			defer cancel()
+			receiptRecord, persistErr := s.persistOutcome(finalizationCtx, op, fp, decision, now, now, err, rollbackRef, req.ApprovalID)
 			return s.finalizeMutation(receiptRecord, err, persistErr, nil)
 		}
-		return domain.Receipt{}, err
+		return s.preProviderFailure(ctx, op, fp, decision, now, err, rollbackRef, req.ApprovalID)
 	}
 
 	// 6. Host Lease Acquisition
-	releaseLease, err := s.acquireMutationLease(ctx, op, req, fp)
+	releaseLease, err := s.acquireMutationLease(ctx, op, req, providerTargetID, fp)
 	if err != nil {
-		return domain.Receipt{}, err
+		return s.preProviderFailure(ctx, op, fp, decision, now, err, rollbackRef, req.ApprovalID)
 	}
 
 	// 7. Audit Admission Intent & Approval Consumption
-	if err := s.recordAdmissionAndConsume(op, decision, req, now); err != nil {
-		if relErr := releaseLease(); relErr != nil {
-			return domain.Receipt{}, errors.Join(err, relErr)
-		}
-		return domain.Receipt{}, err
+	approvalConsumed, err := s.recordAdmissionAndConsume(ctx, op, decision, req, now)
+	if err != nil {
+		return s.preProviderFailure(ctx, op, fp, decision, now, errors.Join(err, releaseLease()), rollbackRef, req.ApprovalID)
 	}
 
 	// 8. Lifecycle hooks & Provider Execution
-	if err := runLifecycleHooks(ctx, req, releaseLease); err != nil {
-		return domain.Receipt{}, err
+	if err := runLifecycleHooks(ctx, req); err != nil {
+		abortErr := s.compensatePreProviderAbort(ctx, req, approvalConsumed, releaseLease, err)
+		return s.preProviderFailure(ctx, op, fp, decision, now, abortErr, rollbackRef, req.ApprovalID)
+	}
+	if err := ctx.Err(); err != nil {
+		abortErr := s.compensatePreProviderAbort(ctx, req, approvalConsumed, releaseLease, err)
+		return s.preProviderFailure(ctx, op, fp, decision, now, abortErr, rollbackRef, req.ApprovalID)
 	}
 
-	startedAt, completedAt, runErr := s.runProviderExecution(ctx, req, execFn)
+	startedAt, completedAt, runErr := s.runProviderExecution(ctx, execFn)
 
 	// 9. Receipt Persistence & Terminal Audit
-	receiptRecord, persistErr := s.persistOutcome(op, fp, decision, startedAt, completedAt, runErr, rollbackRef)
+	finalizationCtx, cancelFinalization := boundedMutationFinalizationContext(ctx)
+	defer cancelFinalization()
+	receiptRecord, persistErr := s.persistOutcome(finalizationCtx, op, fp, decision, startedAt, completedAt, runErr, rollbackRef, req.ApprovalID)
 
 	// 10. Lease Release
 	releaseErr := releaseLease()
@@ -150,46 +168,12 @@ func (s *RecoveryService) executeMutation(
 	return s.finalizeMutation(receiptRecord, runErr, persistErr, releaseErr)
 }
 
-func (s *RecoveryService) prepareAndAuthorizeMutation(
-	ctx context.Context,
-	op domain.Operation,
-	req MutationRequest,
-	now time.Time,
-) (policy.Decision, string, error) {
-	rollbackState, rollbackRef := s.discoverRollback(ctx, op, req.TargetID)
-	decision, err := s.evaluateMutationPolicy(ctx, op, req, now, rollbackState)
-	if err != nil {
-		return decision, rollbackRef, err
-	}
-	if err := s.verifyApprovalUnconsumed(decision, req); err != nil {
-		return decision, rollbackRef, err
-	}
-	return decision, rollbackRef, nil
-}
-
-func runLifecycleHooks(ctx context.Context, req MutationRequest, releaseLease func() error) error {
-	if req.OnAdmitted != nil {
-		if err := req.OnAdmitted(ctx); err != nil {
-			if relErr := releaseLease(); relErr != nil {
-				return errors.Join(err, relErr)
-			}
-			return err
-		}
-	}
-	if req.OnRunning != nil {
-		if err := req.OnRunning(ctx); err != nil {
-			if relErr := releaseLease(); relErr != nil {
-				return errors.Join(err, relErr)
-			}
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *RecoveryService) checkPreconditions(op domain.Operation) (*domain.Receipt, error) {
+func (s *RecoveryService) checkPreconditions(ctx context.Context, op domain.Operation) (*domain.Receipt, error) {
 	if s.receiptStore != nil {
-		cached, err := s.receiptStore.LookupIdempotency(op)
+		// Durable terminal truth wins over caller cancellation for an exact retry.
+		lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		cached, err := s.receiptStore.LookupIdempotencyContext(lookupCtx, op)
+		cancel()
 		if err != nil {
 			return nil, err
 		}
@@ -197,9 +181,12 @@ func (s *RecoveryService) checkPreconditions(op domain.Operation) (*domain.Recei
 			return cached, nil
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if s.auditStore != nil {
-		if err := s.auditStore.CheckWritable(); err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrAuditUnavailable, err)
+		if err := s.auditStore.CheckWritableContext(ctx); err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrAuditUnavailable, err)
 		}
 	}
 	return nil, nil
@@ -209,80 +196,95 @@ func (s *RecoveryService) acquireMutationLease(
 	ctx context.Context,
 	op domain.Operation,
 	req MutationRequest,
+	providerTargetID string,
 	fp domain.Fingerprint,
 ) (func() error, error) {
 	if s.leaseManager == nil {
 		return func() error { return nil }, nil
 	}
 	leaseTTL := req.Timeout + 15*time.Second
-	l, err := s.leaseManager.Acquire(ctx, req.TargetID, string(op.Kind), string(fp), leaseTTL)
+	l, err := s.leaseManager.Acquire(ctx, providerTargetID, string(op.Kind), string(fp), leaseTTL)
 	if err != nil {
 		return nil, err
 	}
-	return func() error {
+	release := func() error {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		return s.leaseManager.Release(cleanupCtx, l)
-	}, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, errors.Join(err, release())
+	}
+	return release, nil
 }
 
 func (s *RecoveryService) recordAdmissionAndConsume(
+	ctx context.Context,
 	op domain.Operation,
 	decision policy.Decision,
 	req MutationRequest,
 	now time.Time,
-) error {
+) (bool, error) {
 	if s.auditStore != nil {
-		if err := s.auditStore.RecordAdmissionIntent(op); err != nil {
-			return fmt.Errorf("%w: %v", ErrAuditUnavailable, err)
+		if err := s.auditStore.RecordAdmissionIntentContext(ctx, op); err != nil {
+			return false, fmt.Errorf("%w: %w", ErrAuditUnavailable, err)
 		}
 	}
 	if decision.EffectiveClass.RequiresApproval() && req.Approval != nil && s.approvalStore != nil {
-		if err := s.approvalStore.MarkConsumed(*req.Approval, now); err != nil {
-			return fmt.Errorf("app: failed to record approval consumption: %w", err)
+		if err := s.approvalStore.MarkConsumedContext(ctx, *req.Approval, now); err != nil {
+			return false, fmt.Errorf("app: failed to record approval consumption: %w", err)
 		}
+		return true, nil
 	}
-	return nil
+	return false, nil
 }
 
-func (s *RecoveryService) runProviderExecution(
+func (s *RecoveryService) compensatePreProviderAbort(
 	ctx context.Context,
 	req MutationRequest,
-	execFn func(context.Context) error,
-) (time.Time, time.Time, error) {
-	startedAt := s.now()
-	execCtx, cancel := context.WithTimeout(ctx, req.Timeout)
-	defer cancel()
-
-	runErr := execFn(execCtx)
-	completedAt := s.now()
-	if !completedAt.After(startedAt) {
-		completedAt = startedAt.Add(time.Millisecond)
+	approvalConsumed bool,
+	releaseLease func() error,
+	primary error,
+) error {
+	var compensationErr error
+	if approvalConsumed && req.Approval != nil && s.approvalStore != nil {
+		compensationCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		compensationErr = s.approvalStore.ReleaseUnexecutedContext(compensationCtx, *req.Approval)
+		cancel()
+		if compensationErr != nil {
+			compensationErr = fmt.Errorf("app: failed to persist pre-provider approval compensation: %w", compensationErr)
+		}
 	}
-	return startedAt, completedAt, runErr
+	return errors.Join(primary, compensationErr, releaseLease())
 }
 
-func (s *RecoveryService) discoverRollback(ctx context.Context, op domain.Operation, targetID string) (policy.RollbackState, string) {
+func (s *RecoveryService) discoverRollback(ctx context.Context, op domain.Operation, targetID string) (policy.RollbackState, string, error) {
 	if op.Classification != domain.ClassReversibleMutation {
-		return policy.RollbackState{}, ""
+		return policy.RollbackState{}, "", nil
 	}
 	checkpoints, listErr := s.backend.ListCheckpoints(ctx, targetID)
+	if err := ctx.Err(); err != nil {
+		return policy.RollbackState{}, "", err
+	}
+	if errors.Is(listErr, context.Canceled) || errors.Is(listErr, context.DeadlineExceeded) {
+		return policy.RollbackState{}, "", listErr
+	}
 	if listErr != nil || len(checkpoints) == 0 {
-		return policy.RollbackState{}, ""
+		return policy.RollbackState{}, "", nil
 	}
 
 	var valid []domain.CheckpointObservation
 	for _, chk := range checkpoints {
 		if err := chk.Validate(); err != nil {
-			return policy.RollbackState{}, ""
+			return policy.RollbackState{}, "", nil
 		}
 		if chk.VMID != targetID {
-			return policy.RollbackState{}, ""
+			return policy.RollbackState{}, "", nil
 		}
 		valid = append(valid, chk)
 	}
 	if len(valid) == 0 {
-		return policy.RollbackState{}, ""
+		return policy.RollbackState{}, "", nil
 	}
 
 	// Deterministic selection: newest CreatedAt, breaking ties with lexicographical ID
@@ -298,22 +300,29 @@ func (s *RecoveryService) discoverRollback(ctx context.Context, op domain.Operat
 		Available:    true,
 		Verified:     true,
 		CheckpointID: ref,
-	}, ref
+	}, ref, nil
 }
 
 func (s *RecoveryService) evaluateMutationPolicy(
 	ctx context.Context,
 	op domain.Operation,
 	req MutationRequest,
+	providerTargetID string,
 	now time.Time,
 	rollback policy.RollbackState,
 ) (policy.Decision, error) {
-	caps, err := s.backend.Capabilities(ctx, req.TargetID)
+	caps, err := s.backend.Capabilities(ctx, providerTargetID)
 	if err != nil {
 		return policy.Decision{}, fmt.Errorf("app: failed to retrieve backend capabilities: %w", err)
 	}
+	if err := ctx.Err(); err != nil {
+		return policy.Decision{}, err
+	}
 
-	auditWritable := s.auditStore != nil && s.auditStore.CheckWritable() == nil
+	auditWritable := s.auditStore != nil && s.auditStore.CheckWritableContext(ctx) == nil
+	if err := ctx.Err(); err != nil {
+		return policy.Decision{}, err
+	}
 
 	evalInput := policy.EvaluationInput{
 		Operation:               op,
@@ -336,7 +345,7 @@ func (s *RecoveryService) evaluateMutationPolicy(
 	return decision, nil
 }
 
-func (s *RecoveryService) verifyApprovalUnconsumed(decision policy.Decision, req MutationRequest) error {
+func (s *RecoveryService) verifyApprovalUnconsumed(ctx context.Context, decision policy.Decision, req MutationRequest) error {
 	if !decision.EffectiveClass.RequiresApproval() {
 		return nil
 	}
@@ -347,24 +356,26 @@ func (s *RecoveryService) verifyApprovalUnconsumed(decision policy.Decision, req
 		}
 	}
 	if s.approvalStore != nil {
-		consumed, err := s.approvalStore.IsConsumed(string(req.Approval.ID))
+		consumed, err := s.approvalStore.IsConsumedContext(ctx, string(req.Approval.ID))
 		if err != nil {
 			return fmt.Errorf("app: failed to verify approval consumption: %w", err)
 		}
 		if consumed {
-			return domain.ErrApprovalConsumed
+			return approvalActivityDenial(domain.ErrApprovalConsumed)
 		}
 	}
 	return nil
 }
 
 func (s *RecoveryService) persistOutcome(
+	ctx context.Context,
 	op domain.Operation,
 	fp domain.Fingerprint,
 	decision policy.Decision,
 	startedAt, completedAt time.Time,
 	runErr error,
 	rollbackRef string,
+	approvalID string,
 ) (domain.Receipt, error) {
 	outcomeStatus := domain.OutcomeSuccess
 	exitCode := 0
@@ -378,13 +389,20 @@ func (s *RecoveryService) persistOutcome(
 		effectiveRollback = ""
 
 		var deniedErr *PolicyDeniedError
-		if errors.As(runErr, &deniedErr) {
+		switch {
+		case errors.As(runErr, &deniedErr):
 			outcomeStatus = domain.OutcomeDenied
 			exitCode = 7
 			errCategory = string(deniedErr.Reason)
 			errMsg = deniedErr.Message
-		} else if errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runErr, domain.ErrMissingDeadline) {
+		case errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runErr, domain.ErrMissingDeadline):
 			outcomeStatus = domain.OutcomeAborted
+			errCategory = "deadline_exceeded"
+			errMsg = "operation deadline exceeded"
+		case errors.Is(runErr, context.Canceled):
+			outcomeStatus = domain.OutcomeAborted
+			errCategory = "caller_canceled"
+			errMsg = "operation cancelled"
 		}
 	}
 
@@ -420,10 +438,13 @@ func (s *RecoveryService) persistOutcome(
 		RollbackRef:     effectiveRollback,
 		RedactionStatus: domain.RedactionApplied,
 	}
+	if approvalID != "" {
+		receiptRecord.EvidenceRefs = []string{approvalID}
+	}
 
 	var saveErr, auditErr error
 	if s.receiptStore != nil {
-		saveErr = s.receiptStore.Save(receiptRecord)
+		saveErr = s.receiptStore.EnsureContext(ctx, receiptRecord)
 	}
 	if saveErr != nil {
 		receiptRecord.ReceiptID = "" // zero/no receipt ID
@@ -431,7 +452,7 @@ func (s *RecoveryService) persistOutcome(
 	}
 
 	if s.auditStore != nil {
-		auditErr = s.auditStore.RecordTerminalOutcome(receiptRecord)
+		auditErr = s.auditStore.EnsureTerminalOutcomeContext(ctx, receiptRecord)
 	}
 
 	if auditErr != nil {

@@ -10,7 +10,40 @@ import (
 
 // Capabilities returns the capability set supported by the Hyper-V adapter for the target.
 func (a *Adapter) Capabilities(_ context.Context, _ string) (domain.CapabilitySet, error) {
+	route, err := a.route.validated()
+	if err != nil {
+		return nil, err
+	}
+	if route.Remote {
+		return domain.ReadOnlyMachineCapabilities(), nil
+	}
 	return domain.DirectMachineCapabilities(), nil
+}
+
+func (a *Adapter) rejectRemotePrivilegedRoute() error {
+	route, err := a.route.validated()
+	if err != nil {
+		return err
+	}
+	if route.Remote {
+		return ErrRemoteRouteReadOnly
+	}
+	return nil
+}
+
+func (a *Adapter) executeMachineMutation(ctx context.Context, id string, script string, env []string) (domain.MachineObservation, error) {
+	now := a.now()
+	if err := domain.ValidateMachineGUID(id); err != nil {
+		return domain.MachineObservation{}, err
+	}
+	if err := a.rejectRemotePrivilegedRoute(); err != nil {
+		return domain.MachineObservation{}, err
+	}
+	stdout, err := a.executeScript(ctx, script, env)
+	if err != nil {
+		return domain.MachineObservation{}, err
+	}
+	return parseMutationResponse(stdout, now)
 }
 
 func (a *Adapter) executeScript(ctx context.Context, script string, env []string) ([]byte, error) {
@@ -39,43 +72,26 @@ func (a *Adapter) executeScript(ctx context.Context, script string, env []string
 
 // StartMachine starts a virtual machine by GUID and returns the resulting machine observation.
 func (a *Adapter) StartMachine(ctx context.Context, id string) (domain.MachineObservation, error) {
-	now := a.now()
-	if err := domain.ValidateMachineGUID(id); err != nil {
-		return domain.MachineObservation{}, err
-	}
-
 	env := []string{fmt.Sprintf("%s=%s", TargetVMIDEnvVar, id)}
-	stdout, err := a.executeScript(ctx, ScriptStart, env)
-	if err != nil {
-		return domain.MachineObservation{}, err
-	}
-
-	return parseMutationResponse(stdout, now)
+	return a.executeMachineMutation(ctx, id, ScriptStart, env)
 }
 
 // StopMachine stops a virtual machine by GUID with mode (shutdown, save, turn-off).
 func (a *Adapter) StopMachine(ctx context.Context, id string, mode string) (domain.MachineObservation, error) {
-	now := a.now()
-	if err := domain.ValidateMachineGUID(id); err != nil {
-		return domain.MachineObservation{}, err
-	}
-
 	env := []string{
 		fmt.Sprintf("%s=%s", TargetVMIDEnvVar, id),
 		fmt.Sprintf("%s=%s", StopModeEnvVar, mode),
 	}
-	stdout, err := a.executeScript(ctx, ScriptStop, env)
-	if err != nil {
-		return domain.MachineObservation{}, err
-	}
-
-	return parseMutationResponse(stdout, now)
+	return a.executeMachineMutation(ctx, id, ScriptStop, env)
 }
 
 // ListCheckpoints lists all snapshots/checkpoints for a virtual machine.
 func (a *Adapter) ListCheckpoints(ctx context.Context, id string) ([]domain.CheckpointObservation, error) {
 	now := a.now()
 	if err := domain.ValidateMachineGUID(id); err != nil {
+		return nil, err
+	}
+	if err := a.rejectRemotePrivilegedRoute(); err != nil {
 		return nil, err
 	}
 
@@ -94,6 +110,9 @@ func (a *Adapter) CreateCheckpoint(ctx context.Context, id string, name string) 
 	if err := domain.ValidateMachineGUID(id); err != nil {
 		return domain.CheckpointObservation{}, err
 	}
+	if err := a.rejectRemotePrivilegedRoute(); err != nil {
+		return domain.CheckpointObservation{}, err
+	}
 
 	env := []string{
 		fmt.Sprintf("%s=%s", TargetVMIDEnvVar, id),
@@ -109,10 +128,6 @@ func (a *Adapter) CreateCheckpoint(ctx context.Context, id string, name string) 
 
 // RestoreCheckpoint restores a virtual machine to an exact snapshot GUID.
 func (a *Adapter) RestoreCheckpoint(ctx context.Context, id string, checkpointID string) (domain.MachineObservation, error) {
-	now := a.now()
-	if err := domain.ValidateMachineGUID(id); err != nil {
-		return domain.MachineObservation{}, err
-	}
 	if err := domain.ValidateMachineGUID(checkpointID); err != nil {
 		return domain.MachineObservation{}, err
 	}
@@ -121,10 +136,5 @@ func (a *Adapter) RestoreCheckpoint(ctx context.Context, id string, checkpointID
 		fmt.Sprintf("%s=%s", TargetVMIDEnvVar, id),
 		fmt.Sprintf("%s=%s", SnapshotIDEnvVar, checkpointID),
 	}
-	stdout, err := a.executeScript(ctx, ScriptCheckpointRestore, env)
-	if err != nil {
-		return domain.MachineObservation{}, err
-	}
-
-	return parseMutationResponse(stdout, now)
+	return a.executeMachineMutation(ctx, id, ScriptCheckpointRestore, env)
 }

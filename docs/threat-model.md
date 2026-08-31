@@ -266,14 +266,24 @@ Approvals are strictly scoped and non-transferable. An approval record must expl
 
 An approval granted for machine `vm-alpha` confers no authority over machine `vm-beta`.
 
+For daemon machine and checkpoint operations, operators issue authority through the bounded
+`POST /v1/operation-approvals` preparation endpoint. The server fresh-resolves the public target,
+reconstructs and classifies the beneficiary's exact operation, and stores the immutable approval.
+Execution transports carry only the canonical `approval_id` and the exact returned UTC deadline;
+raw approval objects are rejected. Issuance accepts only a non-delegated `operation:admin` operator
+and can bind authority either to that operator or, when explicitly requested, to
+`agent:mcp-local`. MCP can execute its exact grant but has no issuance tool.
+
 ### Expiry, Absolute Deadlines, and Monotonic Clocks
 
 The system distinguishes between admission deadline validation and in-flight elapsed-time
 enforcement:
 
 - **Absolute Wall-Clock Deadlines**: Every request and approval record contains an absolute UTC
-  timestamp deadline (`deadline`). At admission, the daemon rejects any request received after its
-  wall-clock deadline has passed, or whose approval validity window has expired.
+  timestamp deadline (`deadline`). At admission, the daemon refuses any effect after its wall-clock
+  deadline or approval validity window has passed. A syntactically valid expired approval reference
+  receives only a bounded denial-finalization budget so the durable redacted denial can be written;
+  it never reaches capability discovery or the mutating backend.
 - **Host Monotonic Elapsed-Time Enforcement**: Once an operation is admitted, execution duration limits
   and timeouts are tracked and enforced using the host operating system's monotonic clock
   (`CLOCK_MONOTONIC`), ensuring execution timing is immune to host wall-clock adjustments, NTP steps,
@@ -315,7 +325,7 @@ with a previously recorded key, it evaluates execution and retry precedence in t
 order:
 
 1. **Exact Retry Match**: If the incoming request matches the exact tuple `(Actor, Target MachineRef,
-   Canonical Operation Hash, IdempotencyKey)`:
+   Canonical Operation Hash, IdempotencyKey, Approval Reference)`:
    - **In-Flight Operation**: If the prior operation is currently executing, the caller attaches to
      the active execution stream (or receives an in-progress status) without initiating a second
      execution.

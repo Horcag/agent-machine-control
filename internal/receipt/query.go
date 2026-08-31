@@ -1,6 +1,7 @@
 package receipt
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,7 +15,21 @@ import (
 
 // Get reads and validates a single receipt by receipt ID.
 func (s *Store) Get(receiptID string) (*domain.Receipt, error) {
+	return s.GetContext(context.Background(), receiptID)
+}
+
+// GetContext reads and validates one receipt within the caller's deadline.
+func (s *Store) GetContext(ctx context.Context, receiptID string) (*domain.Receipt, error) {
 	if err := domain.ValidateReceiptID(receiptID); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := validateReceiptRoot(s.dir); err != nil {
+		if os.IsNotExist(err) {
+			return nil, ErrReceiptNotFound
+		}
 		return nil, err
 	}
 
@@ -27,6 +42,9 @@ func (s *Store) Get(receiptID string) (*domain.Receipt, error) {
 		if os.IsNotExist(err) {
 			return nil, ErrReceiptNotFound
 		}
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	return rcpt, nil
@@ -43,6 +61,12 @@ func (s *Store) List(limit int, actorFilter string) ([]domain.Receipt, error) {
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if err := validateReceiptRoot(s.dir); err != nil {
+		if os.IsNotExist(err) {
+			return []domain.Receipt{}, nil
+		}
+		return nil, err
+	}
 
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
@@ -80,6 +104,17 @@ func (s *Store) List(limit int, actorFilter string) ([]domain.Receipt, error) {
 	}
 
 	return results, nil
+}
+
+func validateReceiptRoot(dir string) error {
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("receipt: receipt root is not a no-follow directory")
+	}
+	return nil
 }
 
 func (s *Store) readReceiptFile(filePath string) (*domain.Receipt, error) {
@@ -122,4 +157,18 @@ func (s *Store) readReceiptFile(filePath string) (*domain.Receipt, error) {
 	}
 
 	return &receipt, nil
+}
+
+func (s *Store) readReceiptFileContext(ctx context.Context, filePath string) (*domain.Receipt, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	receipt, err := s.readReceiptFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return receipt, nil
 }

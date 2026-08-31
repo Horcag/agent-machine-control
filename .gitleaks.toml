@@ -1,0 +1,16 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Synthetic pinned-host-key example introduced in the Task 8 checkpoint"
+condition = "AND"
+targetRules = ["generic-api-key"]
+commits = ["35e2537903754c619e1fa17133f01a86fd24d778"]
+paths = ['''^docs/ssh-sessions\.md$''']
+
+[[allowlists]]
+description = "Synthetic private-key boundary fixture introduced in the Task 8 checkpoint"
+condition = "AND"
+targetRules = ["private-key"]
+commits = ["35e2537903754c619e1fa17133f01a86fd24d778"]
+paths = ['''^internal/guest/ssh/sanitize_test\.go$''']

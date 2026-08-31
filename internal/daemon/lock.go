@@ -180,6 +180,11 @@ func readOwnerRecord(ownerPath string) (*lease.LockOwnerRecord, error) {
 	return &ownerRec, nil
 }
 
+// ReadSingletonOwner reads and validates the daemon singleton owner record.
+func ReadSingletonOwner(daemonDir string) (*lease.LockOwnerRecord, error) {
+	return readOwnerRecord(filepath.Join(daemonDir, "singleton.lock", "owner.json"))
+}
+
 // Release releases the singleton lock if still owned by this process identity.
 func (l *SingletonLock) Release() error {
 	ownerRec, err := readOwnerRecord(l.ownerPath)

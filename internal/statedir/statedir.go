@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/Horcag/agent-machine-control/internal/wslruntime"
 )
 
 const (
@@ -36,6 +38,18 @@ const (
 
 	// SubdirOperations is the subdirectory name for durable operation records.
 	SubdirOperations = "operations"
+
+	// SubdirSessions is the subdirectory name for persistent terminal session state and transcripts.
+	SubdirSessions = "sessions"
+
+	// SubdirKeys is the subdirectory name for local guest private key files.
+	SubdirKeys = "keys"
+
+	// SubdirMachines is the subdirectory name for per-machine connection and host-key configurations.
+	SubdirMachines = "machines"
+
+	// SubdirTargets is the subdirectory name for protected target-selection authority.
+	SubdirTargets = "targets"
 )
 
 var (
@@ -89,6 +103,10 @@ func (s *StateDir) EnsureDirs() error {
 		s.DaemonDir(),
 		s.AuthDir(),
 		s.OperationsDir(),
+		s.SessionsDir(),
+		s.KeysDir(),
+		s.MachinesDir(),
+		s.TargetsDir(),
 	}
 
 	for _, dir := range subdirs {
@@ -138,6 +156,14 @@ func validateNoSymlinkComponents(path string) error {
 			return err
 		}
 		if fi.Mode()&os.ModeSymlink != 0 {
+			canonical, allowed, aliasErr := allowedSystemPathAlias(current)
+			if aliasErr != nil {
+				return aliasErr
+			}
+			if allowed {
+				current = canonical
+				continue
+			}
 			return fmt.Errorf("%w: symlink component detected at %q", ErrSymlinkNotAllowed, current)
 		}
 	}
@@ -158,7 +184,7 @@ func validateExistingDir(dir string, fi os.FileInfo) error {
 			}
 		}
 	}
-	return nil
+	return ensurePlatformPrivateDirectory(dir)
 }
 
 func createAndValidateDir(dir string) error {
@@ -176,7 +202,7 @@ func createAndValidateDir(dir string) error {
 			return fmt.Errorf("%w: failed to enforce mode 0700 on %q: %v", ErrInsecurePermissions, dir, err)
 		}
 	}
-	return nil
+	return ensurePlatformPrivateDirectory(dir)
 }
 
 // Root returns the root state directory path.
@@ -219,6 +245,26 @@ func (s *StateDir) OperationsDir() string {
 	return filepath.Join(s.root, SubdirOperations)
 }
 
+// SessionsDir returns the path to the sessions subdirectory.
+func (s *StateDir) SessionsDir() string {
+	return filepath.Join(s.root, SubdirSessions)
+}
+
+// KeysDir returns the path to the keys subdirectory.
+func (s *StateDir) KeysDir() string {
+	return filepath.Join(s.root, SubdirKeys)
+}
+
+// MachinesDir returns the path to the machines subdirectory.
+func (s *StateDir) MachinesDir() string {
+	return filepath.Join(s.root, SubdirMachines)
+}
+
+// TargetsDir returns the path to the protected target-selection subdirectory.
+func (s *StateDir) TargetsDir() string {
+	return filepath.Join(s.root, SubdirTargets)
+}
+
 func defaultStateDir() (string, error) {
 	if runtime.GOOS == "windows" || os.Getenv("AMC_TEST_WINDOWS") == "1" {
 		return defaultWindowsStateDir(), nil
@@ -255,22 +301,7 @@ func isWSL() bool {
 	if os.Getenv("AMC_TEST_NON_WSL") == "1" {
 		return false
 	}
-	if os.Getenv("WSL_DISTRO_NAME") != "" || os.Getenv("WSL_INTEROP") != "" {
-		return true
-	}
-	if data, err := os.ReadFile("/proc/sys/kernel/osrelease"); err == nil {
-		s := strings.ToLower(string(data))
-		if strings.Contains(s, "microsoft") || strings.Contains(s, "wsl") {
-			return true
-		}
-	}
-	if data, err := os.ReadFile("/proc/version"); err == nil {
-		s := strings.ToLower(string(data))
-		if strings.Contains(s, "microsoft") || strings.Contains(s, "wsl") {
-			return true
-		}
-	}
-	return false
+	return wslruntime.IsWSL()
 }
 
 func resolveWSLHostStateDir() (string, error) {

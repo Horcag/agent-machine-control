@@ -31,7 +31,7 @@ func (b *blockedFakeBackend) Doctor(_ context.Context) (app.DoctorReport, error)
 }
 
 func (b *blockedFakeBackend) ListMachines(_ context.Context) ([]domain.MachineObservation, error) {
-	return nil, nil
+	return []domain.MachineObservation{daemonTestObservation(daemonTestVMID)}, nil
 }
 
 func (b *blockedFakeBackend) InspectMachine(_ context.Context, id string) (domain.MachineObservation, error) {
@@ -151,6 +151,7 @@ func TestServer_ShutdownOrdering_BlockedBackendAndSSEWaiter(t *testing.T) {
 	}()
 
 	dir := t.TempDir()
+	seedDaemonTestTarget(t, dir)
 	srv, err := daemon.NewServer(daemon.Config{
 		StateDir:   dir,
 		ListenAddr: "127.0.0.1:0",

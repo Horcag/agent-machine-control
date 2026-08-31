@@ -11,9 +11,11 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/events"
 )
 
-func (m *Manager) executeOperation(ctx context.Context, rec domain.OperationRecord, op domain.Operation, timeout time.Duration) {
+func (m *Manager) executeOperation(ctx context.Context, stopDeadline context.CancelFunc, rec domain.OperationRecord, op domain.Operation, timeout time.Duration, resolvedApproval *domain.Approval, approvalErr error) {
+	defer stopDeadline()
 	defer m.wg.Done()
 	defer m.liveOpsCount.Add(-1)
+	defer func() { <-m.capacity }()
 	defer func() {
 		m.mu.Lock()
 		delete(m.liveCancels, rec.ID)
@@ -31,6 +33,9 @@ func (m *Manager) executeOperation(ctx context.Context, rec domain.OperationReco
 		IdempotencyKey: op.IdempotencyKey,
 		Timeout:        timeout,
 		Deadline:       op.Deadline,
+		Approval:       resolvedApproval,
+		ApprovalID:     string(rec.ApprovalID),
+		ApprovalError:  approvalErr,
 		OnAdmitted: func(execCtx context.Context) error {
 			return m.saveAndPublishState(execCtx, &rec, domain.OpStateAdmitted)
 		},
@@ -84,6 +89,7 @@ func (m *Manager) saveAndPublishState(execCtx context.Context, rec *domain.Opera
 func (m *Manager) finalizeOperationState(ctx context.Context, rec *domain.OperationRecord, rcpt domain.Receipt, execErr error) error {
 	now := m.now()
 	rec.CompletedAt = now
+	rec.EffectiveClass = resolvedEffectiveClass(rec.EffectiveClass, rcpt.Class)
 
 	switch {
 	case ctx.Err() != nil:
@@ -161,6 +167,13 @@ func (m *Manager) finalizeOperationState(ctx context.Context, rec *domain.Operat
 	return nil
 }
 
+func resolvedEffectiveClass(existing, receiptClass domain.OperationClass) domain.OperationClass {
+	if receiptClass.IsValid() {
+		return receiptClass
+	}
+	return existing
+}
+
 func (m *Manager) dispatchBackend(ctx context.Context, op domain.Operation, req app.MutationRequest) (domain.Receipt, error) {
 	if m.recoveryService == nil {
 		return domain.Receipt{}, app.ErrMissingBackend
@@ -200,6 +213,12 @@ func sanitizeExecError(err error) (string, string) {
 	var deniedErr *app.PolicyDeniedError
 	if errors.As(err, &deniedErr) {
 		return string(deniedErr.Reason), deniedErr.Message
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, domain.ErrMissingDeadline) {
+		return "timeout", "operation deadline exceeded"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "cancelled", "operation cancelled"
 	}
 	return "backend_error", "backend operation failed"
 }

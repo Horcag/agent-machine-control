@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/approval"
@@ -52,18 +53,24 @@ type MutationRequest struct {
 	Timeout        time.Duration
 	Deadline       time.Time
 	Approval       *domain.Approval
+	ApprovalID     string
+	ApprovalError  error
 	OnAdmitted     func(ctx context.Context) error
 	OnRunning      func(ctx context.Context) error
 }
 
 // RecoveryService orchestrates in-process direct recovery operations, policy, leases, and receipts.
 type RecoveryService struct {
-	backend       Backend
+	backend        Backend
+	targetResolver interface {
+		ResolveTarget(context.Context, string) (TargetResolution, error)
+	}
 	leaseManager  *lease.Manager
 	auditStore    *audit.Store
 	receiptStore  *receipt.Store
 	approvalStore *approval.Store
 	nowFn         func() time.Time
+	issueMu       sync.Mutex
 }
 
 // Option configures RecoveryService dependencies.
@@ -73,6 +80,15 @@ type Option func(*RecoveryService)
 func WithRecoveryClock(fn func() time.Time) Option {
 	return func(s *RecoveryService) {
 		s.nowFn = fn
+	}
+}
+
+// WithRecoveryTargetResolver canonicalizes public target references before operation identity is built.
+func WithRecoveryTargetResolver(resolver interface {
+	ResolveTarget(context.Context, string) (TargetResolution, error)
+}) Option {
+	return func(s *RecoveryService) {
+		s.targetResolver = resolver
 	}
 }
 
@@ -99,6 +115,14 @@ func NewRecoveryService(
 	return s
 }
 
+// IssueApproval records server-owned provenance for a trusted local approval flow.
+func (s *RecoveryService) IssueApproval(ctx context.Context, approval domain.Approval) error {
+	if s == nil || s.approvalStore == nil {
+		return errors.New("app: approval store is unavailable")
+	}
+	return s.approvalStore.IssueContext(ctx, approval)
+}
+
 func (s *RecoveryService) now() time.Time {
 	if s.nowFn != nil {
 		return s.nowFn().UTC()
@@ -111,10 +135,37 @@ func (s *RecoveryService) ListCheckpoints(ctx context.Context, targetID string) 
 	if s.backend == nil {
 		return nil, ErrMissingBackend
 	}
-	if err := domain.ValidateMachineGUID(targetID); err != nil {
+	if s.targetResolver == nil {
+		if err := domain.ValidateMachineGUID(targetID); err != nil {
+			return nil, err
+		}
+		return s.backend.ListCheckpoints(ctx, targetID)
+	}
+	_, providerID, err := s.resolveTargetReference(ctx, targetID)
+	if err != nil {
 		return nil, err
 	}
-	return s.backend.ListCheckpoints(ctx, targetID)
+	return s.backend.ListCheckpoints(ctx, providerID)
+}
+
+// ResolveTargetReference returns the canonical policy identity for a public machine reference.
+func (s *RecoveryService) ResolveTargetReference(ctx context.Context, reference string) (domain.MachineRef, error) {
+	canonical, _, err := s.resolveTargetReference(ctx, reference)
+	return domain.MachineRef(canonical), err
+}
+
+func (s *RecoveryService) resolveTargetReference(ctx context.Context, reference string) (string, string, error) {
+	if s.targetResolver == nil {
+		if err := domain.MachineRef(reference).Validate(); err != nil {
+			return "", "", err
+		}
+		return reference, reference, nil
+	}
+	resolution, err := s.targetResolver.ResolveTarget(ctx, reference)
+	if err != nil {
+		return "", "", err
+	}
+	return resolution.Locator.String(), resolution.ProviderVMID, nil
 }
 
 // StartMachine starts a virtual machine in-process with policy and receipt verification.
@@ -124,15 +175,20 @@ func (s *RecoveryService) StartMachine(ctx context.Context, req MutationRequest)
 		return domain.Receipt{}, emptyObs, ErrMissingBackend
 	}
 
+	canonical, providerID, err := s.resolveTargetReference(ctx, req.TargetID)
+	if err != nil {
+		return domain.Receipt{}, emptyObs, err
+	}
+	req.TargetID = canonical
 	op, err := s.buildOperation("machine.start", req, domain.ClassReversibleMutation, domain.CapabilityMachineStart, nil)
 	if err != nil {
 		return domain.Receipt{}, emptyObs, err
 	}
 
 	var obs domain.MachineObservation
-	receiptRecord, execErr := s.executeMutation(ctx, op, req, func(execCtx context.Context) error {
+	receiptRecord, execErr := s.executeMutation(ctx, op, req, providerID, func(execCtx context.Context) error {
 		var runErr error
-		obs, runErr = s.backend.StartMachine(execCtx, req.TargetID)
+		obs, runErr = s.backend.StartMachine(execCtx, providerID)
 		return runErr
 	})
 
@@ -146,6 +202,11 @@ func (s *RecoveryService) StopMachine(ctx context.Context, req MutationRequest, 
 		return domain.Receipt{}, emptyObs, ErrMissingBackend
 	}
 
+	canonical, providerID, err := s.resolveTargetReference(ctx, req.TargetID)
+	if err != nil {
+		return domain.Receipt{}, emptyObs, err
+	}
+	req.TargetID = canonical
 	initialClass := domain.ClassReversibleMutation
 	if mode == "turn-off" {
 		initialClass = domain.ClassDestructivePrivileged
@@ -158,9 +219,9 @@ func (s *RecoveryService) StopMachine(ctx context.Context, req MutationRequest, 
 	}
 
 	var obs domain.MachineObservation
-	receiptRecord, execErr := s.executeMutation(ctx, op, req, func(execCtx context.Context) error {
+	receiptRecord, execErr := s.executeMutation(ctx, op, req, providerID, func(execCtx context.Context) error {
 		var runErr error
-		obs, runErr = s.backend.StopMachine(execCtx, req.TargetID, mode)
+		obs, runErr = s.backend.StopMachine(execCtx, providerID, mode)
 		return runErr
 	})
 
@@ -176,6 +237,11 @@ func (s *RecoveryService) CreateCheckpoint(ctx context.Context, req MutationRequ
 	if err := domain.ValidateBoundedString(name, 1, 256, domain.ErrInvalidCheckpointObservation); err != nil {
 		return domain.Receipt{}, emptyObs, err
 	}
+	canonical, providerID, err := s.resolveTargetReference(ctx, req.TargetID)
+	if err != nil {
+		return domain.Receipt{}, emptyObs, err
+	}
+	req.TargetID = canonical
 
 	params := map[string]any{"name": name}
 	op, err := s.buildOperation("checkpoint.create", req, domain.ClassDestructivePrivileged, domain.CapabilityCheckpointCreate, params)
@@ -184,9 +250,9 @@ func (s *RecoveryService) CreateCheckpoint(ctx context.Context, req MutationRequ
 	}
 
 	var obs domain.CheckpointObservation
-	receiptRecord, execErr := s.executeMutation(ctx, op, req, func(execCtx context.Context) error {
+	receiptRecord, execErr := s.executeMutation(ctx, op, req, providerID, func(execCtx context.Context) error {
 		var runErr error
-		obs, runErr = s.backend.CreateCheckpoint(execCtx, req.TargetID, name)
+		obs, runErr = s.backend.CreateCheckpoint(execCtx, providerID, name)
 		return runErr
 	})
 
@@ -202,6 +268,11 @@ func (s *RecoveryService) RestoreCheckpoint(ctx context.Context, req MutationReq
 	if err := domain.ValidateMachineGUID(checkpointID); err != nil {
 		return domain.Receipt{}, emptyObs, err
 	}
+	canonical, providerID, err := s.resolveTargetReference(ctx, req.TargetID)
+	if err != nil {
+		return domain.Receipt{}, emptyObs, err
+	}
+	req.TargetID = canonical
 
 	params := map[string]any{"checkpoint_id": checkpointID}
 	op, err := s.buildOperation("checkpoint.restore", req, domain.ClassDestructivePrivileged, domain.CapabilityCheckpointRestore, params)
@@ -210,9 +281,9 @@ func (s *RecoveryService) RestoreCheckpoint(ctx context.Context, req MutationReq
 	}
 
 	var obs domain.MachineObservation
-	receiptRecord, execErr := s.executeMutation(ctx, op, req, func(execCtx context.Context) error {
+	receiptRecord, execErr := s.executeMutation(ctx, op, req, providerID, func(execCtx context.Context) error {
 		var runErr error
-		obs, runErr = s.backend.RestoreCheckpoint(execCtx, req.TargetID, checkpointID)
+		obs, runErr = s.backend.RestoreCheckpoint(execCtx, providerID, checkpointID)
 		return runErr
 	})
 

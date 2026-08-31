@@ -23,7 +23,10 @@ import (
 
 type repairBlockingBackend struct {
 	started      atomic.Int64
+	current      atomic.Int64
+	maxCurrent   atomic.Int64
 	blockChannel chan struct{}
+	entered      chan struct{}
 }
 
 func (b *repairBlockingBackend) Doctor(_ context.Context) (app.DoctorReport, error) {
@@ -44,6 +47,20 @@ func (b *repairBlockingBackend) Capabilities(_ context.Context, _ string) (domai
 
 func (b *repairBlockingBackend) StartMachine(ctx context.Context, id string) (domain.MachineObservation, error) {
 	b.started.Add(1)
+	current := b.current.Add(1)
+	defer b.current.Add(-1)
+	for {
+		observed := b.maxCurrent.Load()
+		if current <= observed || b.maxCurrent.CompareAndSwap(observed, current) {
+			break
+		}
+	}
+	if b.entered != nil {
+		select {
+		case b.entered <- struct{}{}:
+		default:
+		}
+	}
 	if b.blockChannel != nil {
 		select {
 		case <-b.blockChannel:
@@ -159,7 +176,7 @@ func TestManager_PendingAdmittedRunningObservationAndExactRetry(t *testing.T) {
 
 func TestManager_Over100ConcurrentBlockedBackendCapacity(t *testing.T) {
 	blockCh := make(chan struct{})
-	backend := &repairBlockingBackend{blockChannel: blockCh}
+	backend := &repairBlockingBackend{blockChannel: blockCh, entered: make(chan struct{}, 100)}
 
 	dir := t.TempDir()
 	leasesDir := t.TempDir()
@@ -194,17 +211,17 @@ func TestManager_Over100ConcurrentBlockedBackendCapacity(t *testing.T) {
 			defer wg.Done()
 			op := domain.Operation{
 				Kind:                "machine.start",
-				Target:              domain.MachineRef(fmt.Sprintf("target-%04d", idx)),
+				Target:              domain.MachineRef(fmt.Sprintf("c4a523d4-6b99-4d62-a5e2-%012x", idx+1)),
 				Actor:               actor,
 				Reason:              "capacity stress test",
-				Deadline:            time.Now().Add(30 * time.Second),
+				Deadline:            time.Now().Add(5 * time.Minute),
 				IdempotencyKey:      fmt.Sprintf("idemp-cap-%04d", idx),
 				RequiredScopes:      []string{"machine:write"},
 				RequiredCapability:  "machine:start",
 				Classification:      domain.ClassReversibleMutation,
 				EvidenceSensitivity: domain.EvidenceSensitivityStandard,
 			}
-			_, _, err := mgr.Submit(context.Background(), op, 30*time.Second)
+			_, _, err := mgr.Submit(context.Background(), op, 5*time.Minute)
 			switch {
 			case err == nil:
 				acceptedCount.Add(1)
@@ -221,8 +238,24 @@ func TestManager_Over100ConcurrentBlockedBackendCapacity(t *testing.T) {
 	if otherErrCount.Load() > 0 {
 		t.Errorf("unexpected errors during concurrent submit: %d", otherErrCount.Load())
 	}
-	if acceptedCount.Load() > 100 {
-		t.Errorf("expected at most 100 live operations admitted, got %d", acceptedCount.Load())
+	if got := acceptedCount.Load(); got > 100 {
+		t.Fatalf("accepted backend calls = %d, capacity must not exceed 100", got)
+	}
+	if acceptedCount.Load() != 100 || busyCount.Load() != int64(totalSubmitters-100) {
+		t.Fatalf("capacity outcomes = accepted %d busy %d, want 100/%d", acceptedCount.Load(), busyCount.Load(), totalSubmitters-100)
+	}
+	for range 100 {
+		select {
+		case <-backend.entered:
+		case <-time.After(5 * time.Second):
+			t.Fatal("backend operations did not reach simultaneous blocking barrier")
+		}
+	}
+	if got := backend.current.Load(); got != 100 {
+		t.Errorf("simultaneous backend concurrency = %d, want 100", got)
+	}
+	if got := backend.maxCurrent.Load(); got != 100 {
+		t.Errorf("maximum backend concurrency = %d, want 100", got)
 	}
 	if acceptedCount.Load()+busyCount.Load() != int64(totalSubmitters) {
 		t.Errorf("expected accepted + busy == %d, got %d + %d", totalSubmitters, acceptedCount.Load(), busyCount.Load())

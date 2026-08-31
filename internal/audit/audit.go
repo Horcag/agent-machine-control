@@ -1,11 +1,10 @@
 package audit
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -27,6 +26,8 @@ const (
 var (
 	// ErrAuditUnavailable indicates the audit log is unwritable or storage failed.
 	ErrAuditUnavailable = errors.New("audit: audit storage is unavailable or unwritable")
+	// ErrTerminalEvidenceInvalid indicates finalized replay cannot prove its terminal audit record.
+	ErrTerminalEvidenceInvalid = errors.New("audit: terminal evidence is missing or invalid")
 )
 
 // EventType identifies the lifecycle phase of an audit event.
@@ -39,24 +40,51 @@ const (
 
 // Event represents an append-only audit event record.
 type Event struct {
-	SchemaVersion  string               `json:"schema_version"`
-	Timestamp      time.Time            `json:"timestamp"`
-	EventType      EventType            `json:"event_type"`
-	Actor          string               `json:"actor,omitempty"`
-	Target         string               `json:"target,omitempty"`
-	OperationKind  string               `json:"operation_kind,omitempty"`
-	Fingerprint    string               `json:"fingerprint,omitempty"`
-	IdempotencyKey string               `json:"idempotency_key,omitempty"`
-	ReceiptID      string               `json:"receipt_id,omitempty"`
-	OutcomeStatus  domain.OutcomeStatus `json:"outcome_status,omitempty"`
-	ExitCode       int                  `json:"exit_code,omitempty"`
-	ErrorCategory  string               `json:"error_category,omitempty"`
-	ErrorMessage   string               `json:"error_message,omitempty"`
-	RollbackRef    string               `json:"rollback_ref,omitempty"`
+	SchemaVersion          string                `json:"schema_version"`
+	Timestamp              time.Time             `json:"timestamp"`
+	EventType              EventType             `json:"event_type"`
+	Actor                  string                `json:"actor,omitempty"`
+	Target                 string                `json:"target,omitempty"`
+	OperationKind          string                `json:"operation_kind,omitempty"`
+	Fingerprint            string                `json:"fingerprint,omitempty"`
+	IdempotencyFingerprint string                `json:"idempotency_fingerprint,omitempty"`
+	IdempotencyKey         string                `json:"idempotency_key,omitempty"`
+	Classification         domain.OperationClass `json:"classification,omitempty"`
+	ReceiptID              string                `json:"receipt_id,omitempty"`
+	OutcomeStatus          domain.OutcomeStatus  `json:"outcome_status,omitempty"`
+	ExitCode               int                   `json:"exit_code,omitempty"`
+	ErrorCategory          string                `json:"error_category,omitempty"`
+	ErrorMessage           string                `json:"error_message,omitempty"`
+	RollbackRef            string                `json:"rollback_ref,omitempty"`
 }
 
 // Option configures Store behavior.
 type Option func(*Store)
+
+// WithAppendHook injects a pre-append failure hook for deterministic durability tests.
+func WithAppendHook(fn func(Event) error) Option {
+	return func(s *Store) { s.appendHook = fn }
+}
+
+// WithEnsureHook injects a context-aware pre-append boundary for deterministic deadline tests.
+func WithEnsureHook(fn func(context.Context, Event) error) Option {
+	return func(s *Store) { s.ensureHook = fn }
+}
+
+// WithPostAppendHook injects a boundary after append and before durable file sync.
+func WithPostAppendHook(fn func()) Option {
+	return func(s *Store) { s.postAppendHook = fn }
+}
+
+// WithWritableHook injects a context-aware writability boundary for deterministic platform tests.
+func WithWritableHook(fn func(context.Context) error) Option {
+	return func(s *Store) { s.writableHook = fn }
+}
+
+// WithRemoveFunc injects lock cleanup removal for deterministic failure tests.
+func WithRemoveFunc(fn func(string) error) Option {
+	return func(s *Store) { s.removeFn = fn }
+}
 
 // Store manages append-only persistence of audit events.
 type Store struct {
@@ -64,9 +92,15 @@ type Store struct {
 	mu               sync.Mutex
 	nowFn            func() time.Time
 	syncDirFn        func(dir string) error
+	closeFn          func(*os.File) error
 	livenessChecker  lease.LivenessChecker
 	identityProvider lease.IdentityProvider
 	lockTimeout      time.Duration
+	appendHook       func(Event) error
+	ensureHook       func(context.Context, Event) error
+	postAppendHook   func()
+	writableHook     func(context.Context) error
+	removeFn         func(string) error
 }
 
 // NewStore creates a new audit Store for the given directory.
@@ -75,9 +109,11 @@ func NewStore(dir string, opts ...Option) *Store {
 		dir:              dir,
 		nowFn:            time.Now,
 		syncDirFn:        statedir.SyncDir,
+		closeFn:          (*os.File).Close,
 		livenessChecker:  &lease.DefaultLivenessChecker{},
 		identityProvider: &lease.DefaultIdentityProvider{},
 		lockTimeout:      5 * time.Second,
+		removeFn:         os.Remove,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -133,10 +169,25 @@ func (s *Store) logPath() string {
 
 // CheckWritable verifies that the audit log file and directory can be written to.
 func (s *Store) CheckWritable() error {
-	s.mu.Lock()
+	return s.CheckWritableContext(context.Background())
+}
+
+// CheckWritableContext verifies writability within the caller's deadline.
+func (s *Store) CheckWritableContext(ctx context.Context) error {
+	if s.writableHook != nil {
+		if err := s.writableHook(ctx); err != nil {
+			return err
+		}
+	}
+	if err := lockAuditStoreContext(ctx, &s.mu); err != nil {
+		return err
+	}
 	defer s.mu.Unlock()
 
-	return s.withLock(func() error {
+	return s.withLockContext(ctx, func() error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		testFile := filepath.Join(s.dir, fmt.Sprintf(".write_test_%d", time.Now().UnixNano()))
 		f, err := os.OpenFile(testFile, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0600)
 		if err != nil {
@@ -150,6 +201,11 @@ func (s *Store) CheckWritable() error {
 
 // RecordAdmissionIntent writes an admission intent audit event.
 func (s *Store) RecordAdmissionIntent(op domain.Operation) error {
+	return s.RecordAdmissionIntentContext(context.Background(), op)
+}
+
+// RecordAdmissionIntentContext writes an admission intent within the caller's deadline.
+func (s *Store) RecordAdmissionIntentContext(ctx context.Context, op domain.Operation) error {
 	fp, err := op.Fingerprint()
 	if err != nil {
 		return fmt.Errorf("audit: failed to compute fingerprint: %w", err)
@@ -166,175 +222,168 @@ func (s *Store) RecordAdmissionIntent(op domain.Operation) error {
 		IdempotencyKey: op.IdempotencyKey,
 	}
 
-	return s.appendEvent(event)
+	return s.appendEventContext(ctx, event)
 }
 
 // RecordTerminalOutcome writes a terminal outcome audit event.
 func (s *Store) RecordTerminalOutcome(r domain.Receipt) error {
-	event := Event{
-		SchemaVersion: SchemaVersion,
-		Timestamp:     s.now(),
-		EventType:     EventTerminalOutcome,
-		ReceiptID:     string(r.ReceiptID),
-		OutcomeStatus: r.Outcome.Status,
-		ExitCode:      r.Outcome.ExitCode,
-		ErrorCategory: r.Outcome.ErrorCategory,
-		ErrorMessage:  r.Outcome.ErrorMessage,
-		RollbackRef:   r.RollbackRef,
-	}
+	return s.appendEvent(terminalOutcomeEvent(r))
+}
 
-	return s.appendEvent(event)
+func terminalOutcomeEvent(r domain.Receipt) Event {
+	return Event{
+		SchemaVersion:          SchemaVersion,
+		Timestamp:              r.CompletedAt.UTC(),
+		EventType:              EventTerminalOutcome,
+		Actor:                  string(r.Actor),
+		Target:                 string(r.Target),
+		OperationKind:          string(r.OperationKind),
+		Fingerprint:            string(r.Fingerprint),
+		IdempotencyFingerprint: string(r.IdempotencyFingerprint),
+		IdempotencyKey:         r.IdempotencyKey,
+		Classification:         r.Class,
+		ReceiptID:              string(r.ReceiptID),
+		OutcomeStatus:          r.Outcome.Status,
+		ExitCode:               r.Outcome.ExitCode,
+		ErrorCategory:          r.Outcome.ErrorCategory,
+		ErrorMessage:           r.Outcome.ErrorMessage,
+		RollbackRef:            r.RollbackRef,
+	}
+}
+
+// EnsureTerminalOutcome idempotently appends the exact terminal event or rejects a collision.
+func (s *Store) EnsureTerminalOutcome(r domain.Receipt) error {
+	return s.EnsureTerminalOutcomeContext(context.Background(), r)
+}
+
+// EnsureTerminalOutcomeContext ensures exact terminal evidence within the caller's deadline.
+func (s *Store) EnsureTerminalOutcomeContext(ctx context.Context, r domain.Receipt) error {
+	if s == nil {
+		return ErrAuditUnavailable
+	}
+	if err := r.Validate(); err != nil {
+		return fmt.Errorf("audit: invalid terminal receipt: %w", err)
+	}
+	event := terminalOutcomeEvent(r)
+	if err := lockAuditStoreContext(ctx, &s.mu); err != nil {
+		return err
+	}
+	defer s.mu.Unlock()
+	return s.withLockContext(ctx, func() error {
+		return s.ensureTerminalOutcomeLocked(ctx, r, event)
+	})
+}
+
+func (s *Store) ensureTerminalOutcomeLocked(ctx context.Context, receipt domain.Receipt, event Event) error {
+	events, err := s.readEventsLockedContext(ctx)
+	if err != nil {
+		return err
+	}
+	found, err := findExactTerminalOutcome(events, receipt)
+	if err != nil {
+		return err
+	}
+	if found {
+		if err := s.syncDirectory(); err != nil {
+			return fmt.Errorf("%w: exact terminal event found but failed to sync directory %q: %w", ErrAuditUnavailable, s.dir, err)
+		}
+		return nil
+	}
+	if s.ensureHook != nil {
+		if err := s.ensureHook(ctx, event); err != nil {
+			return err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.appendHook != nil {
+		if err := s.appendHook(event); err != nil {
+			return err
+		}
+	}
+	return s.writeEventContext(ctx, event)
+}
+
+func findExactTerminalOutcome(events []Event, receipt domain.Receipt) (bool, error) {
+	matched := 0
+	for _, event := range events {
+		if !validAuditEnvelope(event) {
+			return false, fmt.Errorf("%w: invalid audit event envelope", ErrTerminalEvidenceInvalid)
+		}
+		if event.EventType != EventTerminalOutcome || event.ReceiptID != string(receipt.ReceiptID) {
+			continue
+		}
+		if !terminalIdentityMatches(event, receipt) || !terminalOutcomeMatches(event, receipt) {
+			return false, fmt.Errorf("%w: terminal receipt collision", ErrTerminalEvidenceInvalid)
+		}
+		matched++
+	}
+	if matched > 1 {
+		return false, fmt.Errorf("%w: duplicate terminal receipt evidence", ErrTerminalEvidenceInvalid)
+	}
+	return matched == 1, nil
 }
 
 func (s *Store) appendEvent(event Event) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	return s.appendEventContext(context.Background(), event)
+}
 
+func (s *Store) appendEventContext(ctx context.Context, event Event) error {
+	if err := lockAuditStoreContext(ctx, &s.mu); err != nil {
+		return err
+	}
+	defer s.mu.Unlock()
+	if s.appendHook != nil {
+		if err := s.appendHook(event); err != nil {
+			return err
+		}
+	}
+
+	return s.withLockContext(ctx, func() error { return s.writeEventContext(ctx, event) })
+}
+
+func (s *Store) writeEventContext(ctx context.Context, event Event) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	data, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("audit: failed to marshal event: %w", err)
 	}
 	data = append(data, '\n')
-
-	return s.withLock(func() error {
-		f, err := os.OpenFile(s.logPath(), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-		if err != nil {
-			return fmt.Errorf("%w: %v", ErrAuditUnavailable, err)
-		}
-		defer f.Close()
-
-		if _, err := f.Write(data); err != nil {
-			return fmt.Errorf("%w: %v", ErrAuditUnavailable, err)
-		}
-		if err := f.Sync(); err != nil {
-			return fmt.Errorf("%w: %v", ErrAuditUnavailable, err)
-		}
-		if err := f.Close(); err != nil {
-			return fmt.Errorf("%w: %v", ErrAuditUnavailable, err)
-		}
-		syncFn := s.syncDirFn
-		if syncFn == nil {
-			syncFn = statedir.SyncDir
-		}
-		if err := syncFn(s.dir); err != nil {
-			return fmt.Errorf("%w: failed to sync audit directory %q: %v", ErrAuditUnavailable, s.dir, err)
-		}
-		return nil
-	})
-}
-
-func (s *Store) withLock(fn func() error) error {
-	lockDir := filepath.Join(s.dir, ".audit.lock")
-	ownerPath := filepath.Join(lockDir, "owner.json")
-	runtimeID, pid, startTime := s.identityProvider.CurrentIdentity()
-	now := s.now()
-
-	timeout := s.lockTimeout
-	if timeout <= 0 {
-		timeout = 5 * time.Second
-	}
-	deadline := time.Now().Add(timeout)
-	for {
-		err := os.Mkdir(lockDir, 0700)
-		if err == nil {
-			if recErr := s.recordLockOwner(ownerPath, runtimeID, pid, startTime, now); recErr != nil {
-				_ = os.Remove(ownerPath)
-				_ = os.Remove(lockDir)
-				return fmt.Errorf("%w: %v", ErrAuditUnavailable, recErr)
-			}
-			defer s.releaseLock(ownerPath, lockDir, runtimeID, pid, startTime, now)
-			return fn()
-		}
-		if !os.IsExist(err) {
-			return fmt.Errorf("%w: failed to create audit lock: %v", ErrAuditUnavailable, err)
-		}
-
-		if s.tryReclaimDeadLock(ownerPath, lockDir, runtimeID) {
-			continue
-		}
-
-		if time.Now().After(deadline) {
-			return fmt.Errorf("%w: timeout acquiring audit lock", ErrAuditUnavailable)
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-}
-
-func (s *Store) recordLockOwner(ownerPath, runtimeID string, pid int, startTime string, now time.Time) error {
-	ownerRec := lease.LockOwnerRecord{
-		SchemaVersion:    SchemaVersion,
-		RuntimeID:        runtimeID,
-		PID:              pid,
-		ProcessStartTime: startTime,
-		AcquiredAt:       now,
-	}
-	data, err := json.MarshalIndent(ownerRec, "", "  ")
+	f, err := os.OpenFile(s.logPath(), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
-		return fmt.Errorf("failed to marshal audit lock owner: %w", err)
+		return fmt.Errorf("%w: %v", ErrAuditUnavailable, err)
 	}
-	f, err := os.OpenFile(ownerPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil {
-		return fmt.Errorf("failed to open audit lock owner file: %w", err)
-	}
-	defer f.Close()
-
 	if _, err := f.Write(data); err != nil {
-		return fmt.Errorf("failed to write audit lock owner file: %w", err)
+		_ = f.Close()
+		return fmt.Errorf("%w: %v", ErrAuditUnavailable, err)
+	}
+	if s.postAppendHook != nil {
+		s.postAppendHook()
 	}
 	if err := f.Sync(); err != nil {
-		return fmt.Errorf("failed to sync audit lock owner file: %w", err)
+		_ = f.Close()
+		return fmt.Errorf("%w: audit event appended but file sync failed: %v", ErrAuditUnavailable, err)
 	}
-	return f.Close()
+	closeFn := s.closeFn
+	if closeFn == nil {
+		closeFn = (*os.File).Close
+	}
+	if closeErr := closeFn(f); closeErr != nil {
+		return fmt.Errorf("%w: audit event appended but file close failed: %w", ErrAuditUnavailable, closeErr)
+	}
+	if err := s.syncDirectory(); err != nil {
+		return fmt.Errorf("%w: audit event appended but failed to sync directory %q: %v", ErrAuditUnavailable, s.dir, err)
+	}
+	return nil
 }
 
-func (s *Store) tryReclaimDeadLock(ownerPath, lockDir, runtimeID string) bool {
-	ownerData, err := os.ReadFile(ownerPath)
-	if err != nil {
-		return false
+func (s *Store) syncDirectory() error {
+	syncFn := s.syncDirFn
+	if syncFn == nil {
+		syncFn = statedir.SyncDir
 	}
-	var ownerRec lease.LockOwnerRecord
-	dec := json.NewDecoder(bytes.NewReader(ownerData))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&ownerRec); err != nil {
-		return false
-	}
-	var trailing any
-	if err := dec.Decode(&trailing); err != io.EOF {
-		return false
-	}
-	if ownerRec.SchemaVersion != SchemaVersion || ownerRec.RuntimeID != runtimeID || ownerRec.PID <= 0 {
-		return false
-	}
-	alive, checkErr := s.livenessChecker.IsAlive(ownerRec.PID, ownerRec.ProcessStartTime)
-	if checkErr != nil || alive {
-		return false
-	}
-	_ = os.Remove(ownerPath)
-	_ = os.Remove(lockDir)
-	return true
-}
-
-func (s *Store) releaseLock(ownerPath, lockDir, runtimeID string, pid int, startTime string, acquiredAt time.Time) {
-	ownerData, err := os.ReadFile(ownerPath)
-	if err != nil {
-		return
-	}
-	var ownerRec lease.LockOwnerRecord
-	dec := json.NewDecoder(bytes.NewReader(ownerData))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&ownerRec); err != nil {
-		return
-	}
-	var trailing any
-	if err := dec.Decode(&trailing); err != io.EOF {
-		return
-	}
-	if ownerRec.SchemaVersion == SchemaVersion &&
-		ownerRec.RuntimeID == runtimeID &&
-		ownerRec.PID == pid &&
-		ownerRec.ProcessStartTime == startTime &&
-		ownerRec.AcquiredAt.Equal(acquiredAt) {
-		_ = os.Remove(ownerPath)
-		_ = os.Remove(lockDir)
-	}
+	return syncFn(s.dir)
 }

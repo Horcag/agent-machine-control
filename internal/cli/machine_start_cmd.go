@@ -37,15 +37,11 @@ func runMachineStart(
 	}
 
 	if len(positionals) != 1 {
-		fmt.Fprintln(stderr, "amc machine start: requires exactly one machine GUID")
+		fmt.Fprintln(stderr, "amc machine start: requires exactly one machine reference")
 		return ExitUsage
 	}
 
 	targetID := positionals[0]
-	if err := domain.ValidateMachineGUID(targetID); err != nil {
-		fmt.Fprintf(stderr, "amc machine start: invalid machine GUID %q\n", targetID)
-		return ExitUsage
-	}
 
 	if !directMode {
 		dReq := daemon.CreateOperationRequest{
@@ -55,6 +51,7 @@ func runMachineStart(
 			IdempotencyKey: common.IdempotencyKey,
 			TimeoutSeconds: int(common.Timeout.Seconds()),
 		}
+		applyDaemonApprovalReference(&dReq, common)
 		return executeMachineStateDaemonMutation(
 			ctx,
 			stateDir,
@@ -66,9 +63,29 @@ func runMachineStart(
 			domain.MachineStateRunning,
 		)
 	}
+	return executeDirectMachineStart(ctx, recoverySvc, actor, prompter, nowFn, targetID, common, stdout, stderr)
+}
+
+func executeDirectMachineStart(
+	ctx context.Context,
+	recoverySvc *app.RecoveryService,
+	actor domain.ActorContext,
+	prompter Prompter,
+	nowFn func() time.Time,
+	targetID string,
+	common *CommonFlags,
+	stdout, stderr io.Writer,
+) int {
+	if rejectDirectApprovalReference(common, stderr, "machine start") {
+		return ExitUsage
+	}
+	canonicalTarget, err := recoverySvc.ResolveTargetReference(ctx, targetID)
+	if err != nil {
+		return mapMutationError(err, stderr, "machine start")
+	}
 
 	req := app.MutationRequest{
-		TargetID:       targetID,
+		TargetID:       string(canonicalTarget),
 		Actor:          actor,
 		Reason:         common.Reason,
 		IdempotencyKey: common.IdempotencyKey,
@@ -79,9 +96,12 @@ func runMachineStart(
 	rcpt, obs, err := recoverySvc.StartMachine(ctx, req)
 	var deniedErr *app.PolicyDeniedError
 	if errors.As(err, &deniedErr) && deniedErr.Reason == policy.DenialApprovalRequired && common.Approval == nil && prompter != nil {
-		promptMsg := fmt.Sprintf("Destructive operation machine.start on %s requires confirmation (no rollback checkpoint found)", targetID)
+		promptMsg := fmt.Sprintf("Destructive operation machine.start on %s requires confirmation (no rollback checkpoint found)", canonicalTarget)
 		newIdempotencyKey := domain.DeriveApprovalIdempotencyKey(common.IdempotencyKey)
-		if promptedAppr, dl, ok := promptForApproval(prompter, nowFn, actor, targetID, "machine.start", domain.CapabilityMachineStart, domain.ClassReversibleMutation, common.Reason, newIdempotencyKey, common.Timeout, nil, promptMsg); ok {
+		if promptedAppr, dl, ok := promptForApproval(prompter, nowFn, actor, string(canonicalTarget), "machine.start", domain.CapabilityMachineStart, domain.ClassReversibleMutation, common.Reason, newIdempotencyKey, common.Timeout, nil, promptMsg); ok {
+			if issueErr := recoverySvc.IssueApproval(ctx, *promptedAppr); issueErr != nil {
+				return mapMutationError(issueErr, stderr, "machine start")
+			}
 			req.Approval = promptedAppr
 			req.Deadline = dl
 			req.IdempotencyKey = newIdempotencyKey

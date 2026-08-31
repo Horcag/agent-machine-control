@@ -3,6 +3,7 @@ package audit
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -31,7 +32,24 @@ func (s *Store) Tail(limit int) ([]Event, error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	events, err := s.readEventsLocked()
+	if err != nil {
+		return nil, err
+	}
+	if len(events) <= limit {
+		return events, nil
+	}
+	return events[len(events)-limit:], nil
+}
 
+func (s *Store) readEventsLocked() ([]Event, error) {
+	return s.readEventsLockedContext(context.Background())
+}
+
+func (s *Store) readEventsLockedContext(ctx context.Context) ([]Event, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	f, err := os.Open(s.logPath())
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -45,6 +63,9 @@ func (s *Store) Tail(limit int) ([]Event, error) {
 	reader := bufio.NewReader(f)
 
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		line, isPrefix, err := reader.ReadLine()
 		if err != nil {
 			if err == io.EOF {
@@ -59,23 +80,28 @@ func (s *Store) Tail(limit int) ([]Event, error) {
 			continue
 		}
 
-		var event Event
-		dec := json.NewDecoder(bytes.NewReader(line))
-		dec.DisallowUnknownFields()
-		if err := dec.Decode(&event); err != nil {
-			return nil, fmt.Errorf("audit: malformed audit record: %w", err)
+		event, err := decodeAuditEvent(line)
+		if err != nil {
+			return nil, err
 		}
-		var trailing any
-		if err := dec.Decode(&trailing); err != io.EOF {
-			return nil, fmt.Errorf("audit: trailing data in audit record")
-		}
-
 		events = append(events, event)
 	}
-
-	if len(events) <= limit {
-		return events, nil
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
+	return events, nil
+}
 
-	return events[len(events)-limit:], nil
+func decodeAuditEvent(line []byte) (Event, error) {
+	var event Event
+	dec := json.NewDecoder(bytes.NewReader(line))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&event); err != nil {
+		return Event{}, fmt.Errorf("audit: malformed audit record: %w", err)
+	}
+	var trailing any
+	if err := dec.Decode(&trailing); err != io.EOF {
+		return Event{}, fmt.Errorf("audit: trailing data in audit record")
+	}
+	return event, nil
 }

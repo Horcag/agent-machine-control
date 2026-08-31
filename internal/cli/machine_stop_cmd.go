@@ -43,15 +43,11 @@ func runMachineStop(
 	}
 
 	if len(positionals) != 1 {
-		fmt.Fprintln(stderr, "amc machine stop: requires exactly one machine GUID")
+		fmt.Fprintln(stderr, "amc machine stop: requires exactly one machine reference")
 		return ExitUsage
 	}
 
 	targetID := positionals[0]
-	if err := domain.ValidateMachineGUID(targetID); err != nil {
-		fmt.Fprintf(stderr, "amc machine stop: invalid machine GUID %q\n", targetID)
-		return ExitUsage
-	}
 
 	if !directMode {
 		dReq := daemon.CreateOperationRequest{
@@ -62,6 +58,7 @@ func runMachineStop(
 			TimeoutSeconds: int(common.Timeout.Seconds()),
 			Parameters:     map[string]any{"mode": *mode},
 		}
+		applyDaemonApprovalReference(&dReq, common)
 		return executeMachineStateDaemonMutation(
 			ctx,
 			stateDir,
@@ -73,9 +70,16 @@ func runMachineStop(
 			domain.MachineStateOff,
 		)
 	}
+	if rejectDirectApprovalReference(common, stderr, "machine stop") {
+		return ExitUsage
+	}
+	canonicalTarget, err := recoverySvc.ResolveTargetReference(ctx, targetID)
+	if err != nil {
+		return mapMutationError(err, stderr, "machine stop")
+	}
 
 	req := app.MutationRequest{
-		TargetID:       targetID,
+		TargetID:       string(canonicalTarget),
 		Actor:          actor,
 		Reason:         common.Reason,
 		IdempotencyKey: common.IdempotencyKey,
@@ -111,6 +115,9 @@ func executeStopWithApproval(
 		}
 		newIdempotencyKey := domain.DeriveApprovalIdempotencyKey(common.IdempotencyKey)
 		if promptedAppr, dl, ok := promptForApproval(prompter, nowFn, req.Actor, req.TargetID, "machine.stop", domain.CapabilityMachineStop, initialClass, common.Reason, newIdempotencyKey, common.Timeout, params, promptMsg); ok {
+			if issueErr := recoverySvc.IssueApproval(ctx, *promptedAppr); issueErr != nil {
+				return domain.Receipt{}, domain.MachineObservation{}, issueErr
+			}
 			req.Approval = promptedAppr
 			req.Deadline = dl
 			req.IdempotencyKey = newIdempotencyKey

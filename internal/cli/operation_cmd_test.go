@@ -13,7 +13,11 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/client"
 	"github.com/Horcag/agent-machine-control/internal/daemon"
 	"github.com/Horcag/agent-machine-control/internal/domain"
+	"github.com/Horcag/agent-machine-control/internal/statedir"
+	"github.com/Horcag/agent-machine-control/internal/target"
 )
+
+const cliTestVMID = "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
 
 type mockBackendWithOps struct{}
 
@@ -21,7 +25,13 @@ func (m *mockBackendWithOps) Doctor(_ context.Context) (app.DoctorReport, error)
 	return app.DoctorReport{}, nil
 }
 func (m *mockBackendWithOps) ListMachines(_ context.Context) ([]domain.MachineObservation, error) {
-	return nil, nil
+	locator, _ := domain.NewMachineLocator(domain.LocalHostID, cliTestVMID)
+	return []domain.MachineObservation{{
+		HostID: domain.LocalHostID, Locator: locator, ID: cliTestVMID, Name: "cli-test-vm",
+		State: domain.MachineStateOff, RawState: "Off", Generation: 2, Version: "10.0",
+		MemoryAssignedBytes: 1024, Capabilities: domain.DirectMachineCapabilities(),
+		ObservedAt: time.Date(2026, 8, 31, 4, 0, 0, 0, time.UTC), ObservationType: domain.ObservationObserved,
+	}}, nil
 }
 func (m *mockBackendWithOps) InspectMachine(_ context.Context, _ string) (domain.MachineObservation, error) {
 	return domain.MachineObservation{}, nil
@@ -62,6 +72,22 @@ func (m *mockBackendWithOps) RestoreCheckpoint(_ context.Context, _ string, _ st
 
 func setupDaemonForCLI(t *testing.T) (*daemon.Server, string) {
 	dir := t.TempDir()
+	state, err := statedir.Resolve(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := target.NewStore(state.TargetsDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	locator, _ := domain.NewMachineLocator(domain.LocalHostID, cliTestVMID)
+	value, _ := target.NewDefault(locator, []string{"primary"})
+	if _, err := store.Save(context.Background(), value); err != nil {
+		t.Fatal(err)
+	}
 	srv, err := daemon.NewServer(daemon.Config{
 		StateDir:   dir,
 		ListenAddr: "127.0.0.1:0",
@@ -118,6 +144,8 @@ func TestCLI_Operation_ListShowWaitCancel(t *testing.T) {
 		t.Errorf("expected at least 1 operation in list")
 	}
 
+	assertAliasFilteredOperation(t, appInstance)
+
 	// 2. amc operation show <op-id> --json
 	var showStdout, showStderr bytes.Buffer
 	code = appInstance.Run([]string{"operation", "show", opDTO.OperationID, "--json"}, &showStdout, &showStderr)
@@ -149,6 +177,106 @@ func TestCLI_Operation_ListShowWaitCancel(t *testing.T) {
 	// Completed operations return conflict/error when cancelled
 	if code != cli.ExitConflict && code != cli.ExitSuccess {
 		t.Errorf("expected ExitConflict or ExitSuccess for terminal cancel, got %d", code)
+	}
+}
+
+func assertAliasFilteredOperation(t *testing.T, appInstance *cli.App) {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	code := appInstance.Run([]string{"operation", "list", "--machine", "primary", "--json"}, &stdout, &stderr)
+	if code != cli.ExitSuccess {
+		t.Fatalf("operation list alias filter returned code %d; stderr: %s", code, stderr.String())
+	}
+	var listEnv cli.OperationListOutputEnvelope
+	if err := json.Unmarshal(stdout.Bytes(), &listEnv); err != nil || len(listEnv.Operations) != 1 || listEnv.Operations[0].Target != "local:"+cliTestVMID {
+		t.Fatalf("alias-filtered operations = %+v, %v", listEnv.Operations, err)
+	}
+}
+
+func TestCLI_OperationApproveAndExplicitExecution(t *testing.T) {
+	srv, stateDir := setupDaemonForCLI(t)
+	defer func() { _ = srv.Shutdown(context.Background()) }()
+	application := cli.NewApp(nil, cli.WithStateDir(stateDir), cli.WithPrompter(&testPrompter{confirm: true}))
+	reason := "CLI exact approved turn off"
+	key := "cli-operation-approval-execution"
+
+	var approvalOut, approvalErr bytes.Buffer
+	code := application.Run([]string{
+		"operation", "approve", "machine.stop", cliTestVMID,
+		"--mode", "turn-off", "--reason", reason, "--idempotency-key", key,
+		"--valid-for", "1m", "--json",
+	}, &approvalOut, &approvalErr)
+	if code != cli.ExitSuccess {
+		t.Fatalf("operation approve code=%d stderr=%s", code, approvalErr.String())
+	}
+	var grant daemon.OperationApprovalIssueResponse
+	if err := json.Unmarshal(approvalOut.Bytes(), &grant); err != nil {
+		t.Fatalf("decode approval output: %v", err)
+	}
+	if grant.ApprovalID == "" || grant.Deadline == "" || grant.ExpiresAt == "" {
+		t.Fatalf("incomplete grant: %+v", grant)
+	}
+
+	var mutationOut, mutationErr bytes.Buffer
+	code = application.Run([]string{
+		"machine", "stop", cliTestVMID, "--mode", "turn-off",
+		"--reason", reason, "--idempotency-key", key, "--timeout", "1s",
+		"--approval-id", grant.ApprovalID, "--deadline", grant.Deadline, "--json",
+	}, &mutationOut, &mutationErr)
+	if code != cli.ExitSuccess {
+		t.Fatalf("approved execution code=%d stderr=%s", code, mutationErr.String())
+	}
+	if strings.Contains(approvalOut.String(), "authorized_class") || strings.Contains(approvalOut.String(), "fingerprint") {
+		t.Fatalf("CLI output exposed internal approval authority: %s", approvalOut.String())
+	}
+}
+
+func TestCLI_OperationApproveValidationConfirmationAndHumanOutput(t *testing.T) {
+	srv, stateDir := setupDaemonForCLI(t)
+	defer func() { _ = srv.Shutdown(context.Background()) }()
+	confirmed := cli.NewApp(nil, cli.WithStateDir(stateDir), cli.WithPrompter(&testPrompter{confirm: true}))
+
+	for _, args := range [][]string{
+		{"operation", "approve"},
+		{"operation", "approve", "unknown.kind", cliTestVMID, "--reason", "invalid kind", "--idempotency-key", "invalid-kind", "--valid-for", "1m"},
+		{"operation", "approve", "machine.start", cliTestVMID, cliTestVMID, "--reason", "too many targets", "--idempotency-key", "too-many-targets", "--valid-for", "1m"},
+		{"operation", "approve", "checkpoint.restore", cliTestVMID, "--reason", "missing checkpoint", "--idempotency-key", "missing-checkpoint", "--valid-for", "1m"},
+		{"operation", "approve", "machine.stop", cliTestVMID, "--reason", "invalid validity", "--idempotency-key", "invalid-validity", "--valid-for", "10m"},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := confirmed.Run(args, &stdout, &stderr); code != cli.ExitUsage {
+			t.Fatalf("args %v code=%d stdout=%s stderr=%s", args, code, stdout.String(), stderr.String())
+		}
+	}
+
+	var humanOut, humanErr bytes.Buffer
+	code := confirmed.Run([]string{
+		"operation", "approve", "checkpoint.create", cliTestVMID, "--name", "coverage checkpoint",
+		"--reason", "human approval output", "--idempotency-key", "human-approval-output",
+		"--valid-for", "1m", "--for-mcp",
+	}, &humanOut, &humanErr)
+	if code != cli.ExitSuccess || !strings.Contains(humanOut.String(), "Approval ID:") || !strings.Contains(humanOut.String(), "Expires At:") {
+		t.Fatalf("human approval code=%d stdout=%s stderr=%s", code, humanOut.String(), humanErr.String())
+	}
+
+	declined := cli.NewApp(nil, cli.WithStateDir(stateDir), cli.WithPrompter(&testPrompter{confirm: false}))
+	var declinedOut, declinedErr bytes.Buffer
+	code = declined.Run([]string{
+		"operation", "approve", "checkpoint.restore", cliTestVMID, "e4a523d4-6b99-4d62-a5e2-4752c0f20001",
+		"--reason", "decline approval", "--idempotency-key", "declined-approval", "--valid-for", "1m",
+	}, &declinedOut, &declinedErr)
+	if code != cli.ExitDenied || !strings.Contains(declinedErr.String(), "confirmation declined") {
+		t.Fatalf("declined code=%d stderr=%s", code, declinedErr.String())
+	}
+
+	unavailable := cli.NewApp(nil, cli.WithStateDir(t.TempDir()), cli.WithPrompter(&testPrompter{confirm: true}))
+	var unavailableOut, unavailableErr bytes.Buffer
+	code = unavailable.Run([]string{
+		"operation", "approve", "machine.stop", cliTestVMID, "--mode", "turn-off",
+		"--reason", "daemon unavailable", "--idempotency-key", "unavailable-approval", "--valid-for", "1m",
+	}, &unavailableOut, &unavailableErr)
+	if code != cli.ExitBackendUnavailable {
+		t.Fatalf("unavailable code=%d stderr=%s", code, unavailableErr.String())
 	}
 }
 

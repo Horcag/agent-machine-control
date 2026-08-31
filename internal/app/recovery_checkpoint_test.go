@@ -2,17 +2,19 @@ package app_test
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/app"
+	"github.com/Horcag/agent-machine-control/internal/approval"
 	"github.com/Horcag/agent-machine-control/internal/domain"
 )
 
 func TestRecoveryService_CreateCheckpoint_RequiresApproval(t *testing.T) {
 	targetID := "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
 	backend := &mockBackend{}
-	svc, _ := setupTestRecovery(t, backend)
+	svc, dir := setupTestRecovery(t, backend)
 
 	actor, _ := domain.NewActorContext("user:admin", "user:admin", domain.NewScopeSet("machine:write"), domain.NewScopeSet("machine:write"))
 	req := app.MutationRequest{
@@ -59,6 +61,9 @@ func TestRecoveryService_CreateCheckpoint_RequiresApproval(t *testing.T) {
 	req.Deadline = op.Deadline
 	req.Approval = &appr
 	req.IdempotencyKey = "key-snap-create-2"
+	if err := approval.NewStore(filepath.Join(dir, "approvals")).Issue(appr); err != nil {
+		t.Fatal(err)
+	}
 
 	rcpt, snap, err := svc.CreateCheckpoint(context.Background(), req, "my-checkpoint")
 	if err != nil {
@@ -76,7 +81,7 @@ func TestRecoveryService_RestoreCheckpoint_RequiresApproval(t *testing.T) {
 	targetID := "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
 	snapID := "c4a523d4-6b99-4d62-a5e2-4752c0f20002"
 	backend := &mockBackend{}
-	svc, _ := setupTestRecovery(t, backend)
+	svc, dir := setupTestRecovery(t, backend)
 
 	actor, _ := domain.NewActorContext("user:admin", "user:admin", domain.NewScopeSet("machine:write"), domain.NewScopeSet("machine:write"))
 	req := app.MutationRequest{
@@ -123,6 +128,9 @@ func TestRecoveryService_RestoreCheckpoint_RequiresApproval(t *testing.T) {
 	req.Deadline = op.Deadline
 	req.Approval = &appr
 	req.IdempotencyKey = "key-snap-restore-2"
+	if err := approval.NewStore(filepath.Join(dir, "approvals")).Issue(appr); err != nil {
+		t.Fatal(err)
+	}
 
 	rcpt, obs, err := svc.RestoreCheckpoint(context.Background(), req, snapID)
 	if err != nil {

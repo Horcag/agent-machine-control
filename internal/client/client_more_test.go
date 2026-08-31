@@ -62,7 +62,7 @@ func TestClient_AuditAndReceiptAndListFilters(t *testing.T) {
 	// 3. ListOperations with state and machine filters
 	list, err := cl.ListOperations(context.Background(), operations.ListOptions{
 		State:   domain.OpStateCompleted,
-		Machine: domain.MachineRef(targetID),
+		Machine: domain.MachineRef("local:" + targetID),
 		Limit:   5,
 	})
 	if err != nil {
@@ -101,9 +101,9 @@ func TestClient_ErrorsAndStopDaemon(t *testing.T) {
 
 	nonExistentOpID := "op-00000000000000000000000000000000"
 
-	// Cancel non-existent operation
-	if _, err := opCl.CancelOperation(context.Background(), nonExistentOpID, "reason"); !errors.Is(err, client.ErrNotFound) {
-		t.Errorf("expected ErrNotFound, got %v", err)
+	// Mutation admission closes immediately at the stop cutover.
+	if _, err := opCl.CancelOperation(context.Background(), nonExistentOpID, "reason"); !errors.Is(err, client.ErrDaemonUnavailable) {
+		t.Errorf("expected ErrDaemonUnavailable, got %v", err)
 	}
 
 	// Get non-existent operation

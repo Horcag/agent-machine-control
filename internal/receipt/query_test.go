@@ -110,6 +110,21 @@ func TestStore_GetInvalidIDAndEmptyList(t *testing.T) {
 	}
 }
 
+func TestStore_QueryRejectsNonDirectoryReceiptRoot(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "receipts")
+	if err := os.WriteFile(root, []byte("not a directory"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store := receipt.NewStore(root)
+	if _, err := store.List(10, ""); err == nil {
+		t.Fatal("list accepted non-directory receipt root")
+	}
+	if _, err := store.Get("rcpt-00000000000000000000000000000001"); err == nil {
+		t.Fatal("get accepted non-directory receipt root")
+	}
+}
+
 func TestStore_QueryCorruptAndOversized(t *testing.T) {
 	dir := t.TempDir()
 	store := receipt.NewStore(dir)

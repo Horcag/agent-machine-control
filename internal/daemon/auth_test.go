@@ -12,7 +12,11 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/auth"
 	"github.com/Horcag/agent-machine-control/internal/daemon"
 	"github.com/Horcag/agent-machine-control/internal/domain"
+	"github.com/Horcag/agent-machine-control/internal/statedir"
+	"github.com/Horcag/agent-machine-control/internal/target"
 )
+
+const daemonTestVMID = "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
 
 type mockDaemonBackend struct{}
 
@@ -21,7 +25,7 @@ func (m *mockDaemonBackend) Doctor(_ context.Context) (app.DoctorReport, error) 
 }
 
 func (m *mockDaemonBackend) ListMachines(_ context.Context) ([]domain.MachineObservation, error) {
-	return nil, nil
+	return []domain.MachineObservation{daemonTestObservation(daemonTestVMID)}, nil
 }
 
 func (m *mockDaemonBackend) InspectMachine(_ context.Context, _ string) (domain.MachineObservation, error) {
@@ -64,6 +68,7 @@ func (m *mockDaemonBackend) RestoreCheckpoint(_ context.Context, _ string, _ str
 
 func setupTestServer(t *testing.T) (*daemon.Server, string, string, string) {
 	dir := t.TempDir()
+	seedDaemonTestTarget(t, dir)
 	srv, err := daemon.NewServer(daemon.Config{
 		StateDir:   dir,
 		ListenAddr: "127.0.0.1:0",
@@ -88,6 +93,43 @@ func setupTestServer(t *testing.T) (*daemon.Server, string, string, string) {
 	}
 
 	return srv, authDir, opToken, agToken
+}
+
+func daemonTestObservation(vmID string) domain.MachineObservation {
+	locator, _ := domain.NewMachineLocator(domain.LocalHostID, vmID)
+	return domain.MachineObservation{
+		HostID: domain.LocalHostID, Locator: locator, ID: vmID, Name: "synthetic-test-vm",
+		State: domain.MachineStateOff, RawState: "Off", Generation: 2, Version: "10.0",
+		MemoryAssignedBytes: 1024, Capabilities: domain.DirectMachineCapabilities(),
+		ObservedAt: time.Date(2026, 8, 31, 4, 0, 0, 0, time.UTC), ObservationType: domain.ObservationObserved,
+	}
+}
+
+func seedDaemonTestTarget(t *testing.T, dir string) {
+	t.Helper()
+	vmID := daemonTestVMID
+	state, err := statedir.Resolve(dir)
+	if err != nil {
+		t.Fatalf("Resolve state: %v", err)
+	}
+	if err := state.EnsureDirs(); err != nil {
+		t.Fatalf("EnsureDirs: %v", err)
+	}
+	store, err := target.NewStore(state.TargetsDir())
+	if err != nil {
+		t.Fatalf("New target store: %v", err)
+	}
+	locator, err := domain.NewMachineLocator(domain.LocalHostID, vmID)
+	if err != nil {
+		t.Fatalf("NewMachineLocator: %v", err)
+	}
+	value, err := target.NewDefault(locator, []string{"primary"})
+	if err != nil {
+		t.Fatalf("NewDefault: %v", err)
+	}
+	if publication, err := store.Save(context.Background(), value); err != nil || !publication.Durable {
+		t.Fatalf("save target fixture: %+v, %v", publication, err)
+	}
 }
 
 func TestServer_Auth_MissingOrInvalidToken(t *testing.T) {

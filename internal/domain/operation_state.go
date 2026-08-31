@@ -78,6 +78,7 @@ type OperationRecord struct {
 	Fingerprint            Fingerprint    `json:"fingerprint"`
 	IdempotencyFingerprint Fingerprint    `json:"idempotency_fingerprint,omitempty"`
 	IdempotencyKey         string         `json:"idempotency_key,omitempty"`
+	ApprovalID             ApprovalID     `json:"approval_id,omitempty"`
 	Deadline               time.Time      `json:"deadline"`
 	State                  OperationState `json:"state"`
 	CreatedAt              time.Time      `json:"created_at"`
@@ -113,6 +114,11 @@ func (r OperationRecord) Validate() error {
 	}
 	if r.CreatedAt.IsZero() {
 		return ErrInvalidObservationTimestamp
+	}
+	if r.ApprovalID != "" {
+		if err := r.ApprovalID.Validate(); err != nil {
+			return err
+		}
 	}
 	return nil
 }

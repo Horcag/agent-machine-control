@@ -7,9 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/user"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/Horcag/agent-machine-control/internal/domain"
@@ -107,14 +105,35 @@ func LoadOrCreate(authDir string, opts ...Option) (*Store, error) {
 		return nil, fmt.Errorf("auth: invalid derived operator principal %q: %w", principal, err)
 	}
 
-	opScopes := []string{"machine:read", "machine:write", "audit:read", "operation:cancel"}
+	opScopes := []string{
+		domain.ScopeMachineRead,
+		domain.ScopeMachineWrite,
+		domain.ScopeAuditRead,
+		domain.ScopeOperationCancel,
+		domain.ScopeOperationAdmin,
+		domain.ScopeSessionRead,
+		domain.ScopeSessionWrite,
+		domain.ScopeSessionOpen,
+		domain.ScopeSessionClose,
+		domain.ScopeSessionAdmin,
+		domain.ScopeEvidenceCapture,
+		domain.ScopeTargetAdmin,
+	}
 	opScopeSet := domain.NewScopeSet(opScopes...)
 	opActor, err := domain.NewActorContext(domain.ActorID(principal), domain.ActorID(principal), opScopeSet, opScopeSet)
 	if err != nil {
 		return nil, fmt.Errorf("auth: failed to validate operator actor context: %w", err)
 	}
 
-	agScopes := []string{"machine:read", "machine:write"}
+	agScopes := []string{
+		domain.ScopeMachineRead,
+		domain.ScopeMachineWrite,
+		domain.ScopeSessionRead,
+		domain.ScopeSessionWrite,
+		domain.ScopeSessionOpen,
+		domain.ScopeSessionClose,
+		domain.ScopeEvidenceCapture,
+	}
 	agScopeSet := domain.NewScopeSet(agScopes...)
 	agActor, err := domain.NewActorContext(domain.ActorID(AgentMCPPrincipal), domain.ActorID(AgentMCPPrincipal), agScopeSet, agScopeSet)
 	if err != nil {
@@ -142,8 +161,8 @@ func validateTokenFile(path string) (string, error) {
 	if !fi.Mode().IsRegular() {
 		return "", fmt.Errorf("auth: token file %s is not a regular file", filepath.Base(path))
 	}
-	if runtime.GOOS != "windows" && fi.Mode().Perm() != 0600 {
-		return "", fmt.Errorf("auth: token file %s has insecure permissions %04o; must be 0600", filepath.Base(path), fi.Mode().Perm())
+	if err := validateTokenFilePrivacy(path, fi); err != nil {
+		return "", err
 	}
 	if fi.Size() < 64 || fi.Size() > 66 {
 		return "", fmt.Errorf("auth: token file %s has invalid size (%d bytes)", filepath.Base(path), fi.Size())
@@ -193,6 +212,11 @@ func ensureSingleToken(authDir, path string) (string, error) {
 		return "", err
 	}
 	defer f.Close()
+	if err := protectTokenFile(path); err != nil {
+		_ = f.Close()
+		_ = os.Remove(path)
+		return "", err
+	}
 
 	if _, err := f.Write([]byte(newToken + "\n")); err != nil {
 		_ = os.Remove(path)
@@ -211,25 +235,6 @@ func ensureSingleToken(authDir, path string) (string, error) {
 	}
 
 	return newToken, nil
-}
-
-func defaultPrincipalResolver() (string, error) {
-	if runtime.GOOS == "windows" {
-		u, err := user.Current()
-		if err != nil {
-			return "", fmt.Errorf("auth: failed to resolve Windows user: %w", err)
-		}
-		if u == nil || strings.TrimSpace(u.Username) == "" {
-			return "", errors.New("auth: Windows username is empty")
-		}
-		return fmt.Sprintf("operator:%s", sanitizePrincipal(u.Username)), nil
-	}
-
-	uid := os.Getuid()
-	if uid < 0 {
-		return "", errors.New("auth: failed to resolve valid Unix UID")
-	}
-	return fmt.Sprintf("operator:uid-%d", uid), nil
 }
 
 func sanitizePrincipal(s string) string {
@@ -256,6 +261,17 @@ func (s *Store) Authenticate(bearerToken string) (*domain.ActorContext, []string
 	}
 
 	return nil, nil, false
+}
+
+// ActiveBearerSecrets returns independent byte copies of both active server-owned bearer tokens.
+func (s *Store) ActiveBearerSecrets() [][]byte {
+	if s == nil {
+		return nil
+	}
+	return [][]byte{
+		append([]byte(nil), s.operatorToken...),
+		append([]byte(nil), s.agentToken...),
+	}
 }
 
 // ReadTokenFile reads the token corresponding to the requested TokenType from the auth directory.

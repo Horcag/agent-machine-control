@@ -4,11 +4,24 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/Horcag/agent-machine-control/internal/auth"
+	"github.com/Horcag/agent-machine-control/internal/domain"
 )
+
+func writeTokenFixture(t *testing.T, path string, data []byte) {
+	t.Helper()
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatalf("write token fixture: %v", err)
+	}
+	if err := protectTokenFixture(path); err != nil {
+		t.Fatalf("protect token fixture: %v", err)
+	}
+}
 
 func TestAuth_LoadOrCreate(t *testing.T) {
 	dir := t.TempDir()
@@ -43,7 +56,7 @@ func TestAuth_LoadOrCreate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat failed: %v", err)
 	}
-	if opFi.Mode().Perm() != 0600 {
+	if runtime.GOOS != "windows" && opFi.Mode().Perm() != 0600 {
 		t.Errorf("expected token mode 0600, got %o", opFi.Mode().Perm())
 	}
 }
@@ -63,8 +76,22 @@ func TestAuth_Authenticate(t *testing.T) {
 	if !ok || act == nil {
 		t.Fatalf("expected operator auth to succeed")
 	}
-	if len(scopes) != 4 {
-		t.Errorf("expected 4 scopes for operator, got %d", len(scopes))
+	wantOperatorScopes := []string{
+		domain.ScopeAuditRead,
+		domain.ScopeEvidenceCapture,
+		domain.ScopeMachineRead,
+		domain.ScopeMachineWrite,
+		domain.ScopeOperationAdmin,
+		domain.ScopeOperationCancel,
+		domain.ScopeSessionAdmin,
+		domain.ScopeSessionClose,
+		domain.ScopeSessionOpen,
+		domain.ScopeSessionRead,
+		domain.ScopeSessionWrite,
+		domain.ScopeTargetAdmin,
+	}
+	if !slices.Equal(scopes, wantOperatorScopes) {
+		t.Errorf("operator scopes = %v, want %v", scopes, wantOperatorScopes)
 	}
 
 	// Authenticate agent
@@ -75,8 +102,17 @@ func TestAuth_Authenticate(t *testing.T) {
 	if act.EffectiveActor != "agent:mcp-local" {
 		t.Errorf("expected agent:mcp-local, got %s", act.EffectiveActor)
 	}
-	if len(scopes) != 2 {
-		t.Errorf("expected 2 scopes for agent, got %d", len(scopes))
+	wantAgentScopes := []string{
+		domain.ScopeEvidenceCapture,
+		domain.ScopeMachineRead,
+		domain.ScopeMachineWrite,
+		domain.ScopeSessionClose,
+		domain.ScopeSessionOpen,
+		domain.ScopeSessionRead,
+		domain.ScopeSessionWrite,
+	}
+	if !slices.Equal(scopes, wantAgentScopes) {
+		t.Errorf("agent scopes = %v, want %v", scopes, wantAgentScopes)
 	}
 
 	// Authenticate invalid
@@ -89,17 +125,33 @@ func TestAuth_Authenticate(t *testing.T) {
 	}
 }
 
+func TestAuth_ActiveBearerSecretsReturnsIndependentCopies(t *testing.T) {
+	store, err := auth.LoadOrCreate(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := store.ActiveBearerSecrets()
+	if len(first) != 2 || len(first[0]) != 64 || len(first[1]) != 64 {
+		t.Fatalf("unexpected active bearer secret shape")
+	}
+	first[0][0] ^= 0xff
+	first[1][0] ^= 0xff
+	second := store.ActiveBearerSecrets()
+	if first[0][0] == second[0][0] || first[1][0] == second[1][0] {
+		t.Fatal("caller mutation changed auth-store token memory")
+	}
+	if string(second[0]) == string(second[1]) {
+		t.Fatal("active bearer tokens must remain distinct")
+	}
+}
+
 func TestAuth_LoadExistingTokens(t *testing.T) {
 	dir := t.TempDir()
 	customOpToken := strings.Repeat("a", 64)
 	customAgToken := strings.Repeat("b", 64)
 
-	if err := os.WriteFile(filepath.Join(dir, auth.OperatorTokenFileName), []byte(customOpToken+"\n"), 0600); err != nil {
-		t.Fatalf("write op token failed: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, auth.AgentMCPTokenFileName), []byte(customAgToken+"\r\n"), 0600); err != nil {
-		t.Fatalf("write ag token failed: %v", err)
-	}
+	writeTokenFixture(t, filepath.Join(dir, auth.OperatorTokenFileName), []byte(customOpToken+"\n"))
+	writeTokenFixture(t, filepath.Join(dir, auth.AgentMCPTokenFileName), []byte(customAgToken+"\r\n"))
 
 	store, err := auth.LoadOrCreate(dir)
 	if err != nil {
@@ -133,31 +185,33 @@ func TestAuth_Errors(t *testing.T) {
 	}
 
 	// Corrupt short token
-	_ = os.WriteFile(filepath.Join(dir, auth.OperatorTokenFileName), []byte("short\n"), 0600)
-	_ = os.WriteFile(filepath.Join(dir, auth.AgentMCPTokenFileName), []byte("short\n"), 0600)
+	writeTokenFixture(t, filepath.Join(dir, auth.OperatorTokenFileName), []byte("short\n"))
+	writeTokenFixture(t, filepath.Join(dir, auth.AgentMCPTokenFileName), []byte("short\n"))
 	_, err = auth.LoadOrCreate(dir)
 	if err == nil {
 		t.Errorf("expected error for short token file")
 	}
 
 	// Non-hex token
-	_ = os.WriteFile(filepath.Join(dir, auth.OperatorTokenFileName), []byte(strings.Repeat("z", 64)+"\n"), 0600)
+	writeTokenFixture(t, filepath.Join(dir, auth.OperatorTokenFileName), []byte(strings.Repeat("z", 64)+"\n"))
 	_, err = auth.LoadOrCreate(dir)
 	if err == nil {
 		t.Errorf("expected error for non-hex token file")
 	}
 
-	// Insecure permissions
-	insecureFile := filepath.Join(dir, auth.OperatorTokenFileName)
-	_ = os.WriteFile(insecureFile, []byte(strings.Repeat("a", 64)+"\n"), 0600)
-	_ = os.Chmod(insecureFile, 0644)
-	_, err = auth.LoadOrCreate(dir)
-	if err == nil {
-		t.Errorf("expected error for insecure permissions token file")
+	if runtime.GOOS != "windows" {
+		// Insecure POSIX permissions.
+		insecureFile := filepath.Join(dir, auth.OperatorTokenFileName)
+		_ = os.WriteFile(insecureFile, []byte(strings.Repeat("a", 64)+"\n"), 0600)
+		_ = os.Chmod(insecureFile, 0644)
+		_, err = auth.LoadOrCreate(dir)
+		if err == nil {
+			t.Errorf("expected error for insecure permissions token file")
+		}
 	}
 
 	// Oversize file
-	_ = os.WriteFile(filepath.Join(dir, auth.OperatorTokenFileName), []byte(strings.Repeat("a", 100)+"\n"), 0600)
+	writeTokenFixture(t, filepath.Join(dir, auth.OperatorTokenFileName), []byte(strings.Repeat("a", 100)+"\n"))
 	_, err = auth.LoadOrCreate(dir)
 	if err == nil {
 		t.Errorf("expected error for oversize token file")
@@ -167,7 +221,7 @@ func TestAuth_Errors(t *testing.T) {
 func TestAuth_SymlinkRejection(t *testing.T) {
 	dir := t.TempDir()
 	realFile := filepath.Join(dir, "real.token")
-	_ = os.WriteFile(realFile, []byte(strings.Repeat("a", 64)+"\n"), 0600)
+	writeTokenFixture(t, realFile, []byte(strings.Repeat("a", 64)+"\n"))
 
 	symlinkFile := filepath.Join(dir, auth.OperatorTokenFileName)
 	if err := os.Symlink(realFile, symlinkFile); err != nil {
@@ -207,7 +261,7 @@ func TestAuth_StoreCoverage(t *testing.T) {
 
 func TestAuth_ReadEmptyTokenFile(t *testing.T) {
 	dir := t.TempDir()
-	_ = os.WriteFile(filepath.Join(dir, auth.OperatorTokenFileName), []byte("  \n"), 0600)
+	writeTokenFixture(t, filepath.Join(dir, auth.OperatorTokenFileName), []byte("  \n"))
 	_, err := auth.ReadTokenFile(dir, auth.TokenTypeOperator)
 	if err == nil {
 		t.Errorf("expected error reading empty token file")

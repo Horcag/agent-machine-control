@@ -1,6 +1,7 @@
 package operations
 
 import (
+	"context"
 	"errors"
 
 	"github.com/Horcag/agent-machine-control/internal/domain"
@@ -44,5 +45,9 @@ type inFlightEntry struct {
 	target                 domain.MachineRef
 	kind                   domain.OperationKind
 	actor                  domain.ActorID
+	approvalID             domain.ApprovalID
 	record                 *domain.OperationRecord
 }
+
+// ApprovalResolver loads immutable server-owned authority only for a new submission.
+type ApprovalResolver func(context.Context) (*domain.Approval, error)

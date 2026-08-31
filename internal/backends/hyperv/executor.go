@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
+
+	"github.com/Horcag/agent-machine-control/internal/wslruntime"
 )
 
 const (
@@ -27,7 +30,9 @@ type Executor interface {
 }
 
 // DefaultExecutor executes commands using the operating system's process runner.
-type DefaultExecutor struct{}
+type DefaultExecutor struct {
+	wslRuntime func() bool
+}
 
 // LookPath searches for an executable in the system PATH.
 func (e *DefaultExecutor) LookPath(file string) (string, error) {
@@ -45,7 +50,7 @@ func (e *DefaultExecutor) Execute(ctx context.Context, name string, args []strin
 
 	cmd := exec.CommandContext(execCtx, name, args...)
 	if len(env) > 0 {
-		cmd.Env = append(os.Environ(), env...)
+		cmd.Env = commandEnvironment(os.Environ(), env, e.runningUnderWSL())
 	}
 
 	stdoutBuf := newBoundedBuffer(MaxStdoutBytes)
@@ -63,6 +68,88 @@ func (e *DefaultExecutor) Execute(ctx context.Context, name string, args []strin
 	}
 
 	return stdoutBuf.Bytes(), stderrBuf.Bytes(), runErr
+}
+
+func (e *DefaultExecutor) runningUnderWSL() bool {
+	if e.wslRuntime != nil {
+		return e.wslRuntime()
+	}
+	return wslruntime.IsWSL()
+}
+
+func commandEnvironment(base, explicit []string, wslInterop bool) []string {
+	env := mergeEnvironment(base, explicit)
+	if !wslInterop {
+		return env
+	}
+
+	forwardNames := explicitEnvironmentNames(explicit)
+	if len(forwardNames) == 0 {
+		return env
+	}
+
+	return wslruntime.ForwardNamesViaWSLEnv(env, forwardNames)
+}
+
+func mergeEnvironment(base, explicit []string) []string {
+	merged := append([]string(nil), base...)
+	for _, entry := range explicit {
+		name, _, ok := strings.Cut(entry, "=")
+		if !ok || name == "" {
+			merged = append(merged, entry)
+			continue
+		}
+		merged = setEnvironmentRawEntry(merged, name, entry)
+	}
+	return merged
+}
+
+func explicitEnvironmentNames(entries []string) []string {
+	names := make([]string, 0, len(entries))
+	seen := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		name, _, ok := strings.Cut(entry, "=")
+		if !ok || name == "WSLENV" || !validEnvironmentName(name) {
+			continue
+		}
+		if _, duplicate := seen[name]; duplicate {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	return names
+}
+
+func validEnvironmentName(name string) bool {
+	if name == "" || !environmentNameStart(name[0]) {
+		return false
+	}
+	for i := 1; i < len(name); i++ {
+		if !environmentNamePart(name[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func environmentNameStart(char byte) bool {
+	return char == '_' || char >= 'A' && char <= 'Z' || char >= 'a' && char <= 'z'
+}
+
+func environmentNamePart(char byte) bool {
+	return environmentNameStart(char) || char >= '0' && char <= '9'
+}
+
+func setEnvironmentRawEntry(env []string, name, replacement string) []string {
+	prefix := name + "="
+	result := make([]string, 0, len(env)+1)
+	for _, entry := range env {
+		if !strings.HasPrefix(entry, prefix) {
+			result = append(result, entry)
+		}
+	}
+	return append(result, replacement)
 }
 
 type boundedBuffer struct {

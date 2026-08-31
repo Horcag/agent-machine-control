@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -39,6 +40,8 @@ const (
 	MinIdempotencyKeyLength = 1
 	// MaxIdempotencyKeyLength is the maximum length of an idempotency key.
 	MaxIdempotencyKeyLength = 256
+	// MaxApprovalIDLength bounds canonical approval identifiers used as store filenames.
+	MaxApprovalIDLength = 128
 )
 
 // ValidateScope checks that a scope string is a valid canonical identifier.
@@ -77,9 +80,23 @@ func ValidateReason(s string) error {
 	return ValidateBoundedString(s, MinReasonLength, MaxReasonLength, ErrInvalidReason)
 }
 
-// ValidateApprovalID checks that an approval identifier is non-empty and well-formed.
+// ValidateApprovalID checks that an approval identifier is canonical and safe for filename use.
 func ValidateApprovalID(s string) error {
-	return ValidateBoundedString(s, 1, 256, ErrInvalidApprovalRecord)
+	if len(s) < 1 || len(s) > MaxApprovalIDLength {
+		return fmt.Errorf("%w: approval ID length %d out of bounds [1, %d]", ErrInvalidApprovalRecord, len(s), MaxApprovalIDLength)
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		alphanumeric := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+		if alphanumeric {
+			continue
+		}
+		if (c == '-' || c == '_') && i > 0 && i < len(s)-1 {
+			continue
+		}
+		return fmt.Errorf("%w: approval ID must use ASCII alphanumeric characters with internal '-' or '_' separators", ErrInvalidApprovalRecord)
+	}
+	return nil
 }
 
 // ValidateOperationID checks that an operation identifier matches the canonical op-<32 lowercase hex> format.
@@ -151,6 +168,9 @@ func ValidateEvidenceRef(s string) error {
 
 // ValidateOperationParameters validates that operation parameters strictly match canonical schemas for known kinds.
 func ValidateOperationParameters(kind OperationKind, params map[string]any) error {
+	if validateSpecial := specialOperationParameterValidator(kind); validateSpecial != nil {
+		return validateSpecial(params)
+	}
 	switch kind {
 	case "machine.start":
 		return validateStartParams(params)
@@ -160,9 +180,174 @@ func ValidateOperationParameters(kind OperationKind, params map[string]any) erro
 		return validateCheckpointCreateParams(params)
 	case "checkpoint.restore":
 		return validateCheckpointRestoreParams(params)
+	case "session.open":
+		return validateSessionOpenParams(params)
+	case "session.read":
+		return validateSessionReadParams(params)
+	case "session.write":
+		return validateSessionWriteParams(params)
+	case "session.control":
+		return validateSessionControlParams(params)
+	case "session.wait":
+		return validateSessionWaitParams(params)
+	case "session.list":
+		return validateSessionListParams(params)
+	case "session.show":
+		return validateSessionShowParams(params)
+	case "session.close":
+		return validateSessionCloseParams(params)
 	default:
 		return ErrInvalidOperationKind
 	}
+}
+
+func specialOperationParameterValidator(kind OperationKind) func(map[string]any) error {
+	switch kind {
+	case "session.approval.issue", "operation.approval.issue":
+		return func(params map[string]any) error {
+			return validateApprovalIssueParams(kind, params)
+		}
+	case "target.enroll", "target.clear":
+		return validateTargetMutationParams
+	case "target.approval.issue":
+		return validateTargetApprovalIssueParams
+	default:
+		return nil
+	}
+}
+
+func validateTargetMutationParams(params map[string]any) error {
+	if len(params) != 4 {
+		return fmt.Errorf("%w: target mutation requires exactly redacted canonical state fields", ErrNonCanonicalParameter)
+	}
+	for _, key := range []string{"transition_hash", "prior_hash", "desired_hash"} {
+		value, ok := params[key].(string)
+		if !ok || len(value) != 64 {
+			return fmt.Errorf("%w: target mutation field %s must be a SHA-256 digest", ErrNonCanonicalParameter, key)
+		}
+		if _, err := hex.DecodeString(value); err != nil {
+			return fmt.Errorf("%w: target mutation field %s must be lowercase hexadecimal", ErrNonCanonicalParameter, key)
+		}
+	}
+	count, ok := params["alias_count"].(int)
+	if !ok || count < 0 || count > 16 {
+		return fmt.Errorf("%w: target mutation alias_count is invalid", ErrNonCanonicalParameter)
+	}
+	return nil
+}
+
+func validateTargetApprovalIssueParams(params map[string]any) error {
+	required := []string{"approval_id", "approved_fingerprint", "approved_kind", "beneficiary", "deadline"}
+	if len(params) != len(required) {
+		return fmt.Errorf("%w: target.approval.issue requires exactly canonical issuance fields", ErrNonCanonicalParameter)
+	}
+	for _, key := range required {
+		value, ok := params[key].(string)
+		if !ok || value == "" {
+			return fmt.Errorf("%w: target.approval.issue field %s must be a non-empty string", ErrNonCanonicalParameter, key)
+		}
+	}
+	if err := ValidateApprovalID(params["approval_id"].(string)); err != nil {
+		return fmt.Errorf("%w: invalid approval_id", ErrNonCanonicalParameter)
+	}
+	if err := Fingerprint(params["approved_fingerprint"].(string)).Validate(); err != nil {
+		return fmt.Errorf("%w: invalid approved_fingerprint", ErrNonCanonicalParameter)
+	}
+	approvedKind := OperationKind(params["approved_kind"].(string))
+	if approvedKind != "target.enroll" && approvedKind != "target.clear" {
+		return fmt.Errorf("%w: invalid approved_kind", ErrNonCanonicalParameter)
+	}
+	if err := ActorID(params["beneficiary"].(string)).Validate(); err != nil {
+		return fmt.Errorf("%w: invalid beneficiary", ErrNonCanonicalParameter)
+	}
+	deadline, err := time.Parse(time.RFC3339Nano, params["deadline"].(string))
+	if err != nil || deadline.UTC().Format(time.RFC3339Nano) != params["deadline"].(string) {
+		return fmt.Errorf("%w: deadline must be canonical RFC3339Nano UTC", ErrNonCanonicalParameter)
+	}
+	return nil
+}
+
+func validateApprovalIssueParams(kind OperationKind, params map[string]any) error {
+	required := []string{"approval_id", "approved_fingerprint", "approved_kind", "beneficiary", "deadline"}
+	if len(params) != len(required) {
+		return fmt.Errorf("%w: %s requires exactly the canonical issuance fields", ErrNonCanonicalParameter, kind)
+	}
+	for _, key := range required {
+		value, ok := params[key].(string)
+		if !ok || value == "" {
+			return fmt.Errorf("%w: %s field %s must be a non-empty string", ErrNonCanonicalParameter, kind, key)
+		}
+	}
+	if err := ValidateApprovalID(params["approval_id"].(string)); err != nil {
+		return fmt.Errorf("%w: invalid approval_id", ErrNonCanonicalParameter)
+	}
+	if err := Fingerprint(params["approved_fingerprint"].(string)).Validate(); err != nil {
+		return fmt.Errorf("%w: invalid approved_fingerprint", ErrNonCanonicalParameter)
+	}
+	if err := OperationKind(params["approved_kind"].(string)).Validate(); err != nil {
+		return fmt.Errorf("%w: invalid approved_kind", ErrNonCanonicalParameter)
+	}
+	if err := ActorID(params["beneficiary"].(string)).Validate(); err != nil {
+		return fmt.Errorf("%w: invalid beneficiary", ErrNonCanonicalParameter)
+	}
+	deadline, err := time.Parse(time.RFC3339Nano, params["deadline"].(string))
+	if err != nil || deadline.UTC().Format(time.RFC3339Nano) != params["deadline"].(string) {
+		return fmt.Errorf("%w: deadline must be canonical RFC3339Nano UTC", ErrNonCanonicalParameter)
+	}
+	return nil
+}
+
+// ValidateSessionID checks that a session identifier matches the canonical sess-<32 lowercase hex> format.
+func ValidateSessionID(s string) error {
+	if len(s) != 37 || !strings.HasPrefix(s, "sess-") {
+		return fmt.Errorf("%w: session ID must be 'sess-' followed by 32 lowercase hex characters", ErrInvalidSessionID)
+	}
+	hexPart := s[5:]
+	for i := 0; i < len(hexPart); i++ {
+		c := hexPart[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return fmt.Errorf("%w: session ID contains non-hexadecimal character %q", ErrInvalidSessionID, c)
+		}
+	}
+	return nil
+}
+
+// ValidateControlKey checks that a control key is a recognized and valid key identifier.
+func ValidateControlKey(s string) error {
+	_, err := NormalizeControlKey(s)
+	return err
+}
+
+// ValidateTerminalDimensions validates columns and rows within allowed bounds.
+func ValidateTerminalDimensions(cols, rows uint16) error {
+	if cols < MinCols || cols > MaxCols {
+		return fmt.Errorf("%w: cols %d out of bounds [%d, %d]", ErrInvalidTerminalDimensions, cols, MinCols, MaxCols)
+	}
+	if rows < MinRows || rows > MaxRows {
+		return fmt.Errorf("%w: rows %d out of bounds [%d, %d]", ErrInvalidTerminalDimensions, rows, MinRows, MaxRows)
+	}
+	return nil
+}
+
+// ValidateTerminalType accepts only canonical ASCII SSH PTY identifiers.
+func ValidateTerminalType(term string) error {
+	if len(term) == 0 || len(term) > 64 || !utf8.ValidString(term) {
+		return ErrInvalidTerminalType
+	}
+	for i := 0; i < len(term); i++ {
+		c := term[i]
+		if validTerminalTypeByte(c, i > 0) {
+			continue
+		}
+		return fmt.Errorf("%w: unsupported byte %q", ErrInvalidTerminalType, c)
+	}
+	return nil
+}
+
+func validTerminalTypeByte(c byte, allowPunctuation bool) bool {
+	alphanumeric := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+	punctuation := c == '-' || c == '_' || c == '.' || c == '+'
+	return alphanumeric || (allowPunctuation && punctuation)
 }
 
 func validateStartParams(params map[string]any) error {

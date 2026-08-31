@@ -272,7 +272,7 @@ func TestServer_OperationRetryAndConflict(t *testing.T) {
 	}
 
 	// 2. Existing operation retry with same key returns 200 OK
-	explicitDeadline := time.Date(2026, 8, 29, 12, 30, 0, 0, time.UTC)
+	explicitDeadline := time.Now().UTC().Add(30 * time.Minute)
 	sameKeyBody := daemon.CreateOperationRequest{
 		Kind:           "machine.start",
 		Target:         "c4a523d4-6b99-4d62-a5e2-4752c0f20001",

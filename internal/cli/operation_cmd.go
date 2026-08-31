@@ -15,13 +15,15 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/operations"
 )
 
-func runOperation(ctx context.Context, stateDir string, args []string, stdout, stderr io.Writer) int {
+func runOperation(ctx context.Context, stateDir string, prompter Prompter, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "amc operation: missing subcommand (expected 'list', 'show', 'wait', or 'cancel')")
+		fmt.Fprintln(stderr, "amc operation: missing subcommand (expected 'approve', 'list', 'show', 'wait', or 'cancel')")
 		return ExitUsage
 	}
 
 	switch args[0] {
+	case "approve":
+		return runOperationApprove(ctx, stateDir, prompter, args[1:], stdout, stderr)
 	case "list":
 		return runOperationList(ctx, stateDir, args[1:], stdout, stderr)
 	case "show":
@@ -31,10 +33,10 @@ func runOperation(ctx context.Context, stateDir string, args []string, stdout, s
 	case "cancel":
 		return runOperationCancel(ctx, stateDir, args[1:], stdout, stderr)
 	case "help", "--help", "-h":
-		fmt.Fprintln(stdout, "Usage: amc operation <list|show|wait|cancel> [flags] [args]")
+		fmt.Fprintln(stdout, "Usage: amc operation <approve|list|show|wait|cancel> [flags] [args]")
 		return ExitSuccess
 	default:
-		fmt.Fprintf(stderr, "amc operation: unknown subcommand %q (expected 'list', 'show', 'wait', or 'cancel')\n", args[0])
+		fmt.Fprintf(stderr, "amc operation: unknown subcommand %q (expected 'approve', 'list', 'show', 'wait', or 'cancel')\n", args[0])
 		return ExitUsage
 	}
 }

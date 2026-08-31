@@ -1,6 +1,7 @@
 package operations
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,8 +22,16 @@ const (
 
 // SaveRecord persists an OperationRecord atomically to disk with 0600 permissions.
 func SaveRecord(dir string, rec domain.OperationRecord) error {
+	return SaveRecordContext(context.Background(), dir, rec)
+}
+
+// SaveRecordContext persists a record while honoring cancellation at each storage boundary.
+func SaveRecordContext(ctx context.Context, dir string, rec domain.OperationRecord) error {
 	if dir == "" {
 		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if err := rec.Validate(); err != nil {
 		return fmt.Errorf("operations: invalid record: %w", err)
@@ -46,6 +55,10 @@ func SaveRecord(dir string, rec domain.OperationRecord) error {
 		_ = os.Remove(tmpPath)
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
 	if err := f.Sync(); err != nil {
 		_ = os.Remove(tmpPath)
 		return err
@@ -65,6 +78,14 @@ func SaveRecord(dir string, rec domain.OperationRecord) error {
 
 // ReadRecord reads and validates an OperationRecord from disk.
 func ReadRecord(dir, opID string) (*domain.OperationRecord, error) {
+	return ReadRecordContext(context.Background(), dir, opID)
+}
+
+// ReadRecordContext reads a record while honoring cancellation between bounded steps.
+func ReadRecordContext(ctx context.Context, dir, opID string) (*domain.OperationRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := domain.ValidateOperationID(opID); err != nil {
 		return nil, err
 	}
@@ -95,7 +116,7 @@ func ReadRecord(dir, opID string) (*domain.OperationRecord, error) {
 	defer file.Close()
 
 	var rec domain.OperationRecord
-	dec := json.NewDecoder(io.LimitReader(file, MaxOperationFileSize+1))
+	dec := json.NewDecoder(io.LimitReader(&contextReader{ctx: ctx, reader: file}, MaxOperationFileSize+1))
 	dec.DisallowUnknownFields()
 
 	if err := dec.Decode(&rec); err != nil {
@@ -116,6 +137,14 @@ func ReadRecord(dir, opID string) (*domain.OperationRecord, error) {
 
 // ListRecords scans and filters operation records from the operations directory.
 func ListRecords(dir string, opts ListOptions) ([]domain.OperationRecord, error) {
+	return ListRecordsContext(context.Background(), dir, opts)
+}
+
+// ListRecordsContext scans records while propagating caller cancellation.
+func ListRecordsContext(ctx context.Context, dir string, opts ListOptions) ([]domain.OperationRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	limit := clampLimit(opts.Limit, 50, 1000)
 
 	entries, err := os.ReadDir(dir)
@@ -128,6 +157,9 @@ func ListRecords(dir string, opts ListOptions) ([]domain.OperationRecord, error)
 
 	var records []domain.OperationRecord
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if entry.IsDir() || !isOperationRecordFile(entry.Name()) {
 			continue
 		}
@@ -137,7 +169,7 @@ func ListRecords(dir string, opts ListOptions) ([]domain.OperationRecord, error)
 			return nil, fmt.Errorf("operations: invalid operation record filename %s: %w", entry.Name(), err)
 		}
 
-		rec, err := ReadRecord(dir, opID)
+		rec, err := ReadRecordContext(ctx, dir, opID)
 		if err != nil {
 			return nil, fmt.Errorf("operations: failed to read operation record %s: %w", opID, err)
 		}
@@ -156,6 +188,18 @@ func ListRecords(dir string, opts ListOptions) ([]domain.OperationRecord, error)
 	}
 
 	return records, nil
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r *contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(p)
 }
 
 func isOperationRecordFile(name string) bool {

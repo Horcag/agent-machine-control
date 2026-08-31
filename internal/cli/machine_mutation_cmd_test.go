@@ -187,7 +187,7 @@ func TestCLI_MachineMutation_ValidationErrors(t *testing.T) {
 		code int
 	}{
 		{"start missing guid", []string{"--direct", "machine", "start"}, cli.ExitUsage},
-		{"start invalid guid", []string{"--direct", "machine", "start", "not-a-guid", "--reason", "r", "--idempotency-key", "k"}, cli.ExitUsage},
+		{"start public alias reaches policy", []string{"--direct", "machine", "start", "public-alias", "--reason", "r", "--idempotency-key", "k"}, cli.ExitDenied},
 		{"start missing reason", []string{"--direct", "machine", "start", targetID, "--idempotency-key", "k"}, cli.ExitUsage},
 		{"start missing idemp key", []string{"--direct", "machine", "start", targetID, "--reason", "r"}, cli.ExitUsage},
 		{"start invalid timeout", []string{"--direct", "machine", "start", targetID, "--reason", "r", "--idempotency-key", "k", "--timeout", "-1s"}, cli.ExitUsage},

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -30,6 +31,62 @@ func (m *mockLivenessChecker) IsAlive(pid int, _ string) (bool, error) {
 		return false, err
 	}
 	return m.aliveMap[pid], nil
+}
+
+func TestManager_CanceledAcquireCreatesNoLockOrLeaseState(t *testing.T) {
+	dir := t.TempDir()
+	mgr := lease.NewManager(dir)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	acquired, err := mgr.Acquire(ctx, "c4a523d4-6b99-4d62-a5e2-4752c0f20001", "session.write", "sha256:test", time.Minute)
+	if acquired != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("Acquire() = lease %+v err %v, want canceled with no lease", acquired, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("canceled acquire created state: %v", entries)
+	}
+}
+
+func TestManager_TransitionLockCleanupFailuresAreReturnedAndJoined(t *testing.T) {
+	cleanupErr := errors.New("synthetic lease cleanup failure")
+	protectedMachine := "c4a523d4-6b99-4d62-a5e2-4752c0f20009"
+	for _, tc := range []struct {
+		name      string
+		failBase  string
+		protected bool
+	}{
+		{name: "owner removal", failBase: "owner.json"},
+		{name: "lock directory removal", failBase: protectedMachine + ".lock"},
+		{name: "joined protected error", failBase: "owner.json", protected: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			machineID := protectedMachine
+			if tc.protected {
+				if err := os.WriteFile(filepath.Join(dir, machineID+".gen.json"), []byte("corrupt"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			mgr := lease.NewManager(dir, lease.WithRemoveFunc(func(path string) error {
+				if filepath.Base(path) == tc.failBase {
+					return cleanupErr
+				}
+				return os.Remove(path)
+			}))
+			_, err := mgr.Acquire(context.Background(), machineID, "session.write", "sha256:test", time.Minute)
+			if !errors.Is(err, cleanupErr) {
+				t.Fatalf("cleanup error = %v, want injected removal failure", err)
+			}
+			if tc.protected && !errors.Is(err, lease.ErrInvalidLeaseData) {
+				t.Fatalf("joined error = %v, want protected operation failure", err)
+			}
+		})
+	}
 }
 
 func TestManager_AcquireAndRelease_Success(t *testing.T) {
@@ -231,6 +288,33 @@ func TestManager_EdgeCases(t *testing.T) {
 	_ = mgr.Release(ctx, l)
 }
 
+func TestManager_RejectsUnsafeMachineIDsBeforeCreatingState(t *testing.T) {
+	dir := t.TempDir()
+	mgr := lease.NewManager(dir)
+
+	for _, machineID := range []string{
+		"/absolute", "../outside", `..\\outside`, "nested/child", `nested\\child`,
+		" has-space", "has-space ", "control\n", ".", "..",
+	} {
+		t.Run(machineID, func(t *testing.T) {
+			if _, err := mgr.Acquire(context.Background(), machineID, "machine.start", "fp", time.Minute); err == nil {
+				t.Fatalf("Acquire(%q) unexpectedly succeeded", machineID)
+			}
+			if err := mgr.Release(context.Background(), &lease.Lease{MachineID: machineID}); err == nil {
+				t.Fatalf("Release(%q) unexpectedly succeeded", machineID)
+			}
+		})
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("unsafe machine IDs created state: %v", entries)
+	}
+}
+
 func TestManager_DeadLockOwner_Reclaimed(t *testing.T) {
 	dir := t.TempDir()
 	machineID := "a0b1c2d3-e4f5-6789-abcd-ef0123456789"
@@ -266,7 +350,9 @@ func TestManager_SymlinkAndOversized_Rejected(t *testing.T) {
 	realFile := dir + "/real.json"
 	_ = os.WriteFile(realFile, []byte(`{}`), 0600)
 	leaseFile := dir + "/" + machineID + ".lease.json"
-	_ = os.Symlink(realFile, leaseFile)
+	if err := os.Symlink(realFile, leaseFile); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
 
 	mgr := lease.NewManager(dir)
 	_, err := mgr.Acquire(context.Background(), machineID, "machine.start", "fp-1", 30*time.Second)
@@ -277,7 +363,9 @@ func TestManager_SymlinkAndOversized_Rejected(t *testing.T) {
 	// Symlink on gen file
 	_ = os.Remove(leaseFile)
 	genFile := dir + "/" + machineID + ".gen.json"
-	_ = os.Symlink(realFile, genFile)
+	if err := os.Symlink(realFile, genFile); err != nil {
+		t.Skipf("generation symlink creation unavailable: %v", err)
+	}
 
 	_, err = mgr.Acquire(context.Background(), machineID, "machine.start", "fp-1", 30*time.Second)
 	if err == nil || !errors.Is(err, lease.ErrInvalidLeaseData) {

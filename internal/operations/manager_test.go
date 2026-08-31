@@ -19,8 +19,10 @@ import (
 )
 
 type mockBackend struct {
-	startCount atomic.Int64
-	blockStart chan struct{}
+	startCount        atomic.Int64
+	blockStart        chan struct{}
+	capabilitiesFn    func(context.Context, string) (domain.CapabilitySet, error)
+	listCheckpointsFn func(context.Context, string) ([]domain.CheckpointObservation, error)
 }
 
 func (m *mockBackend) Doctor(_ context.Context) (app.DoctorReport, error) {
@@ -35,7 +37,10 @@ func (m *mockBackend) InspectMachine(_ context.Context, _ string) (domain.Machin
 	return domain.MachineObservation{}, nil
 }
 
-func (m *mockBackend) Capabilities(_ context.Context, _ string) (domain.CapabilitySet, error) {
+func (m *mockBackend) Capabilities(ctx context.Context, target string) (domain.CapabilitySet, error) {
+	if m.capabilitiesFn != nil {
+		return m.capabilitiesFn(ctx, target)
+	}
 	return domain.NewCapabilitySet(domain.CapabilityMachineStart, domain.CapabilityMachineStop), nil
 }
 
@@ -55,7 +60,10 @@ func (m *mockBackend) StopMachine(_ context.Context, id string, _ string) (domai
 	return domain.MachineObservation{ID: id, State: domain.MachineStateOff}, nil
 }
 
-func (m *mockBackend) ListCheckpoints(_ context.Context, id string) ([]domain.CheckpointObservation, error) {
+func (m *mockBackend) ListCheckpoints(ctx context.Context, id string) ([]domain.CheckpointObservation, error) {
+	if m.listCheckpointsFn != nil {
+		return m.listCheckpointsFn(ctx, id)
+	}
 	return []domain.CheckpointObservation{
 		{
 			ID:              "e4a523d4-6b99-4d62-a5e2-4752c0f20001",
@@ -77,7 +85,7 @@ func (m *mockBackend) RestoreCheckpoint(_ context.Context, _ string, _ string) (
 	return domain.MachineObservation{}, nil
 }
 
-func setupTestManager(t *testing.T, backend app.Backend) (*operations.Manager, *events.Hub, string) {
+func setupTestManager(t *testing.T, backend app.Backend, opts ...operations.Option) (*operations.Manager, *events.Hub, string) {
 	dir := t.TempDir()
 	leasesDir := t.TempDir()
 	auditDir := t.TempDir()
@@ -91,7 +99,7 @@ func setupTestManager(t *testing.T, backend app.Backend) (*operations.Manager, *
 	eventHub := events.NewHub(dir)
 
 	recoverySvc := app.NewRecoveryService(backend, leaseMgr, auditStore, rcptStore, apprStore)
-	mgr := operations.NewManager(dir, recoverySvc, rcptStore, auditStore, eventHub)
+	mgr := operations.NewManager(dir, recoverySvc, rcptStore, auditStore, eventHub, opts...)
 	t.Cleanup(func() {
 		_ = mgr.Shutdown(context.Background())
 	})

@@ -2,6 +2,7 @@ package daemoncli
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -46,6 +47,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return statusDaemon(args[1:], stdout, stderr)
 	case "stop":
 		return stopDaemon(args[1:], stdout, stderr)
+	case "bootstrap":
+		return runBootstrap(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "amcd: unknown command %q\n", args[0])
 		return ExitUsage
@@ -93,12 +96,44 @@ func runDaemon(args []string, stdout, stderr io.Writer) int {
 	}()
 
 	srv.Wait()
+	return shutdownUntilDrained(srv, stderr)
+}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = srv.Shutdown(shutdownCtx)
+type daemonShutdowner interface {
+	Shutdown(context.Context) error
+}
 
-	return ExitSuccess
+var (
+	shutdownAttemptTimeout = 5 * time.Second
+	shutdownRetryDelay     = 100 * time.Millisecond
+)
+
+func shutdownUntilDrained(server daemonShutdowner, stderr io.Writer) int {
+	retryReported := false
+	for {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownAttemptTimeout)
+		err := server.Shutdown(shutdownCtx)
+		cancel()
+		if err == nil {
+			return ExitSuccess
+		}
+		if !errors.Is(err, daemon.ErrShutdownIncomplete) {
+			return reportShutdownFailure(stderr, err)
+		}
+		if !retryReported {
+			fmt.Fprintln(stderr, "amcd: shutdown drain incomplete; ownership retained while cleanup retries")
+			retryReported = true
+		}
+		time.Sleep(shutdownRetryDelay)
+	}
+}
+
+func reportShutdownFailure(stderr io.Writer, err error) int {
+	if err == nil {
+		return ExitSuccess
+	}
+	fmt.Fprintln(stderr, "amcd: shutdown failed after owned work drained; external cleanup was attempted")
+	return ExitBackendUnavailable
 }
 
 func statusDaemon(args []string, stdout, stderr io.Writer) int {
@@ -186,6 +221,7 @@ func printDaemonUsage(w io.Writer) {
 	fmt.Fprintln(w, "  run     Run the daemon in foreground")
 	fmt.Fprintln(w, "  status  Query running daemon status")
 	fmt.Fprintln(w, "  stop    Stop running daemon")
+	fmt.Fprintln(w, "  bootstrap  Manage the owned current-user S4U daemon task")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Flags:")
 	fmt.Fprintln(w, "  --state-dir <path>  Override state directory path")
