@@ -95,12 +95,20 @@ func (m *Manager) now() time.Time {
 	return time.Now().UTC()
 }
 
-func (m *Manager) leasePath(machineID string) string {
-	return filepath.Join(m.dir, fmt.Sprintf("%s.lease.json", machineID))
+func (m *Manager) leasePath(machineID string) (string, error) {
+	return m.stateFilePath(machineID, ".lease.json")
 }
 
-func (m *Manager) genPath(machineID string) string {
-	return filepath.Join(m.dir, fmt.Sprintf("%s.gen.json", machineID))
+func (m *Manager) genPath(machineID string) (string, error) {
+	return m.stateFilePath(machineID, ".gen.json")
+}
+
+func (m *Manager) stateFilePath(machineID, suffix string) (string, error) {
+	filename := machineID + suffix
+	if !filepath.IsLocal(filename) || filepath.Base(filename) != filename {
+		return "", errors.New("lease: state file path escapes the leases directory")
+	}
+	return filepath.Join(m.dir, filename), nil
 }
 
 func (m *Manager) lockPath(machineID string) string {
@@ -140,7 +148,10 @@ func (m *Manager) Acquire(ctx context.Context, machineID string, opKind string, 
 
 	var acquiredLease *Lease
 	err = m.withLock(ctx, machineID, func() error {
-		path := m.leasePath(machineID)
+		path, pathErr := m.leasePath(machineID)
+		if pathErr != nil {
+			return pathErr
+		}
 		existing, err := m.readLeaseFile(path)
 		if err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("%w: %v", ErrInvalidLeaseData, err)
@@ -198,7 +209,10 @@ func (m *Manager) Release(ctx context.Context, l *Lease) error {
 	}
 
 	return m.withLock(ctx, validatedMachineID, func() error {
-		path := m.leasePath(validatedMachineID)
+		path, pathErr := m.leasePath(validatedMachineID)
+		if pathErr != nil {
+			return pathErr
+		}
 		existing, err := m.readLeaseFile(path)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -228,7 +242,10 @@ func (m *Manager) Release(ctx context.Context, l *Lease) error {
 }
 
 func (m *Manager) readGeneration(machineID string) (uint64, error) {
-	path := m.genPath(machineID)
+	path, err := m.genPath(machineID)
+	if err != nil {
+		return 0, err
+	}
 	fi, err := os.Lstat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -262,7 +279,10 @@ func (m *Manager) readGeneration(machineID string) (uint64, error) {
 }
 
 func (m *Manager) writeGeneration(machineID string, gen uint64, now time.Time) error {
-	path := m.genPath(machineID)
+	path, err := m.genPath(machineID)
+	if err != nil {
+		return err
+	}
 	rec := GenerationRecord{
 		SchemaVersion:  SchemaVersion,
 		MachineID:      machineID,

@@ -48,7 +48,10 @@ func (m *Manager) ReclaimStaleLeases(ctx context.Context) ([]string, error) {
 func (m *Manager) tryReclaimSingle(ctx context.Context, machineID, runtimeID string, now time.Time) (bool, error) {
 	var reclaimed bool
 	err := m.withLock(ctx, machineID, func() error {
-		path := m.leasePath(machineID)
+		path, pathErr := m.leasePath(machineID)
+		if pathErr != nil {
+			return pathErr
+		}
 		existing, err := m.readLeaseFile(path)
 		if err != nil {
 			if os.IsNotExist(err) {
