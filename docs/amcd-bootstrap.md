@@ -78,9 +78,11 @@ execution, battery, idle, network, wake, priority, compatibility, deletion, remo
 unified-scheduling, maintenance, or volatile settings. Version-specific settings are compared when
 the installed ScheduledTasks provider exposes them.
 
-The Windows-local wrapper and metadata are stored below the current user's Local AppData. The
-wrapper contains only the exact Windows `wsl.exe` path, validated WSL distribution and Linux user,
-exact Linux `amcd` path, state directory, loopback listen address, and fixed daemon flags. The files
+The Windows-local PowerShell file launcher and metadata are stored below the current user's Local
+AppData. The Scheduled Task invokes canonical Windows PowerShell with fixed non-interactive `-File`
+arguments. The launcher uses `Start-Process` with the exact Windows `wsl.exe` path, validated WSL
+distribution and Linux user, exact Linux `amcd` path, state directory, loopback listen address, and
+fixed daemon flags; it waits and returns the child exit code. The files
 and their directory have a canonical protected DACL with exactly two explicit FullControl allow
 ACEs: the current SID and LocalSystem. File ACEs have no inheritance or propagation; directory ACEs
 have exactly container and object inheritance with no propagation. Deny, inherited, extra, missing,

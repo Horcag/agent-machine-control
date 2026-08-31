@@ -24,7 +24,7 @@ func TestPowerShellAdapterIdentityDesiredAndLifecycleActions(t *testing.T) {
 	runner := &fakeCommandRunner{host: hostContext{
 		Account: `SYNTHETIC\operator`, SID: "S-1-5-21-1000",
 		LocalAppData: `C:\Users\operator\AppData\Local`, SystemRoot: `C:\Windows`,
-		WSLExecutable: `C:\Windows\System32\wsl.exe`, CmdExecutable: `C:\Windows\System32\cmd.exe`,
+		WSLExecutable: `C:\Windows\System32\wsl.exe`,
 	}}
 	adapter := &PowerShellAdapter{
 		runner: runner,
@@ -160,7 +160,7 @@ func TestPowerShellAdapterPropagatesDependencyAndSchedulerFailures(t *testing.T)
 	host := hostContext{
 		Account: `SYNTHETIC\operator`, SID: "S-1-5-21-1000",
 		LocalAppData: `C:\Users\operator\AppData\Local`, SystemRoot: `C:\Windows`,
-		WSLExecutable: `C:\Windows\System32\wsl.exe`, CmdExecutable: `C:\Windows\System32\cmd.exe`,
+		WSLExecutable: `C:\Windows\System32\wsl.exe`,
 	}
 	identity := app.BootstrapIdentity{Account: host.Account, SID: host.SID}
 	base := &PowerShellAdapter{
@@ -307,7 +307,7 @@ func TestBuildSpecProducesExactS4ULimitedFingerprint(t *testing.T) {
 	spec, err := buildSpec(hostContext{
 		Account: identity.Account, SID: identity.SID,
 		LocalAppData: `C:\Users\operator\AppData\Local`, SystemRoot: `C:\Windows`,
-		WSLExecutable: `C:\Windows\System32\wsl.exe`, CmdExecutable: `C:\Windows\System32\cmd.exe`,
+		WSLExecutable: `C:\Windows\System32\wsl.exe`,
 	}, identity, "Synthetic-WSL", "operator", t.TempDir(), binary)
 	if err != nil {
 		t.Fatalf("buildSpec() error = %v", err)
@@ -323,6 +323,22 @@ func TestBuildSpecProducesExactS4ULimitedFingerprint(t *testing.T) {
 	}
 	if spec.WrapperSHA256 == "" || spec.MetadataSHA256 == "" || spec.BinarySHA256 == "" {
 		t.Fatalf("missing fingerprints: %#v", spec)
+	}
+	assertPowerShellFileAction(t, spec)
+}
+
+func assertPowerShellFileAction(t *testing.T, spec app.BootstrapSpec) {
+	t.Helper()
+
+	if !strings.Contains(spec.ActionExecutable, "WindowsPowerShell\\v1.0\\powershell.exe") {
+		t.Fatalf("action executable = %q, want canonical Windows PowerShell", spec.ActionExecutable)
+	}
+	wantArguments := `-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "` + spec.WrapperPath + `"`
+	if spec.ActionArguments != wantArguments {
+		t.Fatalf("action arguments = %q, want %q", spec.ActionArguments, wantArguments)
+	}
+	if !strings.HasSuffix(spec.WrapperPath, ".ps1") || strings.Contains(spec.ActionArguments, "-Command") {
+		t.Fatalf("unsafe PowerShell file action: %#v", spec)
 	}
 }
 
@@ -347,6 +363,36 @@ func TestWrapperContainsOnlyFixedDaemonBootstrapInputs(t *testing.T) {
 		if strings.Contains(strings.ToLower(text), forbidden) {
 			t.Errorf("wrapper contains forbidden %q: %s", forbidden, text)
 		}
+	}
+	for _, required := range []string{
+		"Start-Process", "-ArgumentList $arguments", "-NoNewWindow", "-Wait", "-PassThru", "exit $child.ExitCode",
+	} {
+		if !strings.Contains(text, required) {
+			t.Errorf("PowerShell launcher missing %q: %s", required, text)
+		}
+	}
+}
+
+func TestWrapperRejectsPowerShellEscapes(t *testing.T) {
+	t.Parallel()
+
+	base := app.BootstrapSpec{
+		WSLExecutable: "wsl.exe", Distro: "Synthetic-WSL", LinuxUser: "operator",
+		BinaryPath: "/usr/local/bin/amcd", StateDir: "/state", ListenAddress: "127.0.0.1:0",
+	}
+	for name, mutate := range map[string]func(*app.BootstrapSpec){
+		"single quote":             func(spec *app.BootstrapSpec) { spec.StateDir = "/state'" },
+		"carriage return":          func(spec *app.BootstrapSpec) { spec.BinaryPath = "/bin/amcd" + string([]byte{'\r'}) },
+		"line feed":                func(spec *app.BootstrapSpec) { spec.BinaryPath = "/bin/amcd" + string([]byte{'\n'}) },
+		"PowerShell subexpression": func(spec *app.BootstrapSpec) { spec.StateDir = "/state$(Get-Date)" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			spec := base
+			mutate(&spec)
+			if _, err := wrapperBytes(spec); err == nil {
+				t.Fatal("wrapperBytes() accepted unsafe PowerShell text")
+			}
+		})
 	}
 }
 
@@ -393,7 +439,7 @@ func newTestPowerShellAdapter(t *testing.T, environmentDistro, defaultDistro str
 	host := hostContext{
 		Account: `SYNTHETIC\operator`, SID: "S-1-5-21-1000",
 		LocalAppData: `C:\Users\operator\AppData\Local`, SystemRoot: `C:\Windows`,
-		WSLExecutable: `C:\Windows\System32\wsl.exe`, CmdExecutable: `C:\Windows\System32\cmd.exe`,
+		WSLExecutable: `C:\Windows\System32\wsl.exe`,
 		DefaultDistro: defaultDistro,
 	}
 	return &PowerShellAdapter{

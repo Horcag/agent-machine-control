@@ -67,7 +67,6 @@ type hostContext struct {
 	LocalAppData  string `json:"local_app_data"`
 	SystemRoot    string `json:"system_root"`
 	WSLExecutable string `json:"wsl_executable"`
-	CmdExecutable string `json:"cmd_executable"`
 	DefaultDistro string `json:"default_distro"`
 }
 
@@ -145,7 +144,7 @@ func (a *PowerShellAdapter) readHostContext(ctx context.Context) (hostContext, e
 	if err := decodeSingleJSON(out, &host); err != nil {
 		return hostContext{}, fmt.Errorf("bootstrap: invalid Windows identity response: %w", err)
 	}
-	for _, value := range []string{host.Account, host.SID, host.LocalAppData, host.SystemRoot, host.WSLExecutable, host.CmdExecutable} {
+	for _, value := range []string{host.Account, host.SID, host.LocalAppData, host.SystemRoot, host.WSLExecutable} {
 		if strings.TrimSpace(value) == "" {
 			return hostContext{}, fmt.Errorf("%w: incomplete Windows host identity", app.ErrBootstrapUnsupported)
 		}
@@ -293,7 +292,6 @@ try {
   local_app_data = $root
   system_root = $env:SystemRoot
   wsl_executable = [IO.Path]::Combine($env:SystemRoot, 'System32', 'wsl.exe')
-  cmd_executable = [IO.Path]::Combine($env:SystemRoot, 'System32', 'cmd.exe')
   default_distro = $defaultDistro
 } | ConvertTo-Json -Compress
 `
@@ -311,7 +309,7 @@ func buildSpec(host hostContext, identity app.BootstrapIdentity, distro, linuxUs
 	}
 	stateRoot := resolvedState.Root()
 	for label, value := range map[string]string{"state directory": stateRoot, "binary path": binaryPath} {
-		if !filepath.IsAbs(value) || hasShellMetacharacter(value) {
+		if !filepath.IsAbs(value) || hasPowerShellMetacharacter(value) {
 			return app.BootstrapSpec{}, fmt.Errorf("%w: unsafe %s", app.ErrBootstrapUnsupported, label)
 		}
 	}
@@ -320,15 +318,16 @@ func buildSpec(host hostContext, identity app.BootstrapIdentity, distro, linuxUs
 		return app.BootstrapSpec{}, fmt.Errorf("%w: amcd executable is not a trusted regular file", app.ErrBootstrapUnsupported)
 	}
 	base := strings.TrimRight(host.LocalAppData, `\/`) + `\AgentMachineControl\bootstrap`
-	wrapperPath := base + `\amcd-current-user.cmd`
+	wrapperPath := base + `\amcd-current-user.ps1`
 	metadataPath := base + `\amcd-current-user.json`
-	if hasShellMetacharacter(host.WSLExecutable) || hasShellMetacharacter(host.CmdExecutable) || hasShellMetacharacter(wrapperPath) {
+	powerShellExecutable := strings.TrimRight(host.SystemRoot, `\/`) + `\System32\WindowsPowerShell\v1.0\powershell.exe`
+	if hasPowerShellMetacharacter(host.WSLExecutable) || hasPowerShellMetacharacter(powerShellExecutable) || hasPowerShellMetacharacter(wrapperPath) {
 		return app.BootstrapSpec{}, fmt.Errorf("%w: unsafe Windows host path", app.ErrBootstrapUnsupported)
 	}
 	spec := app.BootstrapSpec{
 		TaskPath: taskPath, TaskName: taskName,
-		ActionExecutable: host.CmdExecutable,
-		ActionArguments:  `/d /s /c ""` + wrapperPath + `""`,
+		ActionExecutable: powerShellExecutable,
+		ActionArguments:  `-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "` + wrapperPath + `"`,
 		Account:          identity.Account, UserSID: identity.SID, LogonType: "S4U", RunLevel: "Limited",
 		LogonTrigger: true, StartWhenAvailable: true, MultipleInstances: "IgnoreNew",
 		RestartCount: 3, RestartInterval: "PT1M", ExecutionTimeLimit: "PT0S",
@@ -359,13 +358,29 @@ func wrapperBytes(spec app.BootstrapSpec) ([]byte, error) {
 		"WSL executable": spec.WSLExecutable, "distro": spec.Distro, "Linux user": spec.LinuxUser,
 		"binary path": spec.BinaryPath, "state directory": spec.StateDir, "listen address": spec.ListenAddress,
 	} {
-		if hasShellMetacharacter(value) {
+		if hasPowerShellMetacharacter(value) {
 			return nil, fmt.Errorf("%w: unsafe %s", app.ErrBootstrapUnsupported, label)
 		}
 	}
-	line := fmt.Sprintf("@echo off\r\n\"%s\" -d \"%s\" --user \"%s\" --exec \"%s\" run --state-dir \"%s\" --listen \"%s\" --json\r\n",
-		spec.WSLExecutable, spec.Distro, spec.LinuxUser, spec.BinaryPath, spec.StateDir, spec.ListenAddress)
-	return []byte(line), nil
+	launcher := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+$arguments = @(
+    '-d',
+    '%s',
+    '--user',
+    '%s',
+    '--exec',
+    '%s',
+    'run',
+    '--state-dir',
+    '%s',
+    '--listen',
+    '%s',
+    '--json'
+)
+$child = Start-Process -FilePath '%s' -ArgumentList $arguments -NoNewWindow -Wait -PassThru
+exit $child.ExitCode
+`, spec.Distro, spec.LinuxUser, spec.BinaryPath, spec.StateDir, spec.ListenAddress, spec.WSLExecutable)
+	return []byte(launcher), nil
 }
 
 func metadataBytes(spec app.BootstrapSpec) ([]byte, error) {
@@ -387,8 +402,8 @@ func validateSimpleName(label, value string) error {
 	return nil
 }
 
-func hasShellMetacharacter(value string) bool {
-	return strings.ContainsAny(value, "\r\n\x00\"%&|<>^!")
+func hasPowerShellMetacharacter(value string) bool {
+	return strings.ContainsAny(value, "\r\n\x00\"'%&|<>^!`$();{}[]")
 }
 
 func hashRegularFile(path string) (string, error) {
