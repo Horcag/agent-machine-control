@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/domain"
 	"github.com/Horcag/agent-machine-control/internal/receipt"
@@ -104,6 +105,22 @@ func TestTargetHandlersRejectRequestsBeforeCoordinatorEffects(t *testing.T) {
 	srv.handleMutateTarget(w, request(http.MethodDelete, `{"reference":"default","reason":"clear target authority","idempotency_key":"clear-mutation-reference","approval_id":"approval-00000000000000000000000000000001","deadline":"2026-08-31T14:00:00Z"}`, "application/json"), "target.clear")
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("clear mutation with reference status = %d", w.Code)
+	}
+
+	validMutation := `{"reason":"clear target authority","idempotency_key":"canonical-deadline","approval_id":"approval-00000000000000000000000000000001","deadline":"2026-08-31T14:00:00Z"}`
+	for name, deadline := range map[string]string{
+		"empty":          "",
+		"malformed":      "not-a-deadline",
+		"alternate zone": time.Date(2026, 8, 31, 18, 0, 0, 0, time.FixedZone("UTC+4", 4*60*60)).Format(time.RFC3339Nano),
+	} {
+		t.Run("mutation deadline "+name, func(t *testing.T) {
+			payload := strings.Replace(validMutation, "2026-08-31T14:00:00Z", deadline, 1)
+			w := httptest.NewRecorder()
+			srv.handleMutateTarget(w, request(http.MethodDelete, payload, "application/json"), "target.clear")
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400 before coordinator effects", w.Code)
+			}
+		})
 	}
 }
 

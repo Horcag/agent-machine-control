@@ -142,6 +142,54 @@ func TestTargetCoordinatorEnrollApprovalAndRedactedEvidence(t *testing.T) {
 	}
 }
 
+func TestTargetCoordinatorIdenticalEnrollConsumesApprovalAndRecordsAdmission(t *testing.T) {
+	now := time.Date(2026, 8, 31, 5, 15, 0, 0, time.UTC)
+	commits := 0
+	harness := newTargetCoordinatorHarness(t, t.TempDir(), now, nil, &commits)
+	aliases := []string{"primary"}
+	seed := issueEnrollApproval(t, harness, "target-identical-seed", aliases)
+	if _, err := harness.coordinator.Mutate(context.Background(), TargetMutationParams{
+		Kind: "target.enroll", Aliases: aliases, Caller: targetOperator(t), Reason: "enroll synthetic local VM",
+		IdempotencyKey: "target-identical-seed", Deadline: seed.Deadline, ApprovalID: seed.ApprovalID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	grant := issueEnrollApproval(t, harness, "target-identical-fresh", aliases, "confirm identical target authority")
+	result, err := harness.coordinator.Mutate(context.Background(), TargetMutationParams{
+		Kind: "target.enroll", Aliases: aliases, Caller: targetOperator(t), Reason: "confirm identical target authority",
+		IdempotencyKey: "target-identical-fresh", Deadline: grant.Deadline, ApprovalID: grant.ApprovalID,
+	})
+	if err != nil || !result.Publication.Committed || !result.Publication.Durable {
+		t.Fatalf("identical mutation = %+v, %v", result, err)
+	}
+	if consumed, err := harness.coordinator.approvalStore.IsConsumedContext(context.Background(), grant.ApprovalID); err != nil || !consumed {
+		t.Fatalf("identical mutation approval consumed = %t, %v", consumed, err)
+	}
+	if admissions := countTargetAdmissionEvents(t, harness, "target-identical-fresh"); admissions != 1 {
+		t.Fatalf("identical mutation admission events = %d, want 1", admissions)
+	}
+	record, err := harness.journal.LookupKeyContext(context.Background(), targetOperator(t).EffectiveActor, "target-identical-fresh")
+	if err != nil || record.State != target.MutationFinalized || !record.EffectApplied || !record.Committed || !record.Durable {
+		t.Fatalf("identical mutation record = %+v, %v", record, err)
+	}
+}
+
+func countTargetAdmissionEvents(t *testing.T, harness *targetCoordinatorHarness, key string) int {
+	t.Helper()
+	events, err := harness.coordinator.auditStore.Tail(audit.MaxTailLimit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, event := range events {
+		if event.EventType == audit.EventAdmissionIntent && event.IdempotencyKey == key {
+			count++
+		}
+	}
+	return count
+}
+
 func TestTargetCoordinatorClearApprovalRetryAndExactMutationReplay(t *testing.T) {
 	now := time.Date(2026, 8, 31, 5, 30, 0, 0, time.UTC)
 	harness := newTargetCoordinatorHarness(t, t.TempDir(), now, nil, nil)

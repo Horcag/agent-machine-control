@@ -136,16 +136,6 @@ func (s *Server) normalizeOperationMachineFilter(ctx context.Context, reference 
 	if reference == "" {
 		return "", nil
 	}
-	if locator, err := domain.ParseMachineLocator(reference); err == nil {
-		return domain.MachineRef(locator.String()), nil
-	}
-	if vmID, err := domain.NormalizeMachineGUID(reference); err == nil {
-		locator, locatorErr := domain.NewMachineLocator(domain.LocalHostID, vmID)
-		if locatorErr != nil {
-			return "", locatorErr
-		}
-		return domain.MachineRef(locator.String()), nil
-	}
 	return s.recoveryService.ResolveTargetReference(ctx, reference)
 }
 

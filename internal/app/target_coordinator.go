@@ -165,11 +165,7 @@ func (c *TargetCoordinator) applyTargetPlan(
 	if err != nil {
 		return target.Publication{}, nil, err
 	}
-	if currentHash == record.DesiredHash {
-		publication, repairErr := c.repairPublication(ctx, plan)
-		return publication, repairErr, nil
-	}
-	if currentHash != record.PriorHash {
+	if currentHash != record.DesiredHash && currentHash != record.PriorHash {
 		return target.Publication{}, nil, target.ErrMutationDrift
 	}
 	if err := c.auditStore.RecordAdmissionIntentContext(ctx, op); err != nil {
@@ -181,6 +177,13 @@ func (c *TargetCoordinator) applyTargetPlan(
 			return target.Publication{}, nil, c.cancelUnexecuted(ctx, op, issued, false, err)
 		}
 		consumedHere = true
+	}
+	if currentHash == record.DesiredHash {
+		publication, repairErr := c.repairPublication(ctx, plan)
+		if !publication.Committed {
+			return target.Publication{}, repairErr, c.cancelUnexecuted(ctx, op, issued, consumedHere, repairErr)
+		}
+		return publication, repairErr, nil
 	}
 	publication, commitErr := c.service.CommitTargetPlan(ctx, plan)
 	if !publication.Committed {

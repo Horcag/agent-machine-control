@@ -106,7 +106,7 @@ func (s *Server) handleMutateTarget(w http.ResponseWriter, r *http.Request, kind
 		writeError(w, http.StatusBadRequest, "invalid_argument", "invalid target mutation request")
 		return
 	}
-	deadline, err := time.Parse(time.RFC3339Nano, req.Deadline)
+	deadline, err := ResolveSessionDeadline(req.ApprovalID, req.Deadline)
 	if err != nil || domain.ValidateReason(req.Reason) != nil || domain.ValidateIdempotencyKey(req.IdempotencyKey) != nil ||
 		domain.ValidateApprovalID(req.ApprovalID) != nil || (kind == "target.clear" && (req.Reference != "" || len(req.Aliases) != 0)) {
 		writeError(w, http.StatusBadRequest, "invalid_argument", "invalid target mutation request")
