@@ -35,8 +35,8 @@ func setupTestDaemonWithSSHConfig(t *testing.T, sanitizerConfig guestssh.Sanitiz
 }
 
 func setupTestDaemonWithSSHConfigAndContainment(t *testing.T, sanitizerConfig guestssh.SanitizerConfig, contained bool) (*daemon.Server, string, string, string, string, *fakeserver.FakeSSHServer) {
-	tempDir := t.TempDir()
-	seedDaemonTestTarget(t, tempDir)
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	seedDaemonTestTarget(t, stateRoot)
 
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	signer, _ := gossh.NewSignerFromKey(priv)
@@ -70,7 +70,7 @@ func setupTestDaemonWithSSHConfigAndContainment(t *testing.T, sanitizerConfig gu
 	transport := guestssh.NewTransport(kp)
 
 	cfg := daemon.Config{
-		StateDir:               tempDir,
+		StateDir:               stateRoot,
 		ListenAddr:             "127.0.0.1:0",
 		Transport:              transport,
 		KeyProvider:            kp,
@@ -86,7 +86,7 @@ func setupTestDaemonWithSSHConfigAndContainment(t *testing.T, sanitizerConfig gu
 		t.Fatalf("srv.Start failed: %v", err)
 	}
 
-	sd, _ := statedir.Resolve(tempDir)
+	sd, _ := statedir.Resolve(stateRoot)
 	opToken, err := auth.ReadTokenFile(sd.AuthDir(), auth.TokenTypeOperator)
 	if err != nil {
 		t.Fatalf("failed to read operator token: %v", err)
@@ -96,7 +96,7 @@ func setupTestDaemonWithSSHConfigAndContainment(t *testing.T, sanitizerConfig gu
 		t.Fatalf("failed to read agent token: %v", err)
 	}
 
-	return srv, srv.Endpoint(), opToken, agentToken, tempDir, fakeSSH
+	return srv, srv.Endpoint(), opToken, agentToken, stateRoot, fakeSSH
 }
 
 func doJSONReq(t *testing.T, method, url, token string, body any) (int, []byte) {

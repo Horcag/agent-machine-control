@@ -16,10 +16,11 @@ import (
 )
 
 type recordingWindowsGuard struct {
-	mu       sync.Mutex
-	validate []PathKind
-	protect  []PathKind
-	err      error
+	mu         sync.Mutex
+	validate   []PathKind
+	protect    []PathKind
+	protectNew []PathKind
+	err        error
 }
 
 func (g *recordingWindowsGuard) Validate(_ context.Context, _ string, kind PathKind) error {
@@ -36,6 +37,13 @@ func (g *recordingWindowsGuard) Protect(_ context.Context, _ string, kind PathKi
 	return g.err
 }
 
+func (g *recordingWindowsGuard) ProtectNew(_ context.Context, _ string, kind PathKind) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.protectNew = append(g.protectNew, kind)
+	return g.err
+}
+
 func TestHostBackedPathUsesInjectedWindowsGuard(t *testing.T) {
 	dir := testDirectory(t)
 	guard := &recordingWindowsGuard{}
@@ -48,9 +56,35 @@ func TestHostBackedPathUsesInjectedWindowsGuard(t *testing.T) {
 	}
 	guard.mu.Lock()
 	defer guard.mu.Unlock()
-	if !slices.Contains(guard.protect, PathDirectory) || !slices.Contains(guard.protect, PathFile) ||
+	if !slices.Contains(guard.protect, PathDirectory) || !slices.Contains(guard.protectNew, PathFile) ||
 		!slices.Contains(guard.validate, PathInheritedFile) || len(guard.validate) < 3 {
-		t.Fatalf("guard calls = validate %v protect %v", guard.validate, guard.protect)
+		t.Fatalf("guard calls = validate %v protect %v protect-new %v", guard.validate, guard.protect, guard.protectNew)
+	}
+}
+
+func TestHostBackedFreshProtectionUsesDistinctGuardAction(t *testing.T) {
+	guard := &recordingWindowsGuard{}
+	security := &platformSecurity{
+		detectHostPath: func(string) (bool, error) { return true, nil },
+		windowsGuard:   guard,
+	}
+	if err := security.ProtectNewDir(context.Background(), t.TempDir()); err != nil {
+		t.Fatalf("ProtectNewDir: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "fresh-file")
+	if err := os.WriteFile(path, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := security.ProtectNewFile(context.Background(), path); err != nil {
+		t.Fatalf("ProtectNewFile: %v", err)
+	}
+	guard.mu.Lock()
+	defer guard.mu.Unlock()
+	if !slices.Contains(guard.protectNew, PathDirectory) || !slices.Contains(guard.protectNew, PathFile) {
+		t.Fatalf("fresh guard calls = %v, want directory and file", guard.protectNew)
+	}
+	if len(guard.protect) != 0 {
+		t.Fatalf("ordinary guard protection used for fresh objects: %v", guard.protect)
 	}
 }
 
@@ -125,6 +159,9 @@ func TestWindowsGuardScriptParses(t *testing.T) {
 	if !strings.Contains(windowsGuardScript, wantDistinctSet) {
 		t.Fatal("PowerShell guard does not preserve the ordered distinct trustee set")
 	}
+	if !strings.Contains(windowsGuardScript, "$action -eq 'protect' -and $initialOwner -ne $identity.User.Value") {
+		t.Fatal("PowerShell guard does not keep existing-object owner rejection distinct from fresh protection")
+	}
 	powerShell, err := exec.LookPath("powershell.exe")
 	if err != nil {
 		t.Skip("powershell.exe unavailable")
@@ -155,8 +192,8 @@ printf '{"owner":"S-1-5-21-1000","current_user":"S-1-5-21-1000","protected":%s,"
 		if err := guard.Validate(context.Background(), "/mnt/c/fake", PathDirectory); err != nil {
 			t.Fatalf("Validate: %v", err)
 		}
-		if err := guard.Protect(context.Background(), "/mnt/c/fake", PathFile); err != nil {
-			t.Fatalf("Protect: %v", err)
+		if err := guard.ProtectNew(context.Background(), "/mnt/c/fake", PathFile); err != nil {
+			t.Fatalf("ProtectNew: %v", err)
 		}
 	})
 
@@ -190,13 +227,33 @@ printf '{"owner":"S-1-5-21-1000","current_user":"S-1-5-21-1000","protected":%s,"
 	})
 }
 
+func TestPowerShellWindowsGuardSeparatesExistingAndFreshProtection(t *testing.T) {
+	commandDir := t.TempDir()
+	writeGuardExecutable(t, commandDir, "wslpath", "#!/bin/sh\nprintf 'C:\\\\fake\\\\target\\n'\n")
+	writeGuardExecutable(t, commandDir, "powershell.exe", `#!/bin/sh
+case "$AMC_TARGET_GUARD_ACTION" in
+  protect) exit 1 ;;
+  protect-new) printf '{"owner":"S-1-5-21-1000","current_user":"S-1-5-21-1000","protected":true,"kind":"file","entries":[{"type":0,"flags":0,"mask":2032127,"sid":"S-1-5-21-1000"},{"type":0,"flags":0,"mask":2032127,"sid":"S-1-5-18"},{"type":0,"flags":0,"mask":2032127,"sid":"S-1-5-32-544"}]}' ;;
+  *) exit 1 ;;
+esac
+`)
+	t.Setenv("PATH", commandDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	guard := powerShellWindowsGuard{}
+	if err := guard.Protect(context.Background(), "/mnt/c/fake", PathFile); err == nil {
+		t.Fatal("Protect unexpectedly accepted a foreign-owner proof")
+	}
+	if err := guard.ProtectNew(context.Background(), "/mnt/c/fake", PathFile); err != nil {
+		t.Fatalf("ProtectNew = %v", err)
+	}
+}
+
 func TestPowerShellWindowsGuardLocalSystemProofs(t *testing.T) {
 	commandDir := t.TempDir()
 	writeGuardExecutable(t, commandDir, "wslpath", "#!/bin/sh\nprintf 'C:\\\\fake\\\\target\\n'\n")
 	writeGuardExecutable(t, commandDir, "powershell.exe", `#!/bin/sh
 case "$AMC_TARGET_GUARD_KIND:$AMC_TARGET_GUARD_ACTION" in
-  directory:validate|directory:protect) flags=3; protected=true ;;
-  file:validate|file:protect) flags=0; protected=true ;;
+  directory:validate|directory:protect|directory:protect-new) flags=3; protected=true ;;
+  file:validate|file:protect|file:protect-new) flags=0; protected=true ;;
   inherited_file:validate) flags=16; protected=false ;;
   *) exit 1 ;;
 esac
@@ -215,7 +272,7 @@ printf '{"owner":"S-1-5-18","current_user":"S-1-5-18","protected":%s,"kind":"%s"
 	for _, check := range checks {
 		var err error
 		if check.protect {
-			err = guard.Protect(context.Background(), "/mnt/c/fake", check.kind)
+			err = guard.ProtectNew(context.Background(), "/mnt/c/fake", check.kind)
 		} else {
 			err = guard.Validate(context.Background(), "/mnt/c/fake", check.kind)
 		}

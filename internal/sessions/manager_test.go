@@ -210,9 +210,7 @@ func TestManagerExpiredContextsNeverReachSessionEffects(t *testing.T) {
 //
 //nolint:unparam // Linux-only lint cannot see the Windows call site.
 func setupTestManager(t *testing.T, opts ...sessions.ManagerOption) (*sessions.Manager, *fakeserver.FakeSSHServer, domain.ActorContext, domain.ActorContext, string) {
-	tempDir := t.TempDir()
-	sd, _ := statedir.Resolve(tempDir)
-	_ = sd.EnsureDirs()
+	sd := testStateDir(t)
 
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	signer, _ := gossh.NewSignerFromKey(priv)

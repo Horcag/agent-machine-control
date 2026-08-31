@@ -145,7 +145,7 @@ func TestCompatibilityAdapterAllowsOnlyExplicitTestFallback(t *testing.T) {
 func TestMCPObservationUsesOnlyTheEnrolledTarget(t *testing.T) {
 	const enrolledID = "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
 	const otherID = "c4a523d4-6b99-4d62-a5e2-4752c0f20002"
-	state, err := statedir.Resolve(t.TempDir())
+	state, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func TestMCPObservationUsesOnlyTheEnrolledTarget(t *testing.T) {
 }
 
 func TestMCPBuildsTargetServiceFromStateDirectory(t *testing.T) {
-	state, err := statedir.Resolve(t.TempDir())
+	state, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}

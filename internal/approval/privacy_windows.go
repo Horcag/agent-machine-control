@@ -21,7 +21,7 @@ func createApprovalFile(path string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := winacl.ProtectPrivateFile(path); err != nil {
+	if err := winacl.ProtectNewPrivateFile(path); err != nil {
 		_ = file.Close()
 		_ = os.Remove(path)
 		return nil, fmt.Errorf("%w: cannot protect approval file", ErrInsecurePermissions)

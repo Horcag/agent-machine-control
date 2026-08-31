@@ -150,7 +150,7 @@ type effectTruthHarness struct {
 
 func newEffectTruthHarness(t *testing.T, channel guestssh.Channel) effectTruthHarness {
 	t.Helper()
-	sd, err := statedir.Resolve(t.TempDir())
+	sd, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +263,7 @@ func failFirstDirectorySync(syncErr error, calls *atomic.Int32) func(string) err
 }
 
 func TestOpenPostCommitDirectorySyncFailurePreservesEffectAndExactRetryTruth(t *testing.T) {
-	sd, err := statedir.Resolve(t.TempDir())
+	sd, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}

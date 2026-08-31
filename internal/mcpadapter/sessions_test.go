@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -88,7 +89,7 @@ func handleMockMCPSessionRoute(w http.ResponseWriter, r *http.Request, sessID, m
 
 func setupMCPSessionTest(t *testing.T) (*Adapter, func()) {
 	tempDir := t.TempDir()
-	sd, _ := statedir.Resolve(tempDir)
+	sd, _ := statedir.Resolve(filepath.Join(tempDir, "state"))
 	_ = sd.EnsureDirs()
 
 	sessID := "sess-a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"

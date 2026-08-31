@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -25,7 +26,7 @@ func (t *cancelledDialTransport) Dial(context.Context, domain.MachineRef, uint16
 }
 
 func TestCancelledZeroEffectMutationDoesNotConsumeIssuedApproval(t *testing.T) {
-	sd, err := statedir.Resolve(t.TempDir())
+	sd, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}

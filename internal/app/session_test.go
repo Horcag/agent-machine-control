@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -47,7 +48,7 @@ type testSessionHarness struct {
 
 func setupSessionServiceTest(t *testing.T) *testSessionHarness {
 	tempDir := t.TempDir()
-	sd, err := statedir.Resolve(tempDir)
+	sd, err := statedir.Resolve(filepath.Join(tempDir, "state"))
 	if err != nil {
 		t.Fatalf("failed to resolve statedir: %v", err)
 	}

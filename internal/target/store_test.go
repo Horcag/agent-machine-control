@@ -22,7 +22,7 @@ const (
 
 func testDirectory(t *testing.T) string {
 	t.Helper()
-	state, err := statedir.Resolve(t.TempDir())
+	state, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -97,6 +97,11 @@ func (s *recordingSecurity) ProtectDir(context.Context, string) error {
 	return s.protectDirErr
 }
 
+func (s *recordingSecurity) ProtectNewDir(context.Context, string) error {
+	s.record("protect-new-dir")
+	return s.protectDirErr
+}
+
 func (s *recordingSecurity) ValidateInheritedFile(_ context.Context, path string) error {
 	s.record("validate-inherited-file")
 	info, err := os.Stat(path)
@@ -114,8 +119,8 @@ func (s *recordingSecurity) ValidateFile(context.Context, string) error {
 	return nil
 }
 
-func (s *recordingSecurity) ProtectFile(context.Context, string) error {
-	s.record("protect-file")
+func (s *recordingSecurity) ProtectNewFile(context.Context, string) error {
+	s.record("protect-new-file")
 	return nil
 }
 
@@ -135,7 +140,7 @@ func TestStoreSaveProtectsDirectoryBeforeCreatingTemporaryState(t *testing.T) {
 	events, inheritedWasEmpty := security.snapshot()
 	protectIndex := slices.Index(events, "protect-dir")
 	inheritedIndex := slices.Index(events, "validate-inherited-file")
-	fileProtectIndex := slices.Index(events, "protect-file")
+	fileProtectIndex := slices.Index(events, "protect-new-file")
 	if protectIndex < 0 || inheritedIndex <= protectIndex || fileProtectIndex <= inheritedIndex {
 		t.Fatalf("security events = %v, want directory protection before inherited and final file proofs", events)
 	}

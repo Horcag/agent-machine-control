@@ -3,6 +3,7 @@ package ssh
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/Horcag/agent-machine-control/internal/domain"
@@ -10,7 +11,7 @@ import (
 )
 
 func TestLocalKeyProviderCancellationStopsProtectedReads(t *testing.T) {
-	sd, err := statedir.Resolve(t.TempDir())
+	sd, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -32,7 +33,7 @@ func TestRecoveryServiceCanonicalizesAllPublicTargetReferencesBeforeEffects(t *t
 	}
 	backend, startCalls := canonicalTargetBackend(t, observation, vmID, checkpointID, now)
 
-	state, err := statedir.Resolve(t.TempDir())
+	state, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}

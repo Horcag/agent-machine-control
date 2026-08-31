@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -43,7 +44,7 @@ type dynamicClassRetryHarness struct {
 func newDynamicClassRetryHarness(t *testing.T, resolution app.SafetyResolution) *dynamicClassRetryHarness {
 	t.Helper()
 
-	sd, err := statedir.Resolve(t.TempDir())
+	sd, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatalf("resolve state directory: %v", err)
 	}

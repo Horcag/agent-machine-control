@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -132,7 +133,7 @@ func TestMCPMutationRejectsDifferentTargetBeforeClientOrProvider(t *testing.T) {
 }
 
 func TestTargetServiceInitializationIsConcurrentAndCachesOutcome(t *testing.T) {
-	state, err := statedir.Resolve(t.TempDir())
+	state, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +184,7 @@ func TestTargetServiceInitializationIsConcurrentAndCachesOutcome(t *testing.T) {
 
 func newEnrolledMutationAdapter(t *testing.T, endpoint string) *Adapter {
 	t.Helper()
-	state, err := statedir.Resolve(t.TempDir())
+	state, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}

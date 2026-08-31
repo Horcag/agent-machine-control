@@ -266,7 +266,7 @@ func verifyRestartReconstruction(ctx context.Context, t *testing.T, sd *statedir
 // and survives service/manager restart without any transport calls.
 func TestSessionRegression_ExactRetryZeroEffectsAndRestartSurvives(t *testing.T) {
 	tempDir := t.TempDir()
-	sd, _ := statedir.Resolve(tempDir)
+	sd, _ := statedir.Resolve(filepath.Join(tempDir, "state"))
 	_ = sd.EnsureDirs()
 
 	transport := &trackingTransport{}
@@ -340,7 +340,7 @@ func TestSessionRegression_ExactRetryZeroEffectsAndRestartSurvives(t *testing.T)
 // Regression Test 3: Parameter and cross-actor collisions fail closed without disclosing cached data.
 func TestSessionRegression_CollisionsFailClosedAndNoDataLeak(t *testing.T) {
 	tempDir := t.TempDir()
-	sd, _ := statedir.Resolve(tempDir)
+	sd, _ := statedir.Resolve(filepath.Join(tempDir, "state"))
 	_ = sd.EnsureDirs()
 
 	transport := &trackingTransport{}
@@ -428,7 +428,7 @@ func checkDiskFilesForLeaks(t *testing.T, dir, secret string, checkChkSession bo
 // and raw session input is never stored in operation parameters, audit, or receipts.
 func TestSessionRegression_AuditReceiptIntegrityAndRedaction(t *testing.T) {
 	tempDir := t.TempDir()
-	sd, _ := statedir.Resolve(tempDir)
+	sd, _ := statedir.Resolve(filepath.Join(tempDir, "state"))
 	_ = sd.EnsureDirs()
 
 	transport := &trackingTransport{}
@@ -502,7 +502,7 @@ func TestSessionRegression_AuditReceiptIntegrityAndRedaction(t *testing.T) {
 // Regression Test 9: Timeout / cancellation causes no late write effects.
 func TestSessionRegression_CancellationAndTimeout(t *testing.T) {
 	tempDir := t.TempDir()
-	sd, _ := statedir.Resolve(tempDir)
+	sd, _ := statedir.Resolve(filepath.Join(tempDir, "state"))
 	_ = sd.EnsureDirs()
 
 	transport := &trackingTransport{
@@ -564,7 +564,7 @@ func TestSessionRegression_CancellationAndTimeout(t *testing.T) {
 // Regression Test 10: Scope authorization on read/wait/list/get.
 func TestSessionRegression_ScopeEnforcement(t *testing.T) {
 	tempDir := t.TempDir()
-	sd, _ := statedir.Resolve(tempDir)
+	sd, _ := statedir.Resolve(filepath.Join(tempDir, "state"))
 	_ = sd.EnsureDirs()
 
 	transport := &trackingTransport{}

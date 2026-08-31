@@ -81,7 +81,7 @@ type closeRetryHarness struct {
 
 func newCloseRetryHarness(t *testing.T) closeRetryHarness {
 	t.Helper()
-	sd, err := statedir.Resolve(t.TempDir())
+	sd, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ type approvedCloseRetryHarness struct {
 
 func newApprovedCloseRetryHarness(t *testing.T) approvedCloseRetryHarness {
 	t.Helper()
-	sd, err := statedir.Resolve(t.TempDir())
+	sd, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}

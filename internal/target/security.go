@@ -15,6 +15,7 @@ const (
 type WindowsPathGuard interface {
 	Validate(context.Context, string, PathKind) error
 	Protect(context.Context, string, PathKind) error
+	ProtectNew(context.Context, string, PathKind) error
 }
 
 // HostPathDetector distinguishes native POSIX state from Windows-host-backed state.
@@ -24,9 +25,10 @@ type HostPathDetector func(string) (bool, error)
 type Security interface {
 	ValidateDir(context.Context, string) error
 	ProtectDir(context.Context, string) error
+	ProtectNewDir(context.Context, string) error
 	ValidateInheritedFile(context.Context, string) error
 	ValidateFile(context.Context, string) error
-	ProtectFile(context.Context, string) error
+	ProtectNewFile(context.Context, string) error
 }
 
 type configurableSecurity interface {

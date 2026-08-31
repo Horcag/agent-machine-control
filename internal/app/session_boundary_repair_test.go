@@ -28,7 +28,7 @@ func (validationNeverSafety) ResolveSafety(context.Context, domain.MachineRef) (
 }
 
 func TestSessionOpenCanonicalParametersFailBeforePrivilegedAdmission(t *testing.T) {
-	sd, err := statedir.Resolve(t.TempDir())
+	sd, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestSessionMutationDeadlineStopsInsideDurableRetryLookups(t *testing.T) {
 
 func runSessionMutationLookupDeadline(t *testing.T, name string, install durableLookupInstaller) {
 	t.Helper()
-	sd, err := statedir.Resolve(t.TempDir())
+	sd, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}

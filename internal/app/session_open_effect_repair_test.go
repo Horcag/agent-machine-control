@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -122,7 +123,7 @@ func assertIncompleteOpenRetry(t *testing.T, svc *app.SessionService, params app
 }
 
 func TestSessionOpenIncompletePostEffectCleanupIsDurableAndNotRedialed(t *testing.T) {
-	sd, err := statedir.Resolve(t.TempDir())
+	sd, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +191,7 @@ func TestSessionOpenIncompletePostEffectCleanupIsDurableAndNotRedialed(t *testin
 }
 
 func TestSessionOpenCompletedPostEffectCleanupDoesNotClaimLiveSession(t *testing.T) {
-	sd, err := statedir.Resolve(t.TempDir())
+	sd, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}

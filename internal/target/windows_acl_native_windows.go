@@ -22,7 +22,9 @@ func validateTargetWindowsACL(path string, kind PathKind) error {
 	return validateWindowsACLProof(proof)
 }
 
-func protectTargetWindowsACL(path string, kind PathKind) error {
+// protectTargetWindowsACL applies the exact target ACL. Only a caller that has just created an
+// object may request owner normalization; established paths must already belong to the operator.
+func protectTargetWindowsACL(path string, kind PathKind, normalizeOwner bool) error {
 	if kind != PathDirectory && kind != PathFile {
 		return fmt.Errorf("target: cannot protect path kind %q", kind)
 	}
@@ -33,7 +35,7 @@ func protectTargetWindowsACL(path string, kind PathKind) error {
 	if err != nil {
 		return err
 	}
-	if !owner.Equals(current) {
+	if !normalizeOwner && !owner.Equals(current) {
 		return errors.New("target: refusing to protect a path owned by a foreign Windows SID")
 	}
 
@@ -75,11 +77,17 @@ func protectTargetWindowsACL(path string, kind PathKind) error {
 	if err != nil {
 		return fmt.Errorf("target: build exact DACL: %w", err)
 	}
+	securityInformation := windows.SECURITY_INFORMATION(windows.DACL_SECURITY_INFORMATION | windows.PROTECTED_DACL_SECURITY_INFORMATION)
+	var ownerToSet *windows.SID
+	if normalizeOwner {
+		securityInformation |= windows.OWNER_SECURITY_INFORMATION
+		ownerToSet = current
+	}
 	if err := windows.SetNamedSecurityInfo(
 		path,
 		windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		nil,
+		securityInformation,
+		ownerToSet,
 		nil,
 		dacl,
 		nil,

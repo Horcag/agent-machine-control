@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -117,7 +118,7 @@ func handleMockCLISessionRoute(w http.ResponseWriter, r *http.Request, sessID st
 
 func setupTestCLIState(t *testing.T) (string, *httptest.Server) {
 	tempDir := t.TempDir()
-	sd, _ := statedir.Resolve(tempDir)
+	sd, _ := statedir.Resolve(filepath.Join(tempDir, "state"))
 	_ = sd.EnsureDirs()
 
 	sessID := "sess-a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
@@ -137,7 +138,7 @@ func setupTestCLIState(t *testing.T) (string, *httptest.Server) {
 
 	createTestOperatorToken(t, sd.AuthDir())
 
-	return tempDir, server
+	return sd.Root(), server
 }
 
 func TestCLISession_DirectModeRejection(t *testing.T) {

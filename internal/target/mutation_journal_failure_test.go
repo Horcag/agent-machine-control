@@ -34,11 +34,20 @@ func (s *recordingMutationJournalSecurity) ProtectDir(context.Context, string) e
 	return s.protectErr
 }
 
+func (s *recordingMutationJournalSecurity) ProtectNewDir(context.Context, string) error {
+	s.calls = append(s.calls, "protect-new")
+	return s.protectErr
+}
+
 func (s *mutationJournalTestSecurity) ValidateDir(context.Context, string) error {
 	return s.dirErr
 }
 
 func (s *mutationJournalTestSecurity) ProtectDir(context.Context, string) error {
+	return s.protectErr
+}
+
+func (s *mutationJournalTestSecurity) ProtectNewDir(context.Context, string) error {
 	return s.protectErr
 }
 
@@ -50,7 +59,7 @@ func (s *mutationJournalTestSecurity) ValidateFile(context.Context, string) erro
 	return s.fileErr
 }
 
-func (s *mutationJournalTestSecurity) ProtectFile(context.Context, string) error {
+func (s *mutationJournalTestSecurity) ProtectNewFile(context.Context, string) error {
 	return s.protectErr
 }
 
@@ -115,7 +124,7 @@ func TestMutationJournalProtectsOnlyNewDirectoryBeforeValidation(t *testing.T) {
 		if _, err := NewMutationJournal(t.TempDir(), WithMutationJournalSecurity(security)); err != nil {
 			t.Fatal(err)
 		}
-		if got, want := strings.Join(security.calls, ","), "protect,validate"; got != want {
+		if got, want := strings.Join(security.calls, ","), "protect-new,validate"; got != want {
 			t.Fatalf("security calls = %q, want %q", got, want)
 		}
 	})
@@ -125,7 +134,7 @@ func TestMutationJournalProtectsOnlyNewDirectoryBeforeValidation(t *testing.T) {
 		if _, err := NewMutationJournal(t.TempDir(), WithMutationJournalSecurity(security)); !errors.Is(err, ErrInsecureState) {
 			t.Fatalf("NewMutationJournal protection error = %v", err)
 		}
-		if got, want := strings.Join(security.calls, ","), "protect"; got != want {
+		if got, want := strings.Join(security.calls, ","), "protect-new"; got != want {
 			t.Fatalf("security calls = %q, want %q", got, want)
 		}
 	})
@@ -135,7 +144,7 @@ func TestMutationJournalProtectsOnlyNewDirectoryBeforeValidation(t *testing.T) {
 		if _, err := NewMutationJournal(t.TempDir(), WithMutationJournalSecurity(security)); !errors.Is(err, ErrInsecureState) {
 			t.Fatalf("NewMutationJournal validation error = %v", err)
 		}
-		if got, want := strings.Join(security.calls, ","), "protect,validate"; got != want {
+		if got, want := strings.Join(security.calls, ","), "protect-new,validate"; got != want {
 			t.Fatalf("security calls = %q, want %q", got, want)
 		}
 	})

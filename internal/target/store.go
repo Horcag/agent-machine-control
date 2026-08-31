@@ -236,7 +236,7 @@ func (s *Store) prepareTemporary(ctx context.Context, file *os.File, path string
 	if err := file.Chmod(0600); err != nil {
 		return fmt.Errorf("target: protect temporary state mode: %w", err)
 	}
-	if err := s.security.ProtectFile(ctx, path); err != nil {
+	if err := s.security.ProtectNewFile(ctx, path); err != nil {
 		return fmt.Errorf("%w: temporary file: %w", ErrInsecureState, err)
 	}
 	if _, err := file.Write(payload); err != nil {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -206,7 +207,7 @@ func TestDiagnosticMutationTimeoutBoundsTransportWithoutCallerDeadline(t *testin
 }
 
 func TestAdmissionDeadlineAfterLeaseLeavesNoDurableMutationState(t *testing.T) {
-	sd, err := statedir.Resolve(t.TempDir())
+	sd, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}

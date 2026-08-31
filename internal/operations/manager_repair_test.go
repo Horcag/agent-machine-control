@@ -56,10 +56,7 @@ func (b *repairBlockingBackend) StartMachine(ctx context.Context, id string) (do
 		}
 	}
 	if b.entered != nil {
-		select {
-		case b.entered <- struct{}{}:
-		default:
-		}
+		b.entered <- struct{}{}
 	}
 	if b.blockChannel != nil {
 		select {

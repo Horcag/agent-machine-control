@@ -314,30 +314,31 @@ func TestStateDir_Windows_Default(t *testing.T) {
 
 func TestStateDir_NewSubdirs(t *testing.T) {
 	tempDir := t.TempDir()
-	sd, err := statedir.Resolve(tempDir)
+	stateRoot := filepath.Join(tempDir, "state")
+	sd, err := statedir.Resolve(stateRoot)
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
 
-	if sd.DaemonDir() != filepath.Join(tempDir, statedir.SubdirDaemon) {
+	if sd.DaemonDir() != filepath.Join(stateRoot, statedir.SubdirDaemon) {
 		t.Errorf("unexpected DaemonDir: %s", sd.DaemonDir())
 	}
-	if sd.AuthDir() != filepath.Join(tempDir, statedir.SubdirAuth) {
+	if sd.AuthDir() != filepath.Join(stateRoot, statedir.SubdirAuth) {
 		t.Errorf("unexpected AuthDir: %s", sd.AuthDir())
 	}
-	if sd.OperationsDir() != filepath.Join(tempDir, statedir.SubdirOperations) {
+	if sd.OperationsDir() != filepath.Join(stateRoot, statedir.SubdirOperations) {
 		t.Errorf("unexpected OperationsDir: %s", sd.OperationsDir())
 	}
-	if sd.SessionsDir() != filepath.Join(tempDir, statedir.SubdirSessions) {
+	if sd.SessionsDir() != filepath.Join(stateRoot, statedir.SubdirSessions) {
 		t.Errorf("unexpected SessionsDir: %s", sd.SessionsDir())
 	}
-	if sd.KeysDir() != filepath.Join(tempDir, statedir.SubdirKeys) {
+	if sd.KeysDir() != filepath.Join(stateRoot, statedir.SubdirKeys) {
 		t.Errorf("unexpected KeysDir: %s", sd.KeysDir())
 	}
-	if sd.MachinesDir() != filepath.Join(tempDir, statedir.SubdirMachines) {
+	if sd.MachinesDir() != filepath.Join(stateRoot, statedir.SubdirMachines) {
 		t.Errorf("unexpected MachinesDir: %s", sd.MachinesDir())
 	}
-	if sd.TargetsDir() != filepath.Join(tempDir, statedir.SubdirTargets) {
+	if sd.TargetsDir() != filepath.Join(stateRoot, statedir.SubdirTargets) {
 		t.Errorf("unexpected TargetsDir: %s", sd.TargetsDir())
 	}
 

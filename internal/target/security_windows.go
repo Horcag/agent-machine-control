@@ -31,7 +31,14 @@ func (*platformSecurity) ProtectDir(ctx context.Context, path string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return protectTargetWindowsACL(path, PathDirectory)
+	return protectTargetWindowsACL(path, PathDirectory, false)
+}
+
+func (*platformSecurity) ProtectNewDir(ctx context.Context, path string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return protectTargetWindowsACL(path, PathDirectory, true)
 }
 
 func (*platformSecurity) ValidateInheritedFile(ctx context.Context, path string) error {
@@ -48,11 +55,11 @@ func (*platformSecurity) ValidateFile(ctx context.Context, path string) error {
 	return validateTargetWindowsACL(path, PathFile)
 }
 
-func (*platformSecurity) ProtectFile(ctx context.Context, path string) error {
+func (*platformSecurity) ProtectNewFile(ctx context.Context, path string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return protectTargetWindowsACL(path, PathFile)
+	return protectTargetWindowsACL(path, PathFile, true)
 }
 
 func validateTargetWindowsObject(path string, kind PathKind) error {

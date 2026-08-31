@@ -70,6 +70,23 @@ func (s *platformSecurity) ProtectDir(ctx context.Context, path string) error {
 	return validatePOSIX(path, true, 0700)
 }
 
+func (s *platformSecurity) ProtectNewDir(ctx context.Context, path string) error {
+	if err := validateNoSymlinkComponents(path); err != nil {
+		return err
+	}
+	hostBacked, err := s.isHostBacked(path)
+	if err != nil {
+		return err
+	}
+	if hostBacked {
+		if s.windowsGuard == nil {
+			return ErrHostSecurityUnproven
+		}
+		return s.windowsGuard.ProtectNew(ctx, path, PathDirectory)
+	}
+	return s.ProtectDir(ctx, path)
+}
+
 func (s *platformSecurity) ValidateInheritedFile(ctx context.Context, path string) error {
 	if err := validateNoSymlinkComponents(path); err != nil {
 		return err
@@ -98,7 +115,7 @@ func (s *platformSecurity) ValidateFile(ctx context.Context, path string) error 
 	return validatePOSIX(path, false, 0600)
 }
 
-func (s *platformSecurity) ProtectFile(ctx context.Context, path string) error {
+func (s *platformSecurity) ProtectNewFile(ctx context.Context, path string) error {
 	hostBacked, err := s.isHostBacked(path)
 	if err != nil {
 		return err
@@ -109,7 +126,7 @@ func (s *platformSecurity) ProtectFile(ctx context.Context, path string) error {
 	if s.windowsGuard == nil {
 		return ErrHostSecurityUnproven
 	}
-	return s.windowsGuard.Protect(ctx, path, PathFile)
+	return s.windowsGuard.ProtectNew(ctx, path, PathFile)
 }
 
 func (s *platformSecurity) isHostBacked(path string) (bool, error) {

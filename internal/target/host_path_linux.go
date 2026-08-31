@@ -33,8 +33,8 @@ $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $allowed = @($identity.User.Value, 'S-1-5-18', 'S-1-5-32-544') | Select-Object -Unique
 $initialAcl = Get-Acl -LiteralPath $path
 $initialOwner = (New-Object Security.Principal.NTAccount($initialAcl.Owner)).Translate([Security.Principal.SecurityIdentifier]).Value
-if ($action -eq 'protect') {
-  if ($initialOwner -ne $identity.User.Value) { throw 'refusing to protect foreign owner' }
+if ($action -eq 'protect' -or $action -eq 'protect-new') {
+  if ($action -eq 'protect' -and $initialOwner -ne $identity.User.Value) { throw 'refusing to protect foreign owner' }
   if ($kind -eq 'inherited_file') { throw 'cannot protect inherited-file proof' }
   if ($kind -eq 'directory') {
     $acl = New-Object Security.AccessControl.DirectorySecurity
@@ -87,6 +87,10 @@ func (powerShellWindowsGuard) Validate(ctx context.Context, path string, kind Pa
 
 func (powerShellWindowsGuard) Protect(ctx context.Context, path string, kind PathKind) error {
 	return runWindowsGuard(ctx, path, kind, "protect")
+}
+
+func (powerShellWindowsGuard) ProtectNew(ctx context.Context, path string, kind PathKind) error {
+	return runWindowsGuard(ctx, path, kind, "protect-new")
 }
 
 func runWindowsGuard(ctx context.Context, path string, kind PathKind, action string) error {

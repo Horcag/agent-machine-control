@@ -51,7 +51,7 @@ type finalizationHarness struct {
 
 func newFinalizationHarness(t *testing.T) *finalizationHarness {
 	t.Helper()
-	sd, err := statedir.Resolve(t.TempDir())
+	sd, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -487,7 +487,7 @@ func assertNoRetainedLease(t *testing.T, leasesDir string) {
 }
 
 func TestSessionMutationJournal_OpenAndCloseRetriesUseImmutableResultsWithoutReadScope(t *testing.T) {
-	sd, err := statedir.Resolve(t.TempDir())
+	sd, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -658,7 +658,7 @@ func TestFinalizedSessionReplayVerifiesTerminalAuditEvidence(t *testing.T) {
 }
 
 func TestSessionSafetyResolutionRunsUnderHostMutationLease(t *testing.T) {
-	sd, err := statedir.Resolve(t.TempDir())
+	sd, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}

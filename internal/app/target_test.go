@@ -42,7 +42,7 @@ func targetObservation(t *testing.T, hostID domain.HostID, id, name string) doma
 
 func targetStore(t *testing.T) (*target.Store, string) {
 	t.Helper()
-	state, err := statedir.Resolve(t.TempDir())
+	state, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}

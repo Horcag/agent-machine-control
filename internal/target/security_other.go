@@ -19,6 +19,10 @@ func (unsupportedSecurity) ProtectDir(context.Context, string) error {
 	return errors.New("target: protected state is unsupported on this platform")
 }
 
+func (unsupportedSecurity) ProtectNewDir(context.Context, string) error {
+	return errors.New("target: protected state is unsupported on this platform")
+}
+
 func (unsupportedSecurity) ValidateInheritedFile(context.Context, string) error {
 	return errors.New("target: protected state is unsupported on this platform")
 }
@@ -27,6 +31,6 @@ func (unsupportedSecurity) ValidateFile(context.Context, string) error {
 	return errors.New("target: protected state is unsupported on this platform")
 }
 
-func (unsupportedSecurity) ProtectFile(context.Context, string) error {
+func (unsupportedSecurity) ProtectNewFile(context.Context, string) error {
 	return errors.New("target: protected state is unsupported on this platform")
 }

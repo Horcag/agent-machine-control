@@ -105,7 +105,7 @@ func NewMutationJournal(targetDir string, options ...MutationJournalOption) (*Mu
 	if err := os.Mkdir(journal.dir, 0700); err != nil && !errors.Is(err, os.ErrExist) {
 		return nil, fmt.Errorf("target: create mutation journal: %w", err)
 	} else if err == nil {
-		if err := journal.security.ProtectDir(context.Background(), journal.dir); err != nil {
+		if err := journal.security.ProtectNewDir(context.Background(), journal.dir); err != nil {
 			return nil, fmt.Errorf("%w: mutation directory", ErrInsecureState)
 		}
 	}
@@ -414,7 +414,7 @@ func (j *MutationJournal) writeExclusive(ctx context.Context, path string, recor
 			_ = os.Remove(path)
 		}
 	}()
-	if err := j.security.ProtectFile(ctx, path); err != nil {
+	if err := j.security.ProtectNewFile(ctx, path); err != nil {
 		return ErrInsecureState
 	}
 	if _, err := file.Write(payload); err != nil {
@@ -450,7 +450,7 @@ func (j *MutationJournal) replaceContext(ctx context.Context, path string, recor
 	if err := temporary.Chmod(0600); err != nil {
 		return ErrMutationFinalization
 	}
-	if err := j.security.ProtectFile(ctx, temporaryPath); err != nil {
+	if err := j.security.ProtectNewFile(ctx, temporaryPath); err != nil {
 		return ErrInsecureState
 	}
 	if _, err := temporary.Write(payload); err != nil {

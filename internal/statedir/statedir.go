@@ -110,23 +110,23 @@ func (s *StateDir) EnsureDirs() error {
 	}
 
 	for _, dir := range subdirs {
-		if err := ensureSingleDir(dir); err != nil {
+		if err := ensureSingleDir(dir, dir == s.TargetsDir()); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func ensureSingleDir(dir string) error {
+func ensureSingleDir(dir string, allowTargetInheritance bool) error {
 	if err := validateNoSymlinkComponents(dir); err != nil {
 		return err
 	}
 	fi, err := os.Lstat(dir)
 	switch {
 	case err == nil:
-		return validateExistingDir(dir, fi)
+		return validateExistingDir(dir, fi, allowTargetInheritance)
 	case os.IsNotExist(err):
-		return createAndValidateDir(dir)
+		return createAndValidateDir(dir, allowTargetInheritance)
 	default:
 		return fmt.Errorf("failed to access state directory %q: %w", dir, err)
 	}
@@ -170,7 +170,7 @@ func validateNoSymlinkComponents(path string) error {
 	return nil
 }
 
-func validateExistingDir(dir string, fi os.FileInfo) error {
+func validateExistingDir(dir string, fi os.FileInfo, allowTargetInheritance bool) error {
 	if err := validateNoSymlinkComponents(dir); err != nil {
 		return err
 	}
@@ -184,25 +184,78 @@ func validateExistingDir(dir string, fi os.FileInfo) error {
 			}
 		}
 	}
-	return ensurePlatformPrivateDirectory(dir)
+	return validatePlatformPrivateDirectory(dir, allowTargetInheritance)
 }
 
-func createAndValidateDir(dir string) error {
+func createAndValidateDir(dir string, allowTargetInheritance bool) error {
+	return createAndValidateDirWith(dir, allowTargetInheritance, createPlatformPrivateDirectory, validateExistingDir)
+}
+
+// createAndValidateDirWith creates every missing component one-at-a-time. A successful Mkdir is
+// with its final private contract. A component that appears concurrently is instead treated as
+// established state and must already satisfy that contract.
+func createAndValidateDirWith(
+	dir string,
+	allowTargetInheritance bool,
+	createPrivateDirectory func(string, bool) error,
+	validateExisting func(string, os.FileInfo, bool) error,
+) error {
 	if err := validateNoSymlinkComponents(dir); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dir, DirPerm); err != nil {
-		return fmt.Errorf("failed to create state directory %q: %w", dir, err)
-	}
-	if err := validateNoSymlinkComponents(dir); err != nil {
-		return err
-	}
-	if runtime.GOOS != "windows" {
-		if err := os.Chmod(dir, DirPerm); err != nil {
-			return fmt.Errorf("%w: failed to enforce mode 0700 on %q: %v", ErrInsecurePermissions, dir, err)
+
+	missing := make([]string, 0, 1)
+	for current := dir; ; current = filepath.Dir(current) {
+		fi, err := os.Lstat(current)
+		switch {
+		case err == nil:
+			if len(missing) == 0 {
+				return validateExisting(dir, fi, allowTargetInheritance)
+			}
+			if !fi.IsDir() {
+				return fmt.Errorf("state path component %q exists and is not a directory", current)
+			}
+			goto createMissing
+		case os.IsNotExist(err):
+			missing = append(missing, current)
+			if parent := filepath.Dir(current); parent == current {
+				return fmt.Errorf("failed to find existing parent for state directory %q", dir)
+			}
+		default:
+			return fmt.Errorf("failed to access state directory %q: %w", current, err)
 		}
 	}
-	return ensurePlatformPrivateDirectory(dir)
+
+createMissing:
+	for index := len(missing) - 1; index >= 0; index-- {
+		current := missing[index]
+		inheritance := current == dir && allowTargetInheritance
+		err := createPrivateDirectory(current, inheritance)
+		switch {
+		case err == nil:
+			if err := validateNoSymlinkComponents(current); err != nil {
+				return err
+			}
+			fi, err := os.Lstat(current)
+			if err != nil {
+				return fmt.Errorf("failed to inspect newly created state directory %q: %w", current, err)
+			}
+			if err := validateExisting(current, fi, inheritance); err != nil {
+				return err
+			}
+		case errors.Is(err, os.ErrExist):
+			fi, statErr := os.Lstat(current)
+			if statErr != nil {
+				return fmt.Errorf("failed to inspect concurrently created state directory %q: %w", current, statErr)
+			}
+			if err := validateExisting(current, fi, inheritance); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("failed to create state directory %q: %w", current, err)
+		}
+	}
+	return nil
 }
 
 // Root returns the root state directory path.

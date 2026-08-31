@@ -17,7 +17,7 @@ func validateTokenFilePrivacy(path string, _ os.FileInfo) error {
 }
 
 func protectTokenFile(path string) error {
-	if err := winacl.ProtectPrivateFile(path); err != nil {
+	if err := winacl.ProtectNewPrivateFile(path); err != nil {
 		return fmt.Errorf("auth: failed to protect token file: %w", err)
 	}
 	return nil

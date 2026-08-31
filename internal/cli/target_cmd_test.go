@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -145,7 +146,7 @@ func (targetCommandPrompter) PromptConfirmation(string) bool { return true }
 
 func targetCommandHarness(t *testing.T) (*app.TargetService, *app.TargetCoordinator, domain.ActorContext) {
 	t.Helper()
-	state, err := statedir.Resolve(t.TempDir())
+	state, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +190,7 @@ func targetCommandHarness(t *testing.T) (*app.TargetService, *app.TargetCoordina
 
 func targetDaemonState(t *testing.T, endpoint string) string {
 	t.Helper()
-	state, err := statedir.Resolve(t.TempDir())
+	state, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}

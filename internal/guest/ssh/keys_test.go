@@ -48,7 +48,7 @@ const testTargetGUID = "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
 
 func setupTestStateDirWithKey(t *testing.T, pin string) (*statedir.StateDir, []byte, gossh.PublicKey) {
 	tempDir := t.TempDir()
-	sd, err := statedir.Resolve(tempDir)
+	sd, err := statedir.Resolve(filepath.Join(tempDir, "state"))
 	if err != nil {
 		t.Fatalf("failed to resolve state dir: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestLocalKeyProvider_MissingPin(t *testing.T) {
 	ctx := context.Background()
 	guid := testTargetGUID
 	tempDir := t.TempDir()
-	sd, _ := statedir.Resolve(tempDir)
+	sd, _ := statedir.Resolve(filepath.Join(tempDir, "state"))
 	_ = sd.EnsureDirs()
 
 	machDir := filepath.Join(sd.MachinesDir(), guid)
@@ -182,7 +182,7 @@ func TestLocalKeyProvider_MissingPin(t *testing.T) {
 }
 
 func TestLocalKeyProvider_RejectsNonCanonicalNestedConfiguration(t *testing.T) {
-	sd, err := statedir.Resolve(t.TempDir())
+	sd, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestLocalKeyProvider_RejectsNonCanonicalNestedConfiguration(t *testing.T) {
 
 func TestLocalKeyProvider_ContainsMachineConfigPathComponent(t *testing.T) {
 	t.Run("unsafe refs are rejected before config access", func(t *testing.T) {
-		sd, err := statedir.Resolve(t.TempDir())
+		sd, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -236,7 +236,7 @@ func TestLocalKeyProvider_ContainsMachineConfigPathComponent(t *testing.T) {
 	})
 
 	t.Run("canonical GUID reaches normal not-found path", func(t *testing.T) {
-		sd, err := statedir.Resolve(t.TempDir())
+		sd, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 		if err != nil {
 			t.Fatal(err)
 		}

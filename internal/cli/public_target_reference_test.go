@@ -76,7 +76,7 @@ func TestCLIDirectPublicReferencesCanonicalizeApprovalAndProviderBoundaries(t *t
 		},
 	}
 
-	state, err := statedir.Resolve(t.TempDir())
+	state, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}

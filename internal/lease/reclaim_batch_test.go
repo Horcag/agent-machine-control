@@ -84,7 +84,9 @@ func TestManager_ReclaimStaleLeases_IgnoresUnsafeDerivedMachineIDs(t *testing.T)
 	dir := t.TempDir()
 	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	validMachineID := "11111111-1111-1111-1111-111111111111"
-	unsafeMachineID := `nested\\child`
+	// Dot is invalid by the pure machine-ID validator but remains a single filename on Windows.
+	// Slash and backslash rejection is covered by TestManager_RejectsUnsafeMachineIDsBeforeCreatingState.
+	unsafeMachineID := "."
 	checker := &mockLivenessChecker{aliveMap: map[int]bool{1001: false}}
 	mgr := lease.NewManager(dir,
 		lease.WithClock(func() time.Time { return now }),
