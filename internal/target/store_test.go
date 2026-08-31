@@ -64,6 +64,15 @@ func requireDurablePublication(t *testing.T, action string, publication Publicat
 	}
 }
 
+func prepareProtectedDocumentFixture(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, StateFileName)
+	publication, err := testStore(t, dir).Save(context.Background(), testDefault(t, vmA))
+	requireDurablePublication(t, "prepare fixture", publication, err)
+	requireStoredStateSecurity(t, path)
+	return path
+}
+
 type recordingSecurity struct {
 	mu                sync.Mutex
 	events            []string
@@ -182,10 +191,7 @@ func TestStoreSaveLoadRestartIdempotentAndClear(t *testing.T) {
 	if string(payload) != exact {
 		t.Fatalf("stored document = %q, want %q", payload, exact)
 	}
-	info, err := os.Stat(filepath.Join(dir, StateFileName))
-	if err != nil || info.Mode().Perm() != 0600 {
-		t.Fatalf("state mode = %v, %v", info.Mode().Perm(), err)
-	}
+	requireStoredStateSecurity(t, filepath.Join(dir, StateFileName))
 
 	reopened := testStore(t, dir)
 	got, err := reopened.Load(context.Background())
@@ -203,7 +209,7 @@ func TestStoreSaveLoadRestartIdempotentAndClear(t *testing.T) {
 
 func TestStoreStrictDocumentValidation(t *testing.T) {
 	dir := testDirectory(t)
-	path := filepath.Join(dir, StateFileName)
+	path := prepareProtectedDocumentFixture(t, dir)
 	validPrefix := fmt.Sprintf(`{"schema_version":1,"default_locator":"local:%s","aliases":[]}`, vmA)
 	tests := map[string]string{
 		"malformed":           `{`,
@@ -226,6 +232,7 @@ func TestStoreStrictDocumentValidation(t *testing.T) {
 			if err := os.WriteFile(path, []byte(payload), 0600); err != nil {
 				t.Fatalf("WriteFile: %v", err)
 			}
+			requireStoredStateSecurity(t, path)
 			store := testStore(t, dir)
 			if _, err := store.Load(context.Background()); !errors.Is(err, ErrInvalidDocument) && !errors.Is(err, ErrUnsupportedHost) {
 				t.Fatalf("Load error = %v", err)
