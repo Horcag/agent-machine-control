@@ -26,21 +26,23 @@ import (
 
 // trackingTransport records every transport call and allows simulating failure or redial panic.
 type trackingTransport struct {
-	dialCalls     int32
-	writeCalls    int32
-	controlCalls  int32
-	closeCalls    int32
-	panicOnDial   bool
-	failWrite     bool
-	writeDelay    time.Duration
-	cancelOnWrite context.CancelFunc
+	dialCalls      int32
+	lastDialTarget domain.MachineRef
+	writeCalls     int32
+	controlCalls   int32
+	closeCalls     int32
+	panicOnDial    bool
+	failWrite      bool
+	writeDelay     time.Duration
+	cancelOnWrite  context.CancelFunc
 }
 
-func (t *trackingTransport) Dial(_ context.Context, _ domain.MachineRef, _, _ uint16, _ string) (guestssh.Channel, error) {
+func (t *trackingTransport) Dial(_ context.Context, target domain.MachineRef, _, _ uint16, _ string) (guestssh.Channel, error) {
 	if t.panicOnDial {
 		panic("transport.Dial called unexpectedly during cached retry or restart reconstruction")
 	}
 	atomic.AddInt32(&t.dialCalls, 1)
+	t.lastDialTarget = target
 	return &trackingChannel{
 		parent: t,
 		waitCh: make(chan struct{}),

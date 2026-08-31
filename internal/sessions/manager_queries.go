@@ -87,7 +87,7 @@ func (m *Manager) loadDiskSessions(target domain.MachineRef, caller domain.Actor
 		if seen[id] {
 			continue
 		}
-		if target != "" && obs.Target != target {
+		if !sessionTargetMatchesFilter(obs.Target, target) {
 			continue
 		}
 		seen[id] = true
@@ -106,7 +106,7 @@ func (m *Manager) List(_ context.Context, caller domain.ActorContext, target dom
 
 	m.mu.RLock()
 	for _, s := range m.sessions {
-		if target != "" && s.obs.Target != target {
+		if !sessionTargetMatchesFilter(s.obs.Target, target) {
 			continue
 		}
 		if !m.authorize(caller, s) {
@@ -127,6 +127,14 @@ func (m *Manager) List(_ context.Context, caller domain.ActorContext, target dom
 	result = append(result, diskSessions...)
 
 	return result, nil
+}
+
+func sessionTargetMatchesFilter(sessionTarget, filter domain.MachineRef) bool {
+	if filter == "" || sessionTarget == filter {
+		return true
+	}
+	locator, err := domain.ParseMachineLocator(string(sessionTarget))
+	return err == nil && locator.HostID == domain.LocalHostID && locator.VMID == string(filter)
 }
 
 // Get returns the current observation of a session.

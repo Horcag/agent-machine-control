@@ -331,6 +331,21 @@ func TestCLISessionOpenRejectsNonCanonicalTerminalInputsBeforeRequest(t *testing
 	}
 }
 
+func TestCLISessionOpenAllowsOmittedEnrolledTarget(t *testing.T) {
+	var captured capturedSessionRequests
+	statePath, _ := setupCapturedSessionCLI(t, &captured)
+	application := cli.NewApp(nil, cli.WithStateDir(statePath))
+	var stdout, stderr bytes.Buffer
+	if code := application.Run([]string{
+		"session", "open", "--reason", "open enrolled default", "--idempotency-key", "open-default", "--json",
+	}, &stdout, &stderr); code != cli.ExitSuccess {
+		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+	}
+	if captured.open.Target != "" {
+		t.Fatalf("omitted target request = %+v", captured.open)
+	}
+}
+
 func TestCLISessionCloseRejectsRemovedForceFlagBeforeRequest(t *testing.T) {
 	var captured capturedSessionRequests
 	statePath, sessionID := setupCapturedSessionCLI(t, &captured)

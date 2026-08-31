@@ -70,6 +70,7 @@ func (c *daemonLifecycleChannel) releaseWait() { c.waitOnce.Do(func() { close(c.
 func startDaemonLifecycleServer(t *testing.T, channel *daemonLifecycleChannel) (*daemon.Server, string, string) {
 	t.Helper()
 	dir := t.TempDir()
+	seedDaemonTestTarget(t, dir)
 	const checkpoint = "e4a523d4-6b99-4d62-a5e2-4752c0f20001"
 	keyProvider := &guestssh.MockKeyProvider{MachineConfig: &guestssh.MachineSSHConfig{
 		Endpoint: "192.0.2.40:22", User: "synthetic", DefaultKeyAlias: "default",

@@ -79,7 +79,7 @@ func ConvertToChunkDTOs(chunks []domain.SessionChunk) []SessionChunkDTO {
 
 // SessionOpenRequest payload for POST /v1/sessions.
 type SessionOpenRequest struct {
-	Target         string           `json:"target"`
+	Target         string           `json:"target,omitempty"`
 	Reason         string           `json:"reason"`
 	IdempotencyKey string           `json:"idempotency_key"`
 	Cols           uint16           `json:"cols,omitempty"`

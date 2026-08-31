@@ -79,13 +79,18 @@ func requireOperatorOnlySessionApprovalIssuance(t *testing.T, endpoint, operator
 func openApprovedAgentSessionHTTP(t *testing.T, endpoint, operatorToken, agentToken, target string) daemon.SessionOpenResponse {
 	t.Helper()
 	openIssue := daemon.SessionApprovalIssueRequest{
-		Kind: "session.open", Target: target, Reason: "approve exact MCP open",
+		Kind: "session.open", Target: "default", Reason: "approve exact MCP open",
 		IdempotencyKey: "approval-http-open", ValidForMillis: 60_000, Cols: 80, Rows: 24, Term: "xterm-256color",
 	}
 	openGrant := issueSessionApprovalHTTP(t, endpoint, operatorToken, openIssue)
-	openGrantRetry := issueSessionApprovalHTTP(t, endpoint, operatorToken, openIssue)
+	aliasIssue := openIssue
+	aliasIssue.Target = "primary"
+	openGrantRetry := issueSessionApprovalHTTP(t, endpoint, operatorToken, aliasIssue)
 	if openGrantRetry.ApprovalID != openGrant.ApprovalID || openGrantRetry.Deadline != openGrant.Deadline || openGrantRetry.Receipt.ReceiptID != openGrant.Receipt.ReceiptID {
 		t.Fatalf("issuance retry changed immutable grant: first=%+v retry=%+v", openGrant, openGrantRetry)
+	}
+	if openGrant.Operation.Target != "local:"+target {
+		t.Fatalf("issued open target=%q, want canonical locator", openGrant.Operation.Target)
 	}
 	status, data := doJSONReq(t, http.MethodPost, endpoint+"/v1/sessions", agentToken, daemon.SessionOpenRequest{
 		Target: target, Reason: openIssue.Reason, IdempotencyKey: openIssue.IdempotencyKey,

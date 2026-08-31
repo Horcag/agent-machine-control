@@ -18,6 +18,7 @@ import (
 	guestssh "github.com/Horcag/agent-machine-control/internal/guest/ssh"
 	"github.com/Horcag/agent-machine-control/internal/sessions"
 	"github.com/Horcag/agent-machine-control/internal/statedir"
+	"github.com/Horcag/agent-machine-control/internal/target"
 )
 
 type exactRetryBackend struct{}
@@ -26,7 +27,13 @@ func (exactRetryBackend) Doctor(context.Context) (app.DoctorReport, error) {
 	return app.DoctorReport{}, nil
 }
 func (exactRetryBackend) ListMachines(context.Context) ([]domain.MachineObservation, error) {
-	return nil, nil
+	locator, _ := domain.NewMachineLocator(domain.LocalHostID, exactRetryVMID)
+	return []domain.MachineObservation{{
+		HostID: domain.LocalHostID, Locator: locator, ID: exactRetryVMID, Name: "synthetic-exact-retry-vm",
+		State: domain.MachineStateRunning, RawState: "Running", Generation: 2, Version: "10.0",
+		MemoryAssignedBytes: 1024, Capabilities: domain.DirectMachineCapabilities(),
+		ObservedAt: time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC), ObservationType: domain.ObservationObserved,
+	}}, nil
 }
 func (exactRetryBackend) InspectMachine(context.Context, string) (domain.MachineObservation, error) {
 	return domain.MachineObservation{}, nil
@@ -68,6 +75,8 @@ type exactRetryFixture struct {
 	journal     *sessions.MutationJournal
 }
 
+const exactRetryVMID = "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
+
 func newExactRetryFixture(t *testing.T, root string) exactRetryFixture {
 	t.Helper()
 	sd, err := statedir.Resolve(root)
@@ -85,7 +94,22 @@ func newExactRetryFixture(t *testing.T, root string) exactRetryFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	target := domain.MachineRef("c4a523d4-6b99-4d62-a5e2-4752c0f20001")
+	locator, err := domain.NewMachineLocator(domain.LocalHostID, exactRetryVMID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetStore, err := target.NewStore(sd.TargetsDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultTarget, err := target.NewDefault(locator, []string{"primary"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if publication, saveErr := targetStore.Save(context.Background(), defaultTarget); saveErr != nil || !publication.Durable {
+		t.Fatalf("seed target: publication=%+v err=%v", publication, saveErr)
+	}
+	target := domain.MachineRef(locator.String())
 	op := domain.Operation{
 		Kind: "session.open", Target: target, Actor: actor,
 		Reason: "daemon exact retry", Deadline: now.Add(time.Minute), IdempotencyKey: "idem-daemon-finalizing-open",
@@ -146,7 +170,7 @@ func serveExactRetryOpen(t *testing.T, srv *Server, fixture exactRetryFixture) S
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, err := json.Marshal(SessionOpenRequest{Target: string(fixture.target), Reason: fixture.op.Reason, IdempotencyKey: fixture.op.IdempotencyKey})
+	body, err := json.Marshal(SessionOpenRequest{Target: exactRetryVMID, Reason: fixture.op.Reason, IdempotencyKey: fixture.op.IdempotencyKey})
 	if err != nil {
 		t.Fatal(err)
 	}

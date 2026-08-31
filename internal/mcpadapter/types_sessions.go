@@ -7,7 +7,7 @@ type SessionDTO = client.SessionDTO
 type SessionChunkDTO = client.SessionChunkDTO
 
 type SessionOpenInput struct {
-	Target         string `json:"target" jsonschema:"Target virtual machine GUID"`
+	Target         string `json:"target,omitempty" jsonschema:"Optional enrolled target reference (default, alias, provider GUID, or canonical locator)"`
 	Reason         string `json:"reason" jsonschema:"Reason for opening terminal session"`
 	IdempotencyKey string `json:"idempotency_key" jsonschema:"Idempotency key"`
 	Timeout        string `json:"timeout" jsonschema:"Operation timeout (e.g. 30s, 5m)"`

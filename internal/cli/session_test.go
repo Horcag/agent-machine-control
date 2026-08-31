@@ -404,7 +404,6 @@ func TestCLISession_UsageAndDirectMode(t *testing.T) {
 
 	// Missing args for individual commands
 	cmdMissingArgs := [][]string{
-		{"session", "open"},
 		{"session", "read"},
 		{"session", "write"},
 		{"session", "write", "sess-a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"},

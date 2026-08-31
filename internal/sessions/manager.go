@@ -120,14 +120,14 @@ func (m *Manager) authorize(caller domain.ActorContext, s *Session) bool {
 	return string(caller.EffectiveActor) == string(s.obs.OwnerActor)
 }
 
-func (m *Manager) dialSessionChannel(ctx context.Context, op domain.Operation, cols, rows uint16, term string) (guestssh.Channel, error) {
+func (m *Manager) dialSessionChannel(ctx context.Context, providerTarget domain.MachineRef, cols, rows uint16, term string) (guestssh.Channel, error) {
 	if m.transport == nil {
 		return nil, errors.New("sessions: transport is unconfigured")
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	channel, err := m.transport.Dial(ctx, op.Target, cols, rows, term)
+	channel, err := m.transport.Dial(ctx, providerTarget, cols, rows, term)
 	if err != nil {
 		var dialFailure *guestssh.DialFailure
 		if errors.As(err, &dialFailure) && dialFailure.Channel != nil {
@@ -188,6 +188,12 @@ func (m *Manager) publishOpenSession(session *Session, idemKey string) publicati
 
 // Open establishes a new persistent SSH terminal session or returns an existing idempotent session.
 func (m *Manager) Open(ctx context.Context, op domain.Operation, cols, rows uint16, term string) (*domain.SessionObservation, error) {
+	return m.OpenWithProviderTarget(ctx, op, op.Target, cols, rows, term)
+}
+
+// OpenWithProviderTarget persists the canonical operation target while using the
+// resolved provider VM GUID only at the guest transport boundary.
+func (m *Manager) OpenWithProviderTarget(ctx context.Context, op domain.Operation, providerTarget domain.MachineRef, cols, rows uint16, term string) (*domain.SessionObservation, error) {
 	if !op.Actor.HasScope(domain.ScopeSessionOpen) && !op.Actor.HasScope(domain.ScopeSessionWrite) {
 		return nil, domain.ErrSessionAccessDenied
 	}
@@ -218,7 +224,7 @@ func (m *Manager) Open(ctx context.Context, op domain.Operation, cols, rows uint
 		return existing, err
 	}
 
-	channel, err := m.dialSessionChannel(ctx, op, cols, rows, term)
+	channel, err := m.dialSessionChannel(ctx, providerTarget, cols, rows, term)
 	if err != nil {
 		return nil, err
 	}

@@ -2,6 +2,7 @@ package mcpadapter
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/daemon"
@@ -13,7 +14,7 @@ import (
 type ReceiptDTO = receipt.DTO
 
 func (a *Adapter) SessionOpen(ctx context.Context, _ *mcp.CallToolRequest, in SessionOpenInput) (*mcp.CallToolResult, SessionOpenResult, error) {
-	if err := validateMutationParams(in.Target, in.Reason, in.IdempotencyKey); err != nil {
+	if err := validateSessionOpenMutationParams(in.Target, in.Reason, in.IdempotencyKey); err != nil {
 		return mcpToolError(err), SessionOpenResult{}, nil
 	}
 	if err := validateSessionOpenInput(in); err != nil {
@@ -63,6 +64,19 @@ func (a *Adapter) SessionOpen(ctx context.Context, _ *mcp.CallToolRequest, in Se
 		Session:         resp.Session,
 		Receipt:         resp.Receipt,
 	}, nil
+}
+
+func validateSessionOpenMutationParams(target, reason, idempotencyKey string) error {
+	if strings.TrimSpace(target) != target {
+		return NewInputError("invalid target reference")
+	}
+	if err := domain.ValidateReason(reason); err != nil {
+		return NewInputError("invalid reason")
+	}
+	if err := domain.ValidateIdempotencyKey(idempotencyKey); err != nil {
+		return NewInputError("invalid idempotency key")
+	}
+	return nil
 }
 
 func validateSessionOpenInput(in SessionOpenInput) error {

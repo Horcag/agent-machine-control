@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Horcag/agent-machine-control/internal/domain"
+	"github.com/Horcag/agent-machine-control/internal/target"
 )
 
 func TestSessionInvalidTerminalTypeMapsToCanonicalBadRequest(t *testing.T) {
@@ -23,6 +24,37 @@ func TestSessionInvalidTerminalTypeMapsToCanonicalBadRequest(t *testing.T) {
 	}
 	if body.Error.Category != "invalid_argument" {
 		t.Fatalf("error category = %v, want invalid_argument", body.Error.Category)
+	}
+}
+
+func TestSessionTargetResolutionErrorsMapToSanitizedFailClosedResponses(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		status   int
+		category string
+	}{
+		{name: "missing", err: target.ErrNoDefault, status: http.StatusConflict, category: "target_not_enrolled"},
+		{name: "different", err: target.ErrDifferentTarget, status: http.StatusConflict, category: "target_mismatch"},
+		{name: "reference miss", err: domain.ErrMachineReferenceMiss, status: http.StatusConflict, category: "target_mismatch"},
+		{name: "stale", err: domain.ErrMachineReferenceStale, status: http.StatusConflict, category: "target_mismatch"},
+		{name: "inventory unavailable", err: target.ErrInventoryRefresh, status: http.StatusServiceUnavailable, category: "target_unavailable"},
+		{name: "host unavailable", err: domain.ErrMachineHostUnavailable, status: http.StatusServiceUnavailable, category: "target_unavailable"},
+		{name: "access denied", err: domain.ErrMachineAccessDenied, status: http.StatusServiceUnavailable, category: "target_unavailable"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			(&Server{}).MapSessionErrorForTest(recorder, fmt.Errorf("private provider detail: %w", test.err))
+			var body ErrorEnvelope
+			if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if recorder.Code != test.status || body.Error.Category != test.category ||
+				body.Error.Message == "private provider detail" {
+				t.Fatalf("response=%d envelope=%+v", recorder.Code, body)
+			}
+		})
 	}
 }
 

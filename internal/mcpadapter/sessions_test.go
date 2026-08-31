@@ -162,6 +162,17 @@ func testMCPSessionsMutations(ctx context.Context, t *testing.T, adapter *Adapte
 	}
 }
 
+func TestMCPSessionOpenAllowsOmittedEnrolledTarget(t *testing.T) {
+	adapter, cleanup := setupMCPSessionTest(t)
+	defer cleanup()
+	result, opened, err := adapter.SessionOpen(context.Background(), nil, SessionOpenInput{
+		Reason: "open enrolled default", IdempotencyKey: "mcp-open-default", Timeout: "30s",
+	})
+	if err != nil || result != nil || opened.Session.SessionID == "" {
+		t.Fatalf("SessionOpen = result=%v opened=%+v err=%v", result, opened, err)
+	}
+}
+
 func testMCPSessionsReads(ctx context.Context, t *testing.T, adapter *Adapter, sessID, machGUID string) {
 	resRead, outRead, err := adapter.SessionRead(ctx, nil, SessionReadInput{
 		SessionID: sessID,

@@ -92,12 +92,18 @@ func buildSessionApprovalRequest(action string, positionals []string, data, reas
 	}
 	switch action {
 	case "open":
-		if len(positionals) != 1 {
-			return req, "", fmt.Errorf("open requires exactly one machine GUID")
+		if len(positionals) > 1 {
+			return req, "", fmt.Errorf("open accepts at most one target reference")
 		}
-		req.Target = positionals[0]
+		if len(positionals) == 1 {
+			req.Target = positionals[0]
+		}
 		req.Cols, req.Rows, req.Term = cols, rows, term
-		return req, req.Target, nil
+		targetLabel := req.Target
+		if targetLabel == "" {
+			targetLabel = "enrolled default"
+		}
+		return req, targetLabel, nil
 	case "write":
 		if len(positionals) < 1 {
 			return req, "", fmt.Errorf("write requires a session ID and exact data")

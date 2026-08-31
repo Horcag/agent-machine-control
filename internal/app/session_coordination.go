@@ -112,6 +112,9 @@ func (s *SessionService) resolveSafety(ctx context.Context, target domain.Machin
 	if s.safetyResolver == nil {
 		return SafetyResolution{Classification: domain.ClassDestructivePrivileged}
 	}
+	if locator, err := domain.ParseMachineLocator(string(target)); err == nil {
+		target = domain.MachineRef(locator.VMID)
+	}
 	sr, err := s.safetyResolver.ResolveSafety(ctx, target)
 	if err != nil {
 		return SafetyResolution{Classification: domain.ClassDestructivePrivileged}

@@ -18,6 +18,7 @@ import (
 type SessionService struct {
 	sessionMgr      *sessions.Manager
 	safetyResolver  SafetyResolver
+	targetResolver  SessionTargetResolver
 	leaseMgr        *lease.Manager
 	auditStore      *audit.Store
 	receiptStore    *receipt.Store
@@ -49,6 +50,19 @@ type sessionMutationResult struct {
 
 // SessionOption configures SessionService.
 type SessionOption func(*SessionService)
+
+// SessionTargetResolver resolves an operator-facing reference before session.open
+// crosses any policy, approval, idempotency, or transport boundary.
+type SessionTargetResolver interface {
+	ResolveTarget(context.Context, string) (TargetResolution, error)
+}
+
+// WithSessionTargetResolver configures the shared target authority resolver for session.open.
+func WithSessionTargetResolver(resolver SessionTargetResolver) SessionOption {
+	return func(s *SessionService) {
+		s.targetResolver = resolver
+	}
+}
 
 // WithSessionClock sets a custom clock function for SessionService.
 func WithSessionClock(clock func() time.Time) SessionOption {

@@ -12,6 +12,7 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/app"
 	"github.com/Horcag/agent-machine-control/internal/domain"
 	"github.com/Horcag/agent-machine-control/internal/receipt"
+	"github.com/Horcag/agent-machine-control/internal/target"
 )
 
 func (s *Server) handleReadSession(w http.ResponseWriter, r *http.Request, id domain.SessionID) {
@@ -339,6 +340,9 @@ func (s *Server) mapSessionError(w http.ResponseWriter, err error) {
 	if mapSessionClientError(w, err) {
 		return
 	}
+	if mapSessionTargetError(w, err) {
+		return
+	}
 
 	switch {
 	case errors.Is(err, domain.ErrSessionWaitTimeout) || errors.Is(err, context.DeadlineExceeded):
@@ -352,6 +356,20 @@ func (s *Server) mapSessionError(w http.ResponseWriter, err error) {
 	default:
 		writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")
 	}
+}
+
+func mapSessionTargetError(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, target.ErrNoDefault):
+		writeTargetResolutionError(w, err)
+	case errors.Is(err, target.ErrDifferentTarget), errors.Is(err, domain.ErrMachineReferenceMiss), errors.Is(err, domain.ErrMachineReferenceStale):
+		writeError(w, http.StatusConflict, "target_mismatch", "target reference does not identify the enrolled target")
+	case errors.Is(err, target.ErrInventoryRefresh), errors.Is(err, domain.ErrMachineHostUnavailable), errors.Is(err, domain.ErrMachineAccessDenied):
+		writeTargetResolutionError(w, err)
+	default:
+		return false
+	}
+	return true
 }
 
 // MapSessionErrorForTest exposes error mapping logic for test assertion coverage.

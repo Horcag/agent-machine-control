@@ -115,8 +115,8 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := domain.ValidateMachineGUID(req.Target); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_argument", "invalid target machine GUID")
+	if strings.TrimSpace(req.Target) != req.Target {
+		writeError(w, http.StatusBadRequest, "invalid_argument", "invalid target reference")
 		return
 	}
 	if err := domain.ValidateReason(req.Reason); err != nil {

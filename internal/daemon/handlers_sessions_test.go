@@ -36,6 +36,7 @@ func setupTestDaemonWithSSHConfig(t *testing.T, sanitizerConfig guestssh.Sanitiz
 
 func setupTestDaemonWithSSHConfigAndContainment(t *testing.T, sanitizerConfig guestssh.SanitizerConfig, contained bool) (*daemon.Server, string, string, string, string, *fakeserver.FakeSSHServer) {
 	tempDir := t.TempDir()
+	seedDaemonTestTarget(t, tempDir)
 
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	signer, _ := gossh.NewSignerFromKey(priv)
@@ -272,6 +273,7 @@ func TestDaemonSessions_EncodedRoutesFailClosed(t *testing.T) {
 
 func TestDaemonSessions_SubSecondTimeoutsReachAppAndTransport(t *testing.T) {
 	dir := t.TempDir()
+	seedDaemonTestTarget(t, dir)
 	target := "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
 	checkpoint := "e4a523d4-6b99-4d62-a5e2-4752c0f20001"
 	transport := &deadlineCaptureTransport{remaining: make(map[string]time.Duration)}
@@ -349,8 +351,8 @@ func TestDaemonSessions_ErrorBranches(t *testing.T) {
 
 	// 2. Invalid target GUID on open
 	status, _ = doJSONReq(t, http.MethodPost, endpoint+"/v1/sessions", token, daemon.SessionOpenRequest{Target: "not-a-guid", Reason: "valid reason", IdempotencyKey: "k"})
-	if status != http.StatusBadRequest {
-		t.Errorf("expected 400 on invalid target, got %d", status)
+	if status != http.StatusConflict {
+		t.Errorf("expected 409 on target mismatch, got %d", status)
 	}
 
 	// 3. Read invalid session ID

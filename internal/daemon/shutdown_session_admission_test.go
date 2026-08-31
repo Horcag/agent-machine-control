@@ -65,6 +65,7 @@ func (c *shutdownAdmissionChannel) Wait() (int, error) { <-c.done; return 0, nil
 
 func TestServerShutdownRejectsSessionOpenWhileSessionDrainIsHeld(t *testing.T) {
 	dir := t.TempDir()
+	seedDaemonTestTarget(t, dir)
 	transport := &shutdownAdmissionTransport{closeStarted: make(chan struct{}), closeRelease: make(chan struct{})}
 	kp := &guestssh.MockKeyProvider{MachineConfig: &guestssh.MachineSSHConfig{
 		ExternalEffectsContained: true,

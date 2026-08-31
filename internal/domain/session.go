@@ -216,7 +216,7 @@ func (o SessionObservation) Validate() error {
 	if err := o.ID.Validate(); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidSessionObservation, err)
 	}
-	if err := ValidateMachineGUID(string(o.Target)); err != nil {
+	if err := ValidateSessionTarget(o.Target); err != nil {
 		return fmt.Errorf("%w: invalid target", ErrInvalidSessionObservation)
 	}
 	if err := o.OwnerActor.Validate(); err != nil {
@@ -241,4 +241,13 @@ func (o SessionObservation) Validate() error {
 		return fmt.Errorf("%w: invalid observation type", ErrInvalidSessionObservation)
 	}
 	return nil
+}
+
+// ValidateSessionTarget accepts canonical locators for newly opened sessions
+// and GUID-only targets retained in durable Task8 session records.
+func ValidateSessionTarget(target MachineRef) error {
+	if _, err := ParseMachineLocator(string(target)); err == nil {
+		return nil
+	}
+	return ValidateMachineGUID(string(target))
 }

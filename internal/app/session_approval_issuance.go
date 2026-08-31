@@ -58,6 +58,13 @@ func (s *SessionService) IssueSessionMutationApproval(ctx context.Context, param
 	if err := s.validateSessionApprovalIssue(params); err != nil {
 		return nil, nil, err
 	}
+	if params.Kind == "session.open" && s.targetResolver != nil {
+		resolution, err := s.resolveSessionOpenTarget(ctx, params.Target)
+		if err != nil {
+			return nil, nil, err
+		}
+		params.Target = resolution.Locator.String()
+	}
 
 	s.issueMu.Lock()
 	defer s.issueMu.Unlock()
@@ -170,8 +177,10 @@ func (s *SessionService) buildIssuedSessionOperation(params SessionApprovalIssue
 	}
 	switch params.Kind {
 	case "session.open":
-		if err := domain.ValidateMachineGUID(params.Target); err != nil {
-			return domain.Operation{}, err
+		if _, err := domain.ParseMachineLocator(params.Target); err != nil {
+			if err := domain.ValidateMachineGUID(params.Target); err != nil {
+				return domain.Operation{}, err
+			}
 		}
 		op, _, _, _ := buildOpenOperation(SessionOpenParams{
 			Target: params.Target, Caller: agent, Reason: params.Reason, IdempotencyKey: params.IdempotencyKey,

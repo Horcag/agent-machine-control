@@ -156,8 +156,9 @@ When the daemon process starts:
 All CLI session commands interact with `amcd` via HTTP/JSON REST API with Bearer token authentication:
 
 ```bash
-# Open a new persistent session
-amc session open <machine-guid> --reason "Deploying build" --cols 120 --rows 40 [--approval-file approval.json]
+# Open a new persistent session on the enrolled target. The optional reference
+# may be default, an enrolled alias, the enrolled provider GUID, or its canonical locator.
+amc session open [target-reference] --reason "Deploying build" --cols 120 --rows 40 [--approval-file approval.json]
 
 # Read buffered output
 amc session read <session-id> --after-seq 0 --limit 65536
@@ -186,7 +187,7 @@ amc session attach <session-id>
 
 # Issue one short-lived, one-use approval for the fixed MCP principal.
 # The command always prompts for explicit local confirmation.
-amc session approve open <machine-guid> --reason "Deploying build" \
+amc session approve open [target-reference] --reason "Deploying build" \
   --idempotency-key "mcp-open-1" --valid-for 60s --cols 120 --rows 40 --json
 amc session approve write <session-id> --data "powershell.exe -NoProfile\r\n" \
   --reason "Start PowerShell" --idempotency-key "mcp-write-1" --valid-for 60s --json
@@ -219,7 +220,7 @@ AMC exposes exactly 20 Model Context Protocol (MCP) tools for agent integration:
 
 ### Persistent SSH Terminal Sessions Tools (8)
 
-1. `session_open`: Open a persistent SSH terminal session with explicit reason, idempotency key, and required timeout.
+1. `session_open`: Open a persistent SSH terminal session with explicit reason, idempotency key, and required timeout. Its optional target resolves only to the enrolled default, alias, provider GUID, or canonical locator before approval or transport effects.
 2. `session_read`: Read incremental terminal output chunks with cursor pagination.
 3. `session_write`: Send command text or input bytes with a required execution timeout (redacted in audit/receipts).
 4. `session_control`: Send supported control keystrokes (`ctrl-c`, `ctrl-d`, `enter`, etc.) with a required execution timeout.

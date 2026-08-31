@@ -29,8 +29,11 @@ func (r *dynamicClassSafetyResolver) ResolveSafety(context.Context, domain.Machi
 
 type dynamicClassRetryHarness struct {
 	svc       *app.SessionService
+	manager   *sessions.Manager
 	transport *trackingTransport
 	safety    *dynamicClassSafetyResolver
+	audits    *audit.Store
+	receipts  *receipt.Store
 	approvals *approval.Store
 	actor     domain.ActorContext
 	target    string
@@ -52,13 +55,15 @@ func newDynamicClassRetryHarness(t *testing.T, resolution app.SafetyResolution) 
 	safety := &dynamicClassSafetyResolver{resolution: resolution}
 	now := time.Date(2026, 8, 30, 10, 0, 0, 0, time.UTC)
 	mgr := sessions.NewManager(sd.SessionsDir(), transport, time.Now)
+	audits := audit.NewStore(sd.AuditDir())
+	receipts := receipt.NewStore(sd.ReceiptsDir())
 	approvalStore := approval.NewStore(sd.ApprovalsDir())
 	svc := app.NewSessionService(
 		mgr,
 		safety,
 		nil,
-		audit.NewStore(sd.AuditDir()),
-		receipt.NewStore(sd.ReceiptsDir()),
+		audits,
+		receipts,
 		approvalStore,
 		app.WithSessionClock(func() time.Time { return now }),
 	)
@@ -77,8 +82,11 @@ func newDynamicClassRetryHarness(t *testing.T, resolution app.SafetyResolution) 
 
 	return &dynamicClassRetryHarness{
 		svc:       svc,
+		manager:   mgr,
 		transport: transport,
 		safety:    safety,
+		audits:    audits,
+		receipts:  receipts,
 		approvals: approvalStore,
 		actor:     actor,
 		target:    "c4a523d4-6b99-4d62-a5e2-4752c0f20001",

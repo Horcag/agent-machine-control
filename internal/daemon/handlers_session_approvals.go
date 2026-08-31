@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/app"
@@ -93,7 +94,10 @@ func validateSessionOpenApprovalRequest(req SessionApprovalIssueRequest) error {
 	if req.SessionID != "" || req.Data != "" || req.Key != "" {
 		return domain.ErrNonCanonicalParameter
 	}
-	return domain.ValidateMachineGUID(req.Target)
+	if strings.TrimSpace(req.Target) != req.Target {
+		return domain.ErrNonCanonicalParameter
+	}
+	return nil
 }
 
 func validateSessionWriteApprovalRequest(req SessionApprovalIssueRequest) error {

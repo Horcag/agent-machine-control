@@ -71,7 +71,7 @@ func printSessionUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage: amc session <subcommand> [flags]")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Subcommands:")
-	fmt.Fprintln(w, "  open <machine>     Open a new persistent SSH terminal session")
+	fmt.Fprintln(w, "  open [target]      Open a new persistent SSH terminal session on the enrolled target")
 	fmt.Fprintln(w, "  read <session-id>  Read output chunks from a session")
 	fmt.Fprintln(w, "  write <session-id> <data> Write input to a session")
 	fmt.Fprintln(w, "  control <session-id> <key> Send a control key (ctrl-c, ctrl-d, enter, etc.)")
@@ -104,11 +104,14 @@ func runSessionOpen(ctx context.Context, cl *client.Client, args []string, stdou
 		return ExitUsage
 	}
 
-	if len(positionals) < 1 {
-		fmt.Fprintln(stderr, "amc: target machine GUID is required")
+	if len(positionals) > 1 {
+		fmt.Fprintln(stderr, "amc: session open accepts at most one target reference")
 		return ExitUsage
 	}
-	target := positionals[0]
+	target := ""
+	if len(positionals) == 1 {
+		target = positionals[0]
+	}
 	if cols < uint(domain.MinCols) || cols > uint(domain.MaxCols) || rows < uint(domain.MinRows) || rows > uint(domain.MaxRows) {
 		fmt.Fprintf(stderr, "amc session open: terminal dimensions must be cols [%d,%d] and rows [%d,%d]\n", domain.MinCols, domain.MaxCols, domain.MinRows, domain.MaxRows)
 		return ExitUsage
