@@ -202,6 +202,55 @@ func TestLocalKeyProvider_RejectsNonCanonicalNestedConfiguration(t *testing.T) {
 	}
 }
 
+func TestLocalKeyProvider_ContainsMachineConfigPathComponent(t *testing.T) {
+	t.Run("unsafe refs are rejected before config access", func(t *testing.T) {
+		sd, err := statedir.Resolve(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sd.EnsureDirs(); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(sd.MachinesDir()); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(sd.MachinesDir(), []byte("not a directory"), 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		provider := ssh.NewLocalKeyProvider(sd)
+		for _, target := range []domain.MachineRef{
+			"../outside",
+			`..\\outside`,
+			"/outside",
+			`C:\\outside`,
+			".",
+			"local:" + testTargetGUID,
+			domain.MachineRef(testTargetGUID + "\n"),
+		} {
+			_, err := provider.GetMachineConfig(target)
+			if !errors.Is(err, domain.ErrInvalidMachineID) {
+				t.Errorf("GetMachineConfig(%q) error = %v, want invalid machine ID before config access", target, err)
+			}
+		}
+	})
+
+	t.Run("canonical GUID reaches normal not-found path", func(t *testing.T) {
+		sd, err := statedir.Resolve(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sd.EnsureDirs(); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = ssh.NewLocalKeyProvider(sd).GetMachineConfig(domain.MachineRef(testTargetGUID))
+		if !errors.Is(err, domain.ErrSessionNotFound) {
+			t.Fatalf("GetMachineConfig(%q) error = %v, want normal not-found error", testTargetGUID, err)
+		}
+	})
+}
+
 func TestLocalKeyProvider_SymlinkRejection(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("plaintext key symlink behavior is POSIX-specific; Windows uses DPAPI and DACL tests")

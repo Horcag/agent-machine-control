@@ -167,6 +167,9 @@ func (p *LocalKeyProvider) GetMachineConfigContext(ctx context.Context, target d
 	if err := domain.ValidateMachineGUID(targetID); err != nil {
 		return nil, fmt.Errorf("ssh: invalid target machine GUID: %w", err)
 	}
+	if !filepath.IsLocal(targetID) || filepath.Base(targetID) != targetID {
+		return nil, errors.New("ssh: invalid target machine config path component")
+	}
 
 	cfgPath := filepath.Join(p.stateDir.MachinesDir(), targetID, "config.json")
 	data, err := validateStrictFileContext(ctx, cfgPath)
