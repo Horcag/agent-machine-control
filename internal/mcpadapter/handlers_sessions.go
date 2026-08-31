@@ -19,9 +19,6 @@ func (a *Adapter) SessionOpen(ctx context.Context, _ *mcp.CallToolRequest, in Se
 	if err := validateSessionOpenInput(in); err != nil {
 		return mcpToolError(NewInputError(err.Error())), SessionOpenResult{}, nil
 	}
-	if _, err := a.resolveTarget(ctx, in.Target); err != nil {
-		return mcpToolError(err), SessionOpenResult{}, nil
-	}
 	if err := validateApprovalID(in.ApprovalID); err != nil {
 		return mcpToolError(err), SessionOpenResult{}, nil
 	}
@@ -144,10 +141,6 @@ func (a *Adapter) SessionWrite(ctx context.Context, _ *mcp.CallToolRequest, in S
 	if err != nil {
 		return mcpToolError(err), SessionWriteResult{}, nil
 	}
-	if _, err := a.resolveTarget(ctx, ""); err != nil {
-		return mcpToolError(err), SessionWriteResult{}, nil
-	}
-
 	cl, err := a.getClient()
 	if err != nil {
 		return mcpToolError(err), SessionWriteResult{}, nil
@@ -190,10 +183,6 @@ func (a *Adapter) SessionControl(ctx context.Context, _ *mcp.CallToolRequest, in
 	if err != nil {
 		return mcpToolError(NewInputError("invalid control key")), SessionControlResult{}, nil
 	}
-	if _, err := a.resolveTarget(ctx, ""); err != nil {
-		return mcpToolError(err), SessionControlResult{}, nil
-	}
-
 	cl, err := a.getClient()
 	if err != nil {
 		return mcpToolError(err), SessionControlResult{}, nil
@@ -312,10 +301,6 @@ func (a *Adapter) SessionClose(ctx context.Context, _ *mcp.CallToolRequest, in S
 	if err != nil {
 		return mcpToolError(err), SessionCloseResult{}, nil
 	}
-	if _, err := a.resolveTarget(ctx, ""); err != nil {
-		return mcpToolError(err), SessionCloseResult{}, nil
-	}
-
 	cl, err := a.getClient()
 	if err != nil {
 		return mcpToolError(err), SessionCloseResult{}, nil

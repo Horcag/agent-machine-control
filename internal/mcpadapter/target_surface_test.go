@@ -87,22 +87,6 @@ func assertProductionAdapterFailsClosed(t *testing.T, adapter *Adapter) {
 			result, _, err := adapter.CheckpointRestore(t.Context(), nil, CheckpointRestoreInput{ID: "c4a523d4-6b99-4d62-a5e2-4752c0f20001", Reason: "fail closed restore", IdempotencyKey: "fail-closed-restore", CheckpointID: "c4a523d4-6b99-4d62-a5e2-4752c0f20002", Timeout: "30s"})
 			return result, err
 		}},
-		{name: "session_open", call: func() (*mcp.CallToolResult, error) {
-			result, _, err := adapter.SessionOpen(t.Context(), nil, SessionOpenInput{Target: "c4a523d4-6b99-4d62-a5e2-4752c0f20001", Reason: "fail closed session", IdempotencyKey: "fail-closed-session-open", Timeout: "30s"})
-			return result, err
-		}},
-		{name: "session_write", call: func() (*mcp.CallToolResult, error) {
-			result, _, err := adapter.SessionWrite(t.Context(), nil, SessionWriteInput{SessionID: "sess-a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4", Data: "exit\r\n", Reason: "fail closed write", IdempotencyKey: "fail-closed-session-write", Timeout: "30s"})
-			return result, err
-		}},
-		{name: "session_control", call: func() (*mcp.CallToolResult, error) {
-			result, _, err := adapter.SessionControl(t.Context(), nil, SessionControlInput{SessionID: "sess-a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4", Key: "ctrl-c", Reason: "fail closed control", IdempotencyKey: "fail-closed-session-control", Timeout: "30s"})
-			return result, err
-		}},
-		{name: "session_close", call: func() (*mcp.CallToolResult, error) {
-			result, _, err := adapter.SessionClose(t.Context(), nil, SessionCloseInput{SessionID: "sess-a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4", Reason: "fail closed close", IdempotencyKey: "fail-closed-session-close", Timeout: "30s"})
-			return result, err
-		}},
 	}
 	for _, check := range checks {
 		t.Run(check.name, func(t *testing.T) {

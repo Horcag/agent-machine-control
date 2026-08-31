@@ -111,7 +111,6 @@ func setupMCPSessionTest(t *testing.T) (*Adapter, func()) {
 
 	cl := client.New(server.URL, tokenStr)
 	adapter := NewAdapter(tempDir)
-	adapter.allowUnscopedTestTargetFallback = true
 	adapter.client = cl
 
 	return adapter, func() {
@@ -192,7 +191,7 @@ func testMCPSessionsReads(ctx context.Context, t *testing.T, adapter *Adapter, s
 	}
 }
 
-func TestMCPSessions_AllTools(t *testing.T) {
+func TestMCPSessions_AllToolsDoNotRequireCurrentTargetState(t *testing.T) {
 	adapter, cleanup := setupMCPSessionTest(t)
 	defer cleanup()
 	ctx := context.Background()
