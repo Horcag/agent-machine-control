@@ -156,6 +156,9 @@ func runCheckpointCreate(
 	if !directMode {
 		return executeDaemonCheckpointCreate(ctx, stateDir, targetID, *name, common, stdout, stderr)
 	}
+	if rejectDirectApprovalReference(common, stderr, "checkpoint create") {
+		return ExitUsage
+	}
 	canonicalTarget, err := recoverySvc.ResolveTargetReference(ctx, targetID)
 	if err != nil {
 		return mapMutationError(err, stderr, "checkpoint create")
@@ -231,6 +234,7 @@ func executeDaemonCheckpointCreate(
 		TimeoutSeconds: int(common.Timeout.Seconds()),
 		Parameters:     map[string]any{"name": name},
 	}
+	applyDaemonApprovalReference(&dReq, common)
 	return executeDaemonMutation(
 		ctx,
 		stateDir,

@@ -87,6 +87,8 @@ type MachineStartInput struct {
 	Reason         string `json:"reason" jsonschema:"Reason for starting the machine"`
 	IdempotencyKey string `json:"idempotency_key" jsonschema:"Idempotency key for the operation"`
 	Timeout        string `json:"timeout" jsonschema:"Explicit timeout duration (e.g. 5m)"`
+	ApprovalID     string `json:"approval_id,omitempty" jsonschema:"Server-issued approval reference for destructive or privileged execution"`
+	Deadline       string `json:"deadline,omitempty" jsonschema:"Exact canonical deadline returned with approval_id"`
 }
 
 type MachineMutationResult struct {
@@ -101,6 +103,8 @@ type MachineStopInput struct {
 	Reason         string `json:"reason" jsonschema:"Reason for stopping the machine"`
 	IdempotencyKey string `json:"idempotency_key" jsonschema:"Idempotency key for the operation"`
 	Timeout        string `json:"timeout" jsonschema:"Explicit timeout duration (e.g. 5m)"`
+	ApprovalID     string `json:"approval_id,omitempty" jsonschema:"Server-issued approval reference for destructive or privileged execution"`
+	Deadline       string `json:"deadline,omitempty" jsonschema:"Exact canonical deadline returned with approval_id"`
 }
 
 type CheckpointCreateInput struct {
@@ -109,6 +113,8 @@ type CheckpointCreateInput struct {
 	Reason         string `json:"reason" jsonschema:"Reason for creating the checkpoint"`
 	IdempotencyKey string `json:"idempotency_key" jsonschema:"Idempotency key for the operation"`
 	Timeout        string `json:"timeout" jsonschema:"Explicit timeout duration (e.g. 5m)"`
+	ApprovalID     string `json:"approval_id,omitempty" jsonschema:"Server-issued approval reference for destructive or privileged execution"`
+	Deadline       string `json:"deadline,omitempty" jsonschema:"Exact canonical deadline returned with approval_id"`
 }
 
 type CheckpointMutationResult struct {
@@ -124,6 +130,8 @@ type CheckpointRestoreInput struct {
 	Reason         string `json:"reason" jsonschema:"Reason for restoring the checkpoint"`
 	IdempotencyKey string `json:"idempotency_key" jsonschema:"Idempotency key for the operation"`
 	Timeout        string `json:"timeout" jsonschema:"Explicit timeout duration (e.g. 5m)"`
+	ApprovalID     string `json:"approval_id,omitempty" jsonschema:"Server-issued approval reference for destructive or privileged execution"`
+	Deadline       string `json:"deadline,omitempty" jsonschema:"Exact canonical deadline returned with approval_id"`
 }
 
 type OperationListInput struct {

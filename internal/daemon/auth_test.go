@@ -68,7 +68,7 @@ func (m *mockDaemonBackend) RestoreCheckpoint(_ context.Context, _ string, _ str
 
 func setupTestServer(t *testing.T) (*daemon.Server, string, string, string) {
 	dir := t.TempDir()
-	seedDaemonTestTarget(t, dir, daemonTestVMID)
+	seedDaemonTestTarget(t, dir)
 	srv, err := daemon.NewServer(daemon.Config{
 		StateDir:   dir,
 		ListenAddr: "127.0.0.1:0",
@@ -105,8 +105,9 @@ func daemonTestObservation(vmID string) domain.MachineObservation {
 	}
 }
 
-func seedDaemonTestTarget(t *testing.T, dir, vmID string) {
+func seedDaemonTestTarget(t *testing.T, dir string) {
 	t.Helper()
+	vmID := daemonTestVMID
 	state, err := statedir.Resolve(dir)
 	if err != nil {
 		t.Fatalf("Resolve state: %v", err)

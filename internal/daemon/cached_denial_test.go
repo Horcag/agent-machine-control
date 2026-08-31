@@ -125,7 +125,7 @@ func getAuditTerminalCount(t *testing.T, stateDir string) int {
 }
 
 func startServerHelper(t *testing.T, dir string, be app.Backend) (*daemon.Server, string) {
-	seedDaemonTestTarget(t, dir, daemonTestVMID)
+	seedDaemonTestTarget(t, dir)
 	srv, err := daemon.NewServer(daemon.Config{
 		StateDir:   dir,
 		ListenAddr: "127.0.0.1:0",

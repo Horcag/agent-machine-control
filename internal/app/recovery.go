@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/approval"
@@ -52,6 +53,8 @@ type MutationRequest struct {
 	Timeout        time.Duration
 	Deadline       time.Time
 	Approval       *domain.Approval
+	ApprovalID     string
+	ApprovalError  error
 	OnAdmitted     func(ctx context.Context) error
 	OnRunning      func(ctx context.Context) error
 }
@@ -67,6 +70,7 @@ type RecoveryService struct {
 	receiptStore  *receipt.Store
 	approvalStore *approval.Store
 	nowFn         func() time.Time
+	issueMu       sync.Mutex
 }
 
 // Option configures RecoveryService dependencies.

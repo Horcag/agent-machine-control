@@ -58,6 +58,7 @@ func runMachineStop(
 			TimeoutSeconds: int(common.Timeout.Seconds()),
 			Parameters:     map[string]any{"mode": *mode},
 		}
+		applyDaemonApprovalReference(&dReq, common)
 		return executeMachineStateDaemonMutation(
 			ctx,
 			stateDir,
@@ -68,6 +69,9 @@ func runMachineStop(
 			targetID,
 			domain.MachineStateOff,
 		)
+	}
+	if rejectDirectApprovalReference(common, stderr, "machine stop") {
+		return ExitUsage
 	}
 	canonicalTarget, err := recoverySvc.ResolveTargetReference(ctx, targetID)
 	if err != nil {

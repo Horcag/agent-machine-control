@@ -58,6 +58,7 @@ func runCheckpointRestore(
 			TimeoutSeconds: int(common.Timeout.Seconds()),
 			Parameters:     map[string]any{"checkpoint_id": checkpointID},
 		}
+		applyDaemonApprovalReference(&dReq, common)
 		return executeDaemonMutation(
 			ctx,
 			stateDir,
@@ -92,6 +93,9 @@ func runCheckpointRestore(
 				return writeJSON(w, envelope)
 			},
 		)
+	}
+	if rejectDirectApprovalReference(common, stderr, "checkpoint restore") {
+		return ExitUsage
 	}
 	canonicalTarget, err := recoverySvc.ResolveTargetReference(ctx, targetID)
 	if err != nil {

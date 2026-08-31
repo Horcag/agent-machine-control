@@ -62,6 +62,10 @@ func TestOperationRecord_Validate(t *testing.T) {
 	if err := rec.Validate(); err != nil {
 		t.Fatalf("expected valid record, got: %v", err)
 	}
+	rec.ApprovalID = "app-operation-0123456789abcdef0123456789abcdef"
+	if err := rec.Validate(); err != nil {
+		t.Fatalf("expected valid approval reference, got: %v", err)
+	}
 
 	invalid := rec
 	invalid.SchemaVersion = "2"
@@ -73,6 +77,12 @@ func TestOperationRecord_Validate(t *testing.T) {
 	invalid.ID = ""
 	if err := invalid.Validate(); err == nil {
 		t.Errorf("expected error for empty ID")
+	}
+
+	invalid = rec
+	invalid.ApprovalID = "../bad"
+	if err := invalid.Validate(); err == nil {
+		t.Errorf("expected error for invalid approval ID")
 	}
 }
 

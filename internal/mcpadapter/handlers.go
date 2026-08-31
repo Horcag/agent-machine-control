@@ -127,13 +127,17 @@ func (a *Adapter) MachineStart(ctx context.Context, _ *mcp.CallToolRequest, in M
 		return mcpToolError(err), MachineMutationResult{}, nil
 	}
 
-	opDTO, err := cl.CreateOperation(ctx, daemon.CreateOperationRequest{
+	request := daemon.CreateOperationRequest{
 		Kind:           "machine.start",
 		Target:         in.ID,
 		Reason:         in.Reason,
 		IdempotencyKey: in.IdempotencyKey,
 		TimeoutSeconds: int(timeout.Seconds()),
-	})
+	}
+	if err := applyOperationApprovalReference(&request, in.ApprovalID, in.Deadline); err != nil {
+		return mcpToolError(err), MachineMutationResult{}, nil
+	}
+	opDTO, err := cl.CreateOperation(ctx, request)
 	if err != nil {
 		return mcpToolError(err), MachineMutationResult{}, nil
 	}
@@ -186,14 +190,18 @@ func (a *Adapter) MachineStop(ctx context.Context, _ *mcp.CallToolRequest, in Ma
 		return mcpToolError(err), MachineMutationResult{}, nil
 	}
 
-	opDTO, err := cl.CreateOperation(ctx, daemon.CreateOperationRequest{
+	request := daemon.CreateOperationRequest{
 		Kind:           "machine.stop",
 		Target:         in.ID,
 		Reason:         in.Reason,
 		IdempotencyKey: in.IdempotencyKey,
 		TimeoutSeconds: int(timeout.Seconds()),
 		Parameters:     map[string]any{"mode": in.Mode},
-	})
+	}
+	if err := applyOperationApprovalReference(&request, in.ApprovalID, in.Deadline); err != nil {
+		return mcpToolError(err), MachineMutationResult{}, nil
+	}
+	opDTO, err := cl.CreateOperation(ctx, request)
 	if err != nil {
 		return mcpToolError(err), MachineMutationResult{}, nil
 	}
@@ -245,14 +253,18 @@ func (a *Adapter) CheckpointCreate(ctx context.Context, _ *mcp.CallToolRequest, 
 		return mcpToolError(err), CheckpointMutationResult{}, nil
 	}
 
-	opDTO, err := cl.CreateOperation(ctx, daemon.CreateOperationRequest{
+	request := daemon.CreateOperationRequest{
 		Kind:           "checkpoint.create",
 		Target:         in.ID,
 		Reason:         in.Reason,
 		IdempotencyKey: in.IdempotencyKey,
 		TimeoutSeconds: int(timeout.Seconds()),
 		Parameters:     map[string]any{"name": in.Name},
-	})
+	}
+	if err := applyOperationApprovalReference(&request, in.ApprovalID, in.Deadline); err != nil {
+		return mcpToolError(err), CheckpointMutationResult{}, nil
+	}
+	opDTO, err := cl.CreateOperation(ctx, request)
 	if err != nil {
 		return mcpToolError(err), CheckpointMutationResult{}, nil
 	}
@@ -306,14 +318,18 @@ func (a *Adapter) CheckpointRestore(ctx context.Context, _ *mcp.CallToolRequest,
 		return mcpToolError(err), MachineMutationResult{}, nil
 	}
 
-	opDTO, err := cl.CreateOperation(ctx, daemon.CreateOperationRequest{
+	request := daemon.CreateOperationRequest{
 		Kind:           "checkpoint.restore",
 		Target:         in.ID,
 		Reason:         in.Reason,
 		IdempotencyKey: in.IdempotencyKey,
 		TimeoutSeconds: int(timeout.Seconds()),
 		Parameters:     map[string]any{"checkpoint_id": in.CheckpointID},
-	})
+	}
+	if err := applyOperationApprovalReference(&request, in.ApprovalID, in.Deadline); err != nil {
+		return mcpToolError(err), MachineMutationResult{}, nil
+	}
+	opDTO, err := cl.CreateOperation(ctx, request)
 	if err != nil {
 		return mcpToolError(err), MachineMutationResult{}, nil
 	}
@@ -346,6 +362,23 @@ func (a *Adapter) CheckpointRestore(ctx context.Context, _ *mcp.CallToolRequest,
 		Receipt:       *rcpt,
 		Machine:       &obsDTO,
 	}, nil
+}
+
+func applyOperationApprovalReference(request *daemon.CreateOperationRequest, approvalID, rawDeadline string) error {
+	if err := validateApprovalID(approvalID); err != nil {
+		return err
+	}
+	deadline, err := validateApprovalDeadline(approvalID, rawDeadline)
+	if err != nil {
+		return err
+	}
+	if approvalID == "" {
+		return nil
+	}
+	request.TimeoutSeconds = 0
+	request.ApprovalID = approvalID
+	request.Deadline = &deadline
+	return nil
 }
 
 func (a *Adapter) OperationList(ctx context.Context, _ *mcp.CallToolRequest, in OperationListInput) (*mcp.CallToolResult, OperationListResult, error) {

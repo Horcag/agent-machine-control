@@ -81,6 +81,7 @@ func TestAuth_Authenticate(t *testing.T) {
 		domain.ScopeEvidenceCapture,
 		domain.ScopeMachineRead,
 		domain.ScopeMachineWrite,
+		domain.ScopeOperationAdmin,
 		domain.ScopeOperationCancel,
 		domain.ScopeSessionAdmin,
 		domain.ScopeSessionClose,

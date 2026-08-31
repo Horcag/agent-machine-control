@@ -203,8 +203,10 @@ func ValidateOperationParameters(kind OperationKind, params map[string]any) erro
 
 func specialOperationParameterValidator(kind OperationKind) func(map[string]any) error {
 	switch kind {
-	case "session.approval.issue":
-		return validateSessionApprovalIssueParams
+	case "session.approval.issue", "operation.approval.issue":
+		return func(params map[string]any) error {
+			return validateApprovalIssueParams(kind, params)
+		}
 	case "target.enroll", "target.clear":
 		return validateTargetMutationParams
 	case "target.approval.issue":
@@ -265,15 +267,15 @@ func validateTargetApprovalIssueParams(params map[string]any) error {
 	return nil
 }
 
-func validateSessionApprovalIssueParams(params map[string]any) error {
+func validateApprovalIssueParams(kind OperationKind, params map[string]any) error {
 	required := []string{"approval_id", "approved_fingerprint", "approved_kind", "beneficiary", "deadline"}
 	if len(params) != len(required) {
-		return fmt.Errorf("%w: session.approval.issue requires exactly the canonical issuance fields", ErrNonCanonicalParameter)
+		return fmt.Errorf("%w: %s requires exactly the canonical issuance fields", ErrNonCanonicalParameter, kind)
 	}
 	for _, key := range required {
 		value, ok := params[key].(string)
 		if !ok || value == "" {
-			return fmt.Errorf("%w: session.approval.issue field %s must be a non-empty string", ErrNonCanonicalParameter, key)
+			return fmt.Errorf("%w: %s field %s must be a non-empty string", ErrNonCanonicalParameter, kind, key)
 		}
 	}
 	if err := ValidateApprovalID(params["approval_id"].(string)); err != nil {

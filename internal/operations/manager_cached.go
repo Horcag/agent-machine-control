@@ -10,7 +10,7 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/receipt"
 )
 
-func (m *Manager) checkCachedReceipt(op domain.Operation) (*domain.OperationRecord, bool, error) {
+func (m *Manager) checkCachedReceipt(op domain.Operation, approvalID domain.ApprovalID) (*domain.OperationRecord, bool, error) {
 	if m.receiptStore == nil {
 		return nil, false, nil
 	}
@@ -23,6 +23,9 @@ func (m *Manager) checkCachedReceipt(op domain.Operation) (*domain.OperationReco
 	}
 	if cachedRcpt == nil {
 		return nil, false, nil
+	}
+	if approvalReferenceFromReceipt(cachedRcpt) != approvalID {
+		return nil, false, ErrOperationConflict
 	}
 	idFp, err := domain.ComputeIdempotencyFingerprint(op)
 	if err != nil {
@@ -60,6 +63,7 @@ func (m *Manager) checkCachedReceipt(op domain.Operation) (*domain.OperationReco
 		Fingerprint:            cachedRcpt.Fingerprint,
 		IdempotencyFingerprint: cachedRcpt.IdempotencyFingerprint,
 		IdempotencyKey:         cachedRcpt.IdempotencyKey,
+		ApprovalID:             approvalID,
 		Deadline:               cachedRcpt.CompletedAt,
 		State:                  state,
 		CreatedAt:              cachedRcpt.StartedAt,
@@ -96,21 +100,41 @@ func (m *Manager) saveReconstructedRecord(rec *domain.OperationRecord) (*domain.
 }
 
 func isCompatible(existing, rec *domain.OperationRecord) bool {
+	return compatibleOperationIdentity(existing, rec) && compatibleOperationLifecycle(existing, rec)
+}
+
+func compatibleOperationIdentity(existing, rec *domain.OperationRecord) bool {
 	return existing.ReceiptID == rec.ReceiptID &&
 		existing.Fingerprint == rec.Fingerprint &&
 		existing.IdempotencyFingerprint == rec.IdempotencyFingerprint &&
 		existing.IdempotencyKey == rec.IdempotencyKey &&
+		existing.ApprovalID == rec.ApprovalID &&
 		existing.Actor == rec.Actor &&
 		existing.Target == rec.Target &&
 		existing.Kind == rec.Kind &&
 		existing.RequestedClass == rec.RequestedClass &&
-		existing.EffectiveClass == rec.EffectiveClass &&
-		existing.State == rec.State &&
+		existing.EffectiveClass == rec.EffectiveClass
+}
+
+func compatibleOperationLifecycle(existing, rec *domain.OperationRecord) bool {
+	return existing.State == rec.State &&
 		existing.ErrorCategory == rec.ErrorCategory &&
 		existing.ErrorMessage == rec.ErrorMessage &&
 		existing.CreatedAt.Equal(rec.CreatedAt) &&
 		existing.CompletedAt.Equal(rec.CompletedAt) &&
 		existing.Deadline.Equal(rec.Deadline)
+}
+
+func approvalReferenceFromReceipt(rcpt *domain.Receipt) domain.ApprovalID {
+	if rcpt == nil {
+		return ""
+	}
+	for _, ref := range rcpt.EvidenceRefs {
+		if len(ref) > len("app-operation-") && ref[:len("app-operation-")] == "app-operation-" {
+			return domain.ApprovalID(ref)
+		}
+	}
+	return ""
 }
 
 func verifyCachedReceiptMatch(op domain.Operation, cachedRcpt *domain.Receipt, idFp domain.Fingerprint) error {

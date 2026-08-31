@@ -110,6 +110,7 @@ func LoadOrCreate(authDir string, opts ...Option) (*Store, error) {
 		domain.ScopeMachineWrite,
 		domain.ScopeAuditRead,
 		domain.ScopeOperationCancel,
+		domain.ScopeOperationAdmin,
 		domain.ScopeSessionRead,
 		domain.ScopeSessionWrite,
 		domain.ScopeSessionOpen,

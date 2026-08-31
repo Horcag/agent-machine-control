@@ -11,6 +11,9 @@ import (
 
 func (s *RecoveryService) mutationExecutionContext(parent context.Context, op domain.Operation, req MutationRequest) (context.Context, context.CancelFunc) {
 	budget := op.Deadline.Sub(s.now())
+	if req.ApprovalID != "" && budget <= 0 {
+		budget = 5 * time.Second
+	}
 	if req.Timeout > 0 && req.Timeout < budget {
 		budget = req.Timeout
 	}
@@ -29,6 +32,7 @@ func (s *RecoveryService) preProviderFailure(
 	startedAt time.Time,
 	primary error,
 	rollbackRef string,
+	approvalID string,
 ) (domain.Receipt, error) {
 	if !errors.Is(primary, context.Canceled) && !errors.Is(primary, context.DeadlineExceeded) {
 		return domain.Receipt{}, primary
@@ -38,7 +42,7 @@ func (s *RecoveryService) preProviderFailure(
 	}
 	finalizationCtx, cancel := boundedMutationFinalizationContext(ctx)
 	defer cancel()
-	receiptRecord, persistErr := s.persistOutcome(finalizationCtx, op, fp, decision, startedAt, s.now(), primary, rollbackRef)
+	receiptRecord, persistErr := s.persistOutcome(finalizationCtx, op, fp, decision, startedAt, s.now(), primary, rollbackRef, approvalID)
 	return s.finalizeMutation(receiptRecord, primary, persistErr, nil)
 }
 

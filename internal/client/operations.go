@@ -17,6 +17,15 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/operations"
 )
 
+// IssueOperationApproval calls the operator-only daemon issuance route.
+func (c *Client) IssueOperationApproval(ctx context.Context, req daemon.OperationApprovalIssueRequest) (*daemon.OperationApprovalIssueResponse, error) {
+	var response daemon.OperationApprovalIssueResponse
+	if err := c.doRequest(ctx, http.MethodPost, "/v1/operation-approvals", req, &response); err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
 // CreateOperation submits a new mutation operation to the daemon.
 func (c *Client) CreateOperation(ctx context.Context, req daemon.CreateOperationRequest) (*daemon.OperationDTO, error) {
 	var dto daemon.OperationDTO

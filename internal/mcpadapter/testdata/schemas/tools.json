@@ -4,6 +4,14 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "approval_id": {
+          "description": "Server-issued approval reference for destructive or privileged execution",
+          "type": "string"
+        },
+        "deadline": {
+          "description": "Exact canonical deadline returned with approval_id",
+          "type": "string"
+        },
         "id": {
           "description": "The machine GUID to checkpoint",
           "type": "string"
@@ -373,8 +381,16 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "approval_id": {
+          "description": "Server-issued approval reference for destructive or privileged execution",
+          "type": "string"
+        },
         "checkpoint_id": {
           "description": "The checkpoint GUID to restore",
+          "type": "string"
+        },
+        "deadline": {
+          "description": "Exact canonical deadline returned with approval_id",
           "type": "string"
         },
         "id": {
@@ -945,6 +961,14 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "approval_id": {
+          "description": "Server-issued approval reference for destructive or privileged execution",
+          "type": "string"
+        },
+        "deadline": {
+          "description": "Exact canonical deadline returned with approval_id",
+          "type": "string"
+        },
         "id": {
           "description": "The machine GUID to start",
           "type": "string"
@@ -1190,6 +1214,14 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "approval_id": {
+          "description": "Server-issued approval reference for destructive or privileged execution",
+          "type": "string"
+        },
+        "deadline": {
+          "description": "Exact canonical deadline returned with approval_id",
+          "type": "string"
+        },
         "id": {
           "description": "The machine GUID to stop",
           "type": "string"
@@ -1469,6 +1501,9 @@
               "admitted_at": {
                 "type": "string"
               },
+              "approval_id": {
+                "type": "string"
+              },
               "completed_at": {
                 "type": "string"
               },
@@ -1578,6 +1613,9 @@
               "type": "string"
             },
             "admitted_at": {
+              "type": "string"
+            },
+            "approval_id": {
               "type": "string"
             },
             "completed_at": {
@@ -1695,6 +1733,9 @@
               "type": "string"
             },
             "admitted_at": {
+              "type": "string"
+            },
+            "approval_id": {
               "type": "string"
             },
             "completed_at": {

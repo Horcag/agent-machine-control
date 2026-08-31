@@ -115,7 +115,7 @@ func (s *RecoveryService) executeMutation(
 			}
 			return *cached, nil
 		}
-		return s.preProviderFailure(ctx, op, fp, policy.Decision{}, s.now(), err, "")
+		return s.preProviderFailure(ctx, op, fp, policy.Decision{}, s.now(), err, "", req.ApprovalID)
 	}
 
 	now := s.now()
@@ -127,32 +127,32 @@ func (s *RecoveryService) executeMutation(
 		if errors.As(err, &deniedErr) {
 			finalizationCtx, cancel := boundedMutationFinalizationContext(ctx)
 			defer cancel()
-			receiptRecord, persistErr := s.persistOutcome(finalizationCtx, op, fp, decision, now, now, err, rollbackRef)
+			receiptRecord, persistErr := s.persistOutcome(finalizationCtx, op, fp, decision, now, now, err, rollbackRef, req.ApprovalID)
 			return s.finalizeMutation(receiptRecord, err, persistErr, nil)
 		}
-		return s.preProviderFailure(ctx, op, fp, decision, now, err, rollbackRef)
+		return s.preProviderFailure(ctx, op, fp, decision, now, err, rollbackRef, req.ApprovalID)
 	}
 
 	// 6. Host Lease Acquisition
 	releaseLease, err := s.acquireMutationLease(ctx, op, req, providerTargetID, fp)
 	if err != nil {
-		return s.preProviderFailure(ctx, op, fp, decision, now, err, rollbackRef)
+		return s.preProviderFailure(ctx, op, fp, decision, now, err, rollbackRef, req.ApprovalID)
 	}
 
 	// 7. Audit Admission Intent & Approval Consumption
 	approvalConsumed, err := s.recordAdmissionAndConsume(ctx, op, decision, req, now)
 	if err != nil {
-		return s.preProviderFailure(ctx, op, fp, decision, now, errors.Join(err, releaseLease()), rollbackRef)
+		return s.preProviderFailure(ctx, op, fp, decision, now, errors.Join(err, releaseLease()), rollbackRef, req.ApprovalID)
 	}
 
 	// 8. Lifecycle hooks & Provider Execution
 	if err := runLifecycleHooks(ctx, req); err != nil {
 		abortErr := s.compensatePreProviderAbort(ctx, req, approvalConsumed, releaseLease, err)
-		return s.preProviderFailure(ctx, op, fp, decision, now, abortErr, rollbackRef)
+		return s.preProviderFailure(ctx, op, fp, decision, now, abortErr, rollbackRef, req.ApprovalID)
 	}
 	if err := ctx.Err(); err != nil {
 		abortErr := s.compensatePreProviderAbort(ctx, req, approvalConsumed, releaseLease, err)
-		return s.preProviderFailure(ctx, op, fp, decision, now, abortErr, rollbackRef)
+		return s.preProviderFailure(ctx, op, fp, decision, now, abortErr, rollbackRef, req.ApprovalID)
 	}
 
 	startedAt, completedAt, runErr := s.runProviderExecution(ctx, execFn)
@@ -160,7 +160,7 @@ func (s *RecoveryService) executeMutation(
 	// 9. Receipt Persistence & Terminal Audit
 	finalizationCtx, cancelFinalization := boundedMutationFinalizationContext(ctx)
 	defer cancelFinalization()
-	receiptRecord, persistErr := s.persistOutcome(finalizationCtx, op, fp, decision, startedAt, completedAt, runErr, rollbackRef)
+	receiptRecord, persistErr := s.persistOutcome(finalizationCtx, op, fp, decision, startedAt, completedAt, runErr, rollbackRef, req.ApprovalID)
 
 	// 10. Lease Release
 	releaseErr := releaseLease()
@@ -361,7 +361,7 @@ func (s *RecoveryService) verifyApprovalUnconsumed(ctx context.Context, decision
 			return fmt.Errorf("app: failed to verify approval consumption: %w", err)
 		}
 		if consumed {
-			return domain.ErrApprovalConsumed
+			return approvalActivityDenial(domain.ErrApprovalConsumed)
 		}
 	}
 	return nil
@@ -375,6 +375,7 @@ func (s *RecoveryService) persistOutcome(
 	startedAt, completedAt time.Time,
 	runErr error,
 	rollbackRef string,
+	approvalID string,
 ) (domain.Receipt, error) {
 	outcomeStatus := domain.OutcomeSuccess
 	exitCode := 0
@@ -436,6 +437,9 @@ func (s *RecoveryService) persistOutcome(
 		ObservationType: domain.ObservationObserved,
 		RollbackRef:     effectiveRollback,
 		RedactionStatus: domain.RedactionApplied,
+	}
+	if approvalID != "" {
+		receiptRecord.EvidenceRefs = []string{approvalID}
 	}
 
 	var saveErr, auditErr error

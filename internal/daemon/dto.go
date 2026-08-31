@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"bytes"
+	"encoding/json"
 	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/audit"
@@ -41,6 +43,98 @@ type CreateOperationRequest struct {
 	TimeoutSeconds int            `json:"timeout_seconds,omitempty"`
 	Deadline       *time.Time     `json:"deadline,omitempty"`
 	Parameters     map[string]any `json:"parameters,omitempty"`
+	ApprovalID     string         `json:"approval_id,omitempty"`
+	deadlineText   string
+}
+
+// MarshalJSON serializes approval deadlines in their canonical UTC form.
+func (r CreateOperationRequest) MarshalJSON() ([]byte, error) {
+	type requestWire struct {
+		Kind           string         `json:"kind"`
+		Target         string         `json:"target"`
+		Reason         string         `json:"reason"`
+		IdempotencyKey string         `json:"idempotency_key"`
+		TimeoutSeconds int            `json:"timeout_seconds,omitempty"`
+		Deadline       *string        `json:"deadline,omitempty"`
+		Parameters     map[string]any `json:"parameters,omitempty"`
+		ApprovalID     string         `json:"approval_id,omitempty"`
+	}
+
+	var deadline *string
+	if r.Deadline != nil {
+		text := r.Deadline.UTC().Format(time.RFC3339Nano)
+		deadline = &text
+	}
+	return json.Marshal(requestWire{
+		Kind: r.Kind, Target: r.Target, Reason: r.Reason, IdempotencyKey: r.IdempotencyKey,
+		TimeoutSeconds: r.TimeoutSeconds, Deadline: deadline, Parameters: r.Parameters, ApprovalID: r.ApprovalID,
+	})
+}
+
+// UnmarshalJSON retains the original deadline spelling for approval-bound validation.
+func (r *CreateOperationRequest) UnmarshalJSON(data []byte) error {
+	type requestWire struct {
+		Kind           string          `json:"kind"`
+		Target         string          `json:"target"`
+		Reason         string          `json:"reason"`
+		IdempotencyKey string          `json:"idempotency_key"`
+		TimeoutSeconds int             `json:"timeout_seconds,omitempty"`
+		Deadline       json.RawMessage `json:"deadline,omitempty"`
+		Parameters     map[string]any  `json:"parameters,omitempty"`
+		ApprovalID     string          `json:"approval_id,omitempty"`
+	}
+	var wire requestWire
+	if err := decodeStrictJSONObject(bytes.NewReader(data), &wire); err != nil {
+		return err
+	}
+
+	var deadline *time.Time
+	var deadlineText string
+	if len(wire.Deadline) != 0 && string(wire.Deadline) != "null" {
+		if err := json.Unmarshal(wire.Deadline, &deadlineText); err != nil {
+			return err
+		}
+		parsed, err := time.Parse(time.RFC3339Nano, deadlineText)
+		if err != nil {
+			return err
+		}
+		deadline = &parsed
+	}
+	*r = CreateOperationRequest{
+		Kind: wire.Kind, Target: wire.Target, Reason: wire.Reason, IdempotencyKey: wire.IdempotencyKey,
+		TimeoutSeconds: wire.TimeoutSeconds, Deadline: deadline, Parameters: wire.Parameters, ApprovalID: wire.ApprovalID,
+		deadlineText: deadlineText,
+	}
+	return nil
+}
+
+// OperationApprovalIssueRequest is the operator-only exact operation approval payload.
+type OperationApprovalIssueRequest struct {
+	Kind           string         `json:"kind"`
+	Target         string         `json:"target"`
+	Reason         string         `json:"reason"`
+	IdempotencyKey string         `json:"idempotency_key"`
+	ValidForMillis int64          `json:"valid_for_ms"`
+	Beneficiary    string         `json:"beneficiary,omitempty"`
+	Parameters     map[string]any `json:"parameters,omitempty"`
+}
+
+// OperationApprovalIssueResponse returns only the reference and redacted operation identity.
+type OperationApprovalIssueResponse struct {
+	SchemaVersion string                        `json:"schema_version"`
+	ApprovalID    string                        `json:"approval_id"`
+	Deadline      string                        `json:"deadline"`
+	ExpiresAt     string                        `json:"expires_at"`
+	Operation     OperationApprovalOperationDTO `json:"operation"`
+}
+
+// OperationApprovalOperationDTO is the copy-safe canonical operation bound by a grant.
+type OperationApprovalOperationDTO struct {
+	Kind           string         `json:"kind"`
+	Target         string         `json:"target"`
+	Reason         string         `json:"reason"`
+	IdempotencyKey string         `json:"idempotency_key"`
+	Parameters     map[string]any `json:"parameters"`
 }
 
 // OperationDTO is the JSON representation of an operation.
@@ -65,6 +159,7 @@ type OperationDTO struct {
 	ErrorCategory          string         `json:"error_category,omitempty"`
 	ErrorMessage           string         `json:"error_message,omitempty"`
 	Parameters             map[string]any `json:"parameters,omitempty"`
+	ApprovalID             string         `json:"approval_id,omitempty"`
 }
 
 // ConvertToOperationDTO converts a domain.OperationRecord to an OperationDTO.
@@ -86,6 +181,7 @@ func ConvertToOperationDTO(rec domain.OperationRecord) OperationDTO {
 		ErrorCategory:          rec.ErrorCategory,
 		ErrorMessage:           rec.ErrorMessage,
 		Parameters:             rec.Parameters,
+		ApprovalID:             string(rec.ApprovalID),
 	}
 	if !rec.AdmittedAt.IsZero() {
 		dto.AdmittedAt = rec.AdmittedAt.UTC().Format(time.RFC3339Nano)

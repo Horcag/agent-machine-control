@@ -31,15 +31,12 @@ func (s *Server) handleCreateOperation(w http.ResponseWriter, r *http.Request) {
 
 	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
 	var req CreateOperationRequest
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
+	if err := decodeStrictJSONObject(r.Body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_argument", "invalid request body")
 		return
 	}
-	var trailing any
-	if err := dec.Decode(&trailing); err != io.EOF {
-		writeError(w, http.StatusBadRequest, "invalid_argument", "trailing data in request body")
+	if err := validateCreateOperationRequestFields(req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_argument", "invalid operation request")
 		return
 	}
 
@@ -55,7 +52,15 @@ func (s *Server) handleCreateOperation(w http.ResponseWriter, r *http.Request) {
 	}
 	op.Target = canonicalTarget
 
-	rec, wasExisting, err := s.opMgr.Submit(r.Context(), op, timeout)
+	var rec *domain.OperationRecord
+	var wasExisting bool
+	if req.ApprovalID == "" {
+		rec, wasExisting, err = s.opMgr.Submit(r.Context(), op, timeout)
+	} else {
+		rec, wasExisting, err = s.opMgr.SubmitWithApprovalReference(r.Context(), op, timeout, req.ApprovalID, func(ctx context.Context) (*domain.Approval, error) {
+			return s.recoveryService.LoadOperationApprovalReference(ctx, op, req.ApprovalID)
+		})
+	}
 	if err != nil {
 		if errors.Is(err, operations.ErrOperationConflict) {
 			writeError(w, http.StatusConflict, "conflict", "idempotency key conflict")
@@ -80,6 +85,25 @@ func (s *Server) handleCreateOperation(w http.ResponseWriter, r *http.Request) {
 
 	dto := ConvertToOperationDTO(*rec)
 	writeJSON(w, status, dto)
+}
+
+func validateCreateOperationRequestFields(req CreateOperationRequest) error {
+	if req.Kind == "" || req.Target == "" || req.Reason == "" || req.IdempotencyKey == "" {
+		return errors.New("operation request requires kind, target, reason, and idempotency_key")
+	}
+	if req.ApprovalID == "" {
+		return nil
+	}
+	if err := domain.ValidateApprovalID(req.ApprovalID); err != nil {
+		return err
+	}
+	if req.Deadline == nil || req.Deadline.IsZero() || req.TimeoutSeconds != 0 {
+		return domain.ErrMissingDeadline
+	}
+	if req.Deadline.UTC().Format(time.RFC3339Nano) != req.deadlineText {
+		return domain.ErrMissingDeadline
+	}
+	return nil
 }
 
 func writeTargetResolutionError(w http.ResponseWriter, err error) {
@@ -316,8 +340,11 @@ func resolveOperationDeadline(req CreateOperationRequest, now time.Time) (time.T
 	if req.Deadline != nil {
 		deadline := req.Deadline.UTC()
 		remaining := deadline.Sub(now)
-		if remaining <= 0 || remaining > maxOperationTimeout {
+		if remaining > maxOperationTimeout || (remaining <= 0 && (req.ApprovalID == "" || now.Sub(deadline) > 5*time.Minute)) {
 			return time.Time{}, 0, errors.New("operation deadline is outside the allowed range")
+		}
+		if remaining <= 0 {
+			return deadline, 5 * time.Second, nil
 		}
 		return deadline, remaining, nil
 	}

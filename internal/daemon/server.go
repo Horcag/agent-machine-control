@@ -253,6 +253,12 @@ func (s *Server) dispatchV1(w http.ResponseWriter, r *http.Request) {
 		} else {
 			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 		}
+	case path == "operation-approvals":
+		if r.Method == http.MethodPost {
+			s.handleIssueOperationApproval(w, r)
+		} else {
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+		}
 	default:
 		s.dispatchOtherV1(w, r, path)
 	}

@@ -51,6 +51,7 @@ func runMachineStart(
 			IdempotencyKey: common.IdempotencyKey,
 			TimeoutSeconds: int(common.Timeout.Seconds()),
 		}
+		applyDaemonApprovalReference(&dReq, common)
 		return executeMachineStateDaemonMutation(
 			ctx,
 			stateDir,
@@ -61,6 +62,22 @@ func runMachineStart(
 			targetID,
 			domain.MachineStateRunning,
 		)
+	}
+	return executeDirectMachineStart(ctx, recoverySvc, actor, prompter, nowFn, targetID, common, stdout, stderr)
+}
+
+func executeDirectMachineStart(
+	ctx context.Context,
+	recoverySvc *app.RecoveryService,
+	actor domain.ActorContext,
+	prompter Prompter,
+	nowFn func() time.Time,
+	targetID string,
+	common *CommonFlags,
+	stdout, stderr io.Writer,
+) int {
+	if rejectDirectApprovalReference(common, stderr, "machine start") {
+		return ExitUsage
 	}
 	canonicalTarget, err := recoverySvc.ResolveTargetReference(ctx, targetID)
 	if err != nil {

@@ -60,6 +60,24 @@ operations, receipts, audit records, and persistent guest SSH/PTTY sessions. See
 `session open`, `read`, `write`, `control`, `wait`, `list`, `show`, `close`, and operator-only
 `session approve` commands.
 
+Privileged daemon machine/checkpoint mutations use a server-issued reference rather than a caller
+supplied approval object. An authenticated operator can prepare the exact current operation and then
+execute it with the returned ID and deadline:
+
+```sh
+amc operation approve machine.stop <guid> --mode turn-off \
+  --reason "emergency power off" --idempotency-key "power-off-1" --valid-for 1m
+
+amc machine stop <guid> --mode turn-off --reason "emergency power off" \
+  --idempotency-key "power-off-1" --approval-id <approval-id> --deadline <exact-deadline>
+```
+
+Use `--for-mcp` during issuance to bind the grant to `agent:mcp-local`. The existing MCP mutation
+tools accept the same optional `approval_id` plus exact `deadline`; MCP exposes no issuance tool.
+Automatic daemon CLI retry after an `approval_required` result remains deferred to the target/CLI UX
+slice, so this release uses the explicit two-step flow above. Direct mode retains its independent
+local confirmation and server-owned approval store.
+
 ### JSON mode
 
 Every command supports `--json` for machine-readable automation. Output envelopes conform to schema version `1`, emitting sorted arrays for `capabilities`, `machines`, `network_adapters`, and `ip_addresses`.

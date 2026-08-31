@@ -250,25 +250,8 @@ func buildSessionApprovalIssuanceEvidence(caller domain.ActorContext, approved d
 	if err := domain.ValidateOperationParameters(op.Kind, op.Parameters); err != nil {
 		return domain.Operation{}, domain.Receipt{}, err
 	}
-	fp, err := op.Fingerprint()
+	rcpt, err := buildApprovalIssuanceReceipt("session-approval-receipt", op, issued)
 	if err != nil {
-		return domain.Operation{}, domain.Receipt{}, err
-	}
-	idFp, err := domain.ComputeIdempotencyFingerprint(op)
-	if err != nil {
-		return domain.Operation{}, domain.Receipt{}, err
-	}
-	receiptDigest := sha256.Sum256([]byte("session-approval-receipt\x00" + string(issued.ID)))
-	rcpt := domain.Receipt{
-		ReceiptID:     domain.ReceiptID("rcpt-" + hex.EncodeToString(receiptDigest[:16])),
-		OperationKind: op.Kind, Fingerprint: fp, IdempotencyFingerprint: idFp,
-		IdempotencyKey: op.IdempotencyKey, Actor: op.Actor.EffectiveActor, Target: op.Target,
-		Class: op.Classification, EffectiveBackend: "amcd", StartedAt: issued.IssuedAt, CompletedAt: issued.IssuedAt,
-		Outcome:         domain.ExecutionOutcome{Status: domain.OutcomeSuccess, ExitCode: 0},
-		ObservationType: domain.ObservationObserved, EvidenceRefs: []string{string(issued.ID)},
-		RedactionStatus: domain.RedactionApplied,
-	}
-	if err := rcpt.Validate(); err != nil {
 		return domain.Operation{}, domain.Receipt{}, err
 	}
 	return op, rcpt, nil

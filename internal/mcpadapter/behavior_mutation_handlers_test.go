@@ -1,6 +1,7 @@
 package mcpadapter
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,59 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/domain"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+//nolint:cyclop // The fake HTTP boundary checks request, terminal operation, receipt, and preflight rejection.
+func TestMachineStopCarriesServerIssuedApprovalReference(t *testing.T) {
+	const approvalID = "app-operation-0123456789abcdef0123456789abcdef"
+	const deadline = "2026-08-31T02:00:00Z"
+	const opID = "op-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const receiptID = "rcpt-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/operations":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode request: %v", err)
+			}
+			if body["approval_id"] != approvalID || body["deadline"] != deadline {
+				t.Errorf("approval reference body = %+v", body)
+			}
+			if _, exists := body["timeout_seconds"]; exists {
+				t.Errorf("approval-bound request included timeout_seconds: %+v", body)
+			}
+			_, _ = w.Write([]byte(`{"schema_version":"1","operation_id":"` + opID + `","state":"pending"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/"+opID:
+			_, _ = w.Write([]byte(`{"schema_version":"1","operation_id":"` + opID + `","state":"completed","receipt_id":"` + receiptID + `"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/receipts/"+receiptID:
+			_, _ = w.Write([]byte(`{"schema_version":"1","receipt":{"receipt_id":"` + receiptID + `","operation_kind":"machine.stop","fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","actor":"agent:mcp-local","target":"local:c4a523d4-6b99-4d62-a5e2-4752c0f20001","class":"destructive_privileged","effective_backend":"hyperv","started_at":"2026-08-31T01:59:00Z","completed_at":"2026-08-31T01:59:01Z","outcome":{"status":"success","exit_code":0},"observation_type":"observed","redaction_status":"applied"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	adapter := &Adapter{client: client.New(server.URL, "token")}
+	toolError, result, err := adapter.MachineStop(t.Context(), nil, MachineStopInput{
+		ID: "c4a523d4-6b99-4d62-a5e2-4752c0f20001", Mode: "turn-off",
+		Reason: "approved MCP stop", IdempotencyKey: "approved-mcp-stop", Timeout: "1m",
+		ApprovalID: approvalID, Deadline: deadline,
+	})
+	if err != nil || toolError != nil || result.Receipt.ReceiptID != receiptID {
+		t.Fatalf("MachineStop result=%+v toolError=%+v err=%v", result, toolError, err)
+	}
+	before := requests
+	toolError, _, err = adapter.MachineStop(t.Context(), nil, MachineStopInput{
+		ID: "c4a523d4-6b99-4d62-a5e2-4752c0f20001", Mode: "turn-off",
+		Reason: "invalid MCP stop", IdempotencyKey: "invalid-mcp-stop", Timeout: "1m",
+		ApprovalID: approvalID,
+	})
+	if err != nil || toolError == nil || !toolError.IsError || requests != before {
+		t.Fatalf("ID-only result toolError=%+v err=%v requests=%d", toolError, err, requests)
+	}
+}
 
 func TestMachineList_EmptyAndSorting(t *testing.T) {
 	ctx := t.Context()

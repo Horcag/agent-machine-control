@@ -16,6 +16,7 @@ const (
 	ScopeMachineWrite    = "machine:write"
 	ScopeAuditRead       = "audit:read"
 	ScopeOperationCancel = "operation:cancel"
+	ScopeOperationAdmin  = "operation:admin"
 	ScopeSessionRead     = "session:read"
 	ScopeSessionWrite    = "session:write"
 	ScopeSessionOpen     = "session:open"

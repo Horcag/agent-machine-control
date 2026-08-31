@@ -62,6 +62,29 @@ func TestResolveOperationDeadline(t *testing.T) {
 	}
 }
 
+func TestCreateOperationRequestUnmarshalJSONDeadlineBoundaries(t *testing.T) {
+	valid := `{"kind":"machine.start","target":"c4a523d4-6b99-4d62-a5e2-4752c0f20001","reason":"deadline boundary","idempotency_key":"deadline-boundary"}`
+	for name, body := range map[string]string{
+		"null":       valid[:len(valid)-1] + `,"deadline":null}`,
+		"non-string": valid[:len(valid)-1] + `,"deadline":1}`,
+		"malformed":  valid[:len(valid)-1] + `,"deadline":"not-a-deadline"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var request CreateOperationRequest
+			err := json.Unmarshal([]byte(body), &request)
+			if name == "null" {
+				if err != nil || request.Deadline != nil || request.deadlineText != "" {
+					t.Fatalf("request=%+v err=%v", request, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("expected deadline decoding error")
+			}
+		})
+	}
+}
+
 type deadlineAdmissionBackend struct{ calls atomic.Int32 }
 
 func (b *deadlineAdmissionBackend) called() { b.calls.Add(1) }

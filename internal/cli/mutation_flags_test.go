@@ -43,6 +43,36 @@ func TestDefaultPrompter_PromptConfirmation(t *testing.T) {
 	}
 }
 
+func TestOperationApprovalReferenceFlagValidationAndDirectRefusal(t *testing.T) {
+	application := setupTestApp(t, &mockBackend{}, &testPrompter{confirm: true})
+	base := []string{
+		"--direct", "machine", "start", "c4a523d4-6b99-4d62-a5e2-4752c0f20001",
+		"--reason", "validate approval flags", "--idempotency-key", "validate-approval-flags",
+	}
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "id only", args: append(append([]string{}, base...), "--approval-id", "app-operation-0123456789abcdef0123456789abcdef")},
+		{name: "invalid id", args: append(append([]string{}, base...), "--approval-id", "../bad", "--deadline", "2026-08-31T04:00:00Z")},
+		{name: "invalid deadline", args: append(append([]string{}, base...), "--approval-id", "app-operation-0123456789abcdef0123456789abcdef", "--deadline", "not-a-deadline")},
+	}
+	for _, test := range tests {
+		var stdout, stderr bytes.Buffer
+		if code := application.Run(test.args, &stdout, &stderr); code != cli.ExitUsage {
+			t.Fatalf("%s code=%d stdout=%s stderr=%s", test.name, code, stdout.String(), stderr.String())
+		}
+	}
+	var stdout, stderr bytes.Buffer
+	valid := append(append([]string{}, base...),
+		"--approval-id", "app-operation-0123456789abcdef0123456789abcdef",
+		"--deadline", "2026-08-31T04:00:00Z",
+	)
+	if code := application.Run(valid, &stdout, &stderr); code != cli.ExitUsage || !strings.Contains(stderr.String(), "requires daemon mode") {
+		t.Fatalf("direct refusal code=%d stderr=%s", code, stderr.String())
+	}
+}
+
 func TestCLI_ApprovalFile_Rejected(t *testing.T) {
 	targetID := "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
 	snapID := "e4a523d4-6b99-4d62-a5e2-4752c0f20001"
