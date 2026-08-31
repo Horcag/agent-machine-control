@@ -386,6 +386,10 @@ exit $child.ExitCode
 // quoteWindowsArgument preserves one native argv value when Windows PowerShell
 // Start-Process joins ArgumentList entries into a single command line.
 func quoteWindowsArgument(value string) string {
+	if !windowsArgumentNeedsQuoting(value) {
+		return value
+	}
+
 	var quoted strings.Builder
 	quoted.Grow(len(value) + 2)
 	quoted.WriteByte('"')
@@ -407,6 +411,10 @@ func quoteWindowsArgument(value string) string {
 	quoted.WriteString(strings.Repeat(`\`, backslashes*2))
 	quoted.WriteByte('"')
 	return quoted.String()
+}
+
+func windowsArgumentNeedsQuoting(value string) bool {
+	return value == "" || strings.ContainsAny(value, " \t\"")
 }
 
 func metadataBytes(spec app.BootstrapSpec) ([]byte, error) {

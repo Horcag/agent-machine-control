@@ -354,7 +354,10 @@ func TestWrapperContainsOnlyFixedDaemonBootstrapInputs(t *testing.T) {
 		t.Fatalf("wrapperBytes() error = %v", err)
 	}
 	text := string(wrapper)
-	for _, required := range []string{"wsl.exe", "Synthetic-WSL", "operator", "/usr/local/bin/amcd", "run", "--state-dir", "127.0.0.1:0"} {
+	for _, required := range []string{
+		"wsl.exe", "Synthetic-WSL", "operator", "/usr/local/bin/amcd", "run", "--state-dir", "127.0.0.1:0",
+		`'Synthetic-WSL'`, `'operator'`, `'/usr/local/bin/amcd'`, `'127.0.0.1:0'`,
+	} {
 		if !strings.Contains(text, required) {
 			t.Errorf("wrapper missing %q: %s", required, text)
 		}
@@ -373,11 +376,11 @@ func TestWrapperContainsOnlyFixedDaemonBootstrapInputs(t *testing.T) {
 	}
 }
 
-func TestWrapperQuotesDynamicNativeArguments(t *testing.T) {
+func TestWrapperPreservesSimpleNativeArgumentsAndQuotesWhitespaceArguments(t *testing.T) {
 	t.Parallel()
 
 	spec := app.BootstrapSpec{
-		WSLExecutable: `C:\Windows\System32\wsl.exe`, Distro: "Synthetic-WSL", LinuxUser: "operator",
+		WSLExecutable: `C:\Windows\System32\wsl.exe`, Distro: "Ubuntu-24.04", LinuxUser: "operator",
 		BinaryPath: "/mnt/c/Example User/bin/amcd", StateDir: "/mnt/c/Example User/amc state", ListenAddress: "127.0.0.1:0",
 	}
 	wrapper, err := wrapperBytes(spec)
@@ -386,24 +389,34 @@ func TestWrapperQuotesDynamicNativeArguments(t *testing.T) {
 	}
 	text := string(wrapper)
 	for _, required := range []string{
-		`'"Synthetic-WSL"'`,
-		`'"operator"'`,
+		`'Ubuntu-24.04'`,
+		`'operator'`,
 		`'"/mnt/c/Example User/bin/amcd"'`,
 		`'"/mnt/c/Example User/amc state"'`,
-		`'"127.0.0.1:0"'`,
+		`'127.0.0.1:0'`,
 	} {
 		if !strings.Contains(text, required) {
 			t.Errorf("wrapper missing quoted native argument %q: %s", required, text)
 		}
 	}
+	for _, unexpected := range []string{`'"Ubuntu-24.04"'`, `'"operator"'`, `'"127.0.0.1:0"'`} {
+		if strings.Contains(text, unexpected) {
+			t.Errorf("wrapper rendered safe native argument with literal quotes %q: %s", unexpected, text)
+		}
+	}
 }
 
-func TestQuoteWindowsArgumentPreservesTrailingBackslashes(t *testing.T) {
+func TestQuoteWindowsArgument(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
 		name, value, want string
 	}{
+		{name: "simple", value: "Ubuntu-24.04", want: "Ubuntu-24.04"},
+		{name: "empty", value: "", want: `""`},
+		{name: "space", value: "/mnt/c/Example User/amc", want: `"/mnt/c/Example User/amc"`},
+		{name: "tab", value: "/mnt/c/Example\tUser/amc", want: "\"/mnt/c/Example\tUser/amc\""},
+		{name: "quote", value: `C:\\Example"User`, want: `"C:\\Example\"User"`},
 		{name: "one trailing backslash", value: `/mnt/c/Example User/amc\`, want: `"/mnt/c/Example User/amc\\"`},
 		{name: "two trailing backslashes", value: `/mnt/c/Example User/amc\\`, want: `"/mnt/c/Example User/amc\\\\"`},
 	} {
