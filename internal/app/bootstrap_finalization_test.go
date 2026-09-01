@@ -74,7 +74,7 @@ func TestBootstrapEnsureObservationTimeoutFinalizesDurablyAndReplays(t *testing.
 
 	service := newTestBootstrapService(t, adapter, &fakeBootstrapDaemon{becomesHealthyAfter: 1})
 	service.observationGrace = 10 * time.Millisecond
-	service.evidenceGrace = 250 * time.Millisecond
+	service.evidenceGrace = bootstrapDurableEvidenceGrace
 
 	contexts := &durableEvidenceContexts{caller: callerCtx}
 	service.receiptStore = receipt.NewStore(receiptStoreDir(t), receipt.WithEnsureHook(func(ctx context.Context, _ domain.Receipt) error {
