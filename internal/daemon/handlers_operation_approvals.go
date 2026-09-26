@@ -87,8 +87,7 @@ func writeOperationApprovalIssueError(w http.ResponseWriter, err error) {
 		errors.Is(err, domain.ErrMachineHostUnavailable), errors.Is(err, domain.ErrMachineAccessDenied):
 		writeTargetResolutionError(w, err)
 	default:
-		var denied *app.PolicyDeniedError
-		if errors.As(err, &denied) {
+		if denied, ok := errors.AsType[*app.PolicyDeniedError](err); ok {
 			writeError(w, http.StatusForbidden, string(denied.Reason), denied.Message)
 			return
 		}

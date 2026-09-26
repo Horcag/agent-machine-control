@@ -170,8 +170,7 @@ func prepareCheckpointRestoreApproval(
 }
 
 func mapMutationError(err error, stderr io.Writer, opName string) int {
-	var deniedErr *app.PolicyDeniedError
-	if errors.As(err, &deniedErr) {
+	if deniedErr, ok := errors.AsType[*app.PolicyDeniedError](err); ok {
 		fmt.Fprintf(stderr, "amc %s: %s\n", opName, deniedErr.Error())
 		return ExitDenied
 	}

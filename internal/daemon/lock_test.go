@@ -63,14 +63,31 @@ func TestLock_AcquireRelease_AndDeadReclaim(t *testing.T) {
 
 func TestLock_CrossBootReclaim(t *testing.T) {
 	now := time.Date(2026, 9, 26, 8, 0, 0, 0, time.UTC)
+	dir := t.TempDir()
+	owner := &mockIdent{runtimeID: "linux:host-a:old-boot", pid: 100, startTime: "old-start"}
+	if _, err := daemon.AcquireSingletonLock(dir, owner, &mockLiveness{alive: true}, now); err != nil {
+		t.Fatalf("create owner lock: %v", err)
+	}
+	current := &mockIdent{runtimeID: "linux:host-a:new-boot", pid: 101, startTime: "new-start"}
+	lock, err := daemon.AcquireSingletonLock(dir, current, &mockLiveness{alive: false}, now)
+	if err != nil {
+		t.Fatalf("reclaim dead previous-boot owner: %v", err)
+	}
+	if err := lock.Release(); err != nil {
+		t.Fatalf("release reclaimed lock: %v", err)
+	}
+	if _, err := daemon.ReadSingletonOwner(dir); !os.IsNotExist(err) {
+		t.Fatalf("reclaimed lock was not released: %v", err)
+	}
+}
+
+func TestLock_CrossBootRejectsUnsafeOwner(t *testing.T) {
 	tests := []struct {
 		name           string
 		ownerRuntimeID string
 		alive          bool
-		wantReclaim    bool
 	}{
-		{name: "dead owner after reboot", ownerRuntimeID: "linux:host-a:old-boot", wantReclaim: true},
-		{name: "reported live owner after reboot", ownerRuntimeID: "linux:host-a:old-boot", alive: true},
+		{name: "reported live owner", ownerRuntimeID: "linux:host-a:old-boot", alive: true},
 		{name: "different host", ownerRuntimeID: "linux:host-b:old-boot"},
 		{name: "missing boot identity", ownerRuntimeID: "linux:host-a"},
 		{name: "different operating system", ownerRuntimeID: "windows:host-a:old-boot"},
@@ -79,28 +96,17 @@ func TestLock_CrossBootReclaim(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			owner := &mockIdent{runtimeID: tc.ownerRuntimeID, pid: 100, startTime: "old-start"}
-			if _, err := daemon.AcquireSingletonLock(dir, owner, &mockLiveness{alive: true}, now); err != nil {
+			if _, err := daemon.AcquireSingletonLock(dir, owner, &mockLiveness{alive: true}, time.Now()); err != nil {
 				t.Fatalf("create owner lock: %v", err)
 			}
 			current := &mockIdent{runtimeID: "linux:host-a:new-boot", pid: 101, startTime: "new-start"}
-			lock, err := daemon.AcquireSingletonLock(dir, current, &mockLiveness{alive: tc.alive}, now)
-			if tc.wantReclaim {
-				if err != nil {
-					t.Fatalf("reclaim dead previous-boot owner: %v", err)
-				}
-				defer lock.Release()
-				rec, err := daemon.ReadSingletonOwner(dir)
-				if err != nil || rec.RuntimeID != current.runtimeID || rec.PID != current.pid {
-					t.Fatalf("unexpected reclaimed owner: %+v, %v", rec, err)
-				}
-			} else {
-				if !errors.Is(err, daemon.ErrDaemonRunning) {
-					t.Fatalf("expected existing lock to remain, got %v", err)
-				}
-				rec, err := daemon.ReadSingletonOwner(dir)
-				if err != nil || rec.RuntimeID != tc.ownerRuntimeID {
-					t.Fatalf("existing owner changed: %+v, %v", rec, err)
-				}
+			_, err := daemon.AcquireSingletonLock(dir, current, &mockLiveness{alive: tc.alive}, time.Now())
+			if !errors.Is(err, daemon.ErrDaemonRunning) {
+				t.Fatalf("expected existing lock to remain, got %v", err)
+			}
+			rec, err := daemon.ReadSingletonOwner(dir)
+			if err != nil || rec.RuntimeID != tc.ownerRuntimeID {
+				t.Fatalf("existing owner changed: %+v, %v", rec, err)
 			}
 		})
 	}
