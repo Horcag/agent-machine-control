@@ -19,7 +19,7 @@ Research date: 2026-08-29. Counts are snapshots, not permanent claims.
 
 ## Adopted baseline
 
-- Go 1.25 minimum with current Go tested in CI.
+- Go 1.26 minimum with current Go tested in CI.
 - Cross-platform test/build jobs and Linux race tests.
 - `gofmt`, `go vet`, golangci-lint v2, and CodeQL.
 - Read-only workflow permissions by default; elevated permissions only in release/security jobs.

@@ -116,6 +116,10 @@ The bootstrap requires WSL interop, Windows PowerShell, and the ScheduledTasks m
 or non-WSL hosts fail before creating bootstrap state. A real S4U task canary remains an explicit
 operator acceptance step on a disposable, rollback-protected Windows host.
 
+The daemon state directory belongs to one local WSL runtime at a time. Do not share it across
+hosts or distributions: singleton liveness checks use local process state, and a matching hostname
+alone does not establish cross-host identity.
+
 Bootstrap mutation is an explicit local `amcd` operator CLI boundary. It is not exposed through MCP,
 agent tokens, or the remote daemon API and does not create a second remote policy engine.
 
