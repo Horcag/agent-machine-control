@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/lease"
@@ -121,7 +122,7 @@ func tryReclaimLock(ownerPath, lockDir, daemonDir, runtimeID string, checker lea
 		return ErrDaemonRunning
 	}
 
-	if ownerRec.RuntimeID != runtimeID {
+	if ownerRec.RuntimeID != runtimeID && !sameLinuxHostDifferentBoot(ownerRec.RuntimeID, runtimeID) {
 		return ErrDaemonRunning
 	}
 
@@ -140,6 +141,21 @@ func tryReclaimLock(ownerPath, lockDir, daemonDir, runtimeID string, checker lea
 		return fmt.Errorf("daemon: failed to sync daemon dir after stale lock reclaim: %w", err)
 	}
 	return nil
+}
+
+func sameLinuxHostDifferentBoot(ownerRuntimeID, currentRuntimeID string) bool {
+	ownerHost, ownerBoot, ownerOK := linuxRuntimeParts(ownerRuntimeID)
+	currentHost, currentBoot, currentOK := linuxRuntimeParts(currentRuntimeID)
+	return ownerOK && currentOK && ownerHost == currentHost && ownerBoot != currentBoot
+}
+
+func linuxRuntimeParts(runtimeID string) (host, boot string, ok bool) {
+	remaining, ok := strings.CutPrefix(runtimeID, "linux:")
+	if !ok {
+		return "", "", false
+	}
+	host, boot, ok = strings.Cut(remaining, ":")
+	return host, boot, ok && host != "" && boot != ""
 }
 
 func readOwnerRecord(ownerPath string) (*lease.LockOwnerRecord, error) {

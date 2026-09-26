@@ -61,6 +61,51 @@ func TestLock_AcquireRelease_AndDeadReclaim(t *testing.T) {
 	_ = lock1.Release()
 }
 
+func TestLock_CrossBootReclaim(t *testing.T) {
+	now := time.Date(2026, 9, 26, 8, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name           string
+		ownerRuntimeID string
+		alive          bool
+		wantReclaim    bool
+	}{
+		{name: "dead owner after reboot", ownerRuntimeID: "linux:host-a:old-boot", wantReclaim: true},
+		{name: "reported live owner after reboot", ownerRuntimeID: "linux:host-a:old-boot", alive: true},
+		{name: "different host", ownerRuntimeID: "linux:host-b:old-boot"},
+		{name: "missing boot identity", ownerRuntimeID: "linux:host-a"},
+		{name: "different operating system", ownerRuntimeID: "windows:host-a:old-boot"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			owner := &mockIdent{runtimeID: tc.ownerRuntimeID, pid: 100, startTime: "old-start"}
+			if _, err := daemon.AcquireSingletonLock(dir, owner, &mockLiveness{alive: true}, now); err != nil {
+				t.Fatalf("create owner lock: %v", err)
+			}
+			current := &mockIdent{runtimeID: "linux:host-a:new-boot", pid: 101, startTime: "new-start"}
+			lock, err := daemon.AcquireSingletonLock(dir, current, &mockLiveness{alive: tc.alive}, now)
+			if tc.wantReclaim {
+				if err != nil {
+					t.Fatalf("reclaim dead previous-boot owner: %v", err)
+				}
+				defer lock.Release()
+				rec, err := daemon.ReadSingletonOwner(dir)
+				if err != nil || rec.RuntimeID != current.runtimeID || rec.PID != current.pid {
+					t.Fatalf("unexpected reclaimed owner: %+v, %v", rec, err)
+				}
+			} else {
+				if !errors.Is(err, daemon.ErrDaemonRunning) {
+					t.Fatalf("expected existing lock to remain, got %v", err)
+				}
+				rec, err := daemon.ReadSingletonOwner(dir)
+				if err != nil || rec.RuntimeID != tc.ownerRuntimeID {
+					t.Fatalf("existing owner changed: %+v, %v", rec, err)
+				}
+			}
+		})
+	}
+}
+
 func TestEndpoint_WriteReadRemove(t *testing.T) {
 	dir := t.TempDir()
 	rec := daemon.EndpointRecord{
