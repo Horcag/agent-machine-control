@@ -2,8 +2,10 @@ package mcpadapter
 
 import (
 	"errors"
+	"net/http"
 	"strings"
 
+	"github.com/Horcag/agent-machine-control/internal/client"
 	"github.com/Horcag/agent-machine-control/internal/target"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -12,7 +14,7 @@ func mcpToolError(err error) *mcp.CallToolResult {
 	if err == nil {
 		return mcpToolErrorText("unknown error")
 	}
-	if cleanMsg := protectedTargetToolError(err); cleanMsg != "" {
+	if cleanMsg := protectedToolError(err); cleanMsg != "" {
 		return mcpToolErrorText(cleanMsg)
 	}
 
@@ -42,7 +44,10 @@ func mcpToolError(err error) *mcp.CallToolResult {
 	return mcpToolErrorText(cleanMsg)
 }
 
-func protectedTargetToolError(err error) string {
+func protectedToolError(err error) string {
+	if isApprovalRequired(err) {
+		return "approval_required: operator approval required for this operation"
+	}
 	switch {
 	case errors.Is(err, target.ErrNoDefault), errors.Is(err, target.ErrDifferentTarget):
 		return "target is not enrolled"
@@ -51,6 +56,11 @@ func protectedTargetToolError(err error) string {
 	default:
 		return ""
 	}
+}
+
+func isApprovalRequired(err error) bool {
+	var apiErr *client.APIError
+	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusForbidden && apiErr.Category == "approval_required"
 }
 
 func mcpToolErrorText(message string) *mcp.CallToolResult {

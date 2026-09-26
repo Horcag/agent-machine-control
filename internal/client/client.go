@@ -145,7 +145,7 @@ func mapHTTPError(resp *http.Response) error {
 	case http.StatusBadRequest:
 		return fmt.Errorf("%w: %s", ErrInvalidArgument, msg)
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return fmt.Errorf("%w: %s", ErrDenied, msg)
+		return fmt.Errorf("%w: %w", ErrDenied, apiErr)
 	case http.StatusNotFound:
 		return fmt.Errorf("%w: %s", ErrNotFound, msg)
 	case http.StatusConflict:
