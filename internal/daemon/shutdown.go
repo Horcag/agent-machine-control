@@ -59,7 +59,7 @@ func (s *Server) shutdownHTTPServer(ctx context.Context) error {
 	if s.shutdownHTTP == nil {
 		return nil
 	}
-	if err := s.shutdownHTTP(ctx); err != nil {
+	if err := s.shutdownHTTP(ctx); err != nil && !errors.Is(err, net.ErrClosed) {
 		return errors.Join(fmt.Errorf("daemon: http server shutdown failed: %w", err), s.forceCloseHTTPServer())
 	}
 	return nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -319,6 +320,19 @@ func TestServerShutdownHTTPFailureStillRemovesOwnershipAndRepeatedShutdownIsSafe
 	server.closeHTTP = nil
 	if err := server.Shutdown(context.Background()); err != nil {
 		t.Fatalf("repeated Shutdown failed: %v", err)
+	}
+}
+
+func TestServerShutdownHTTPAlreadyClosedListenerIsSuccess(t *testing.T) {
+	server := &Server{
+		shutdownHTTP: func(context.Context) error { return net.ErrClosed },
+		closeHTTP: func() error {
+			t.Fatal("forced close must not run for a closed listener")
+			return nil
+		},
+	}
+	if err := server.shutdownHTTPServer(context.Background()); err != nil {
+		t.Fatalf("shutdown with closed listener: %v", err)
 	}
 }
 
