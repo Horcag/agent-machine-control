@@ -15,8 +15,11 @@ installed on the target machine.
 
 ## Decision
 
-Use Go 1.25 as the minimum version for the control plane, CLI, daemon, MCP adapter, and backend
+Use Go 1.26 as the minimum version for the control plane, CLI, daemon, MCP adapter, and backend
 interfaces. Track the current supported Go release in CI as an additional test target.
+
+The minimum was raised from Go 1.25 on 2026-09-26 because the SSH security dependency
+`golang.org/x/crypto` v0.56.0 requires Go 1.26.
 
 Use the official `modelcontextprotocol/go-sdk` when MCP implementation begins. Start on its latest
 stable release, not a pre-release. Use the standard library for CLI parsing and configuration

@@ -74,8 +74,7 @@ func assertIncompleteOpenFailure(t *testing.T, obs *domain.SessionObservation, r
 	if obs != nil {
 		t.Fatalf("first open observation = %+v, want nil", obs)
 	}
-	var openFailure *sessions.OpenFailure
-	if !errors.As(err, &openFailure) {
+	if _, ok := errors.AsType[*sessions.OpenFailure](err); !ok {
 		t.Fatalf("first open error = %v, want typed open failure", err)
 	}
 	if rcpt == nil {

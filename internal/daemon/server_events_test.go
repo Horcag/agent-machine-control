@@ -185,10 +185,11 @@ func TestServer_GlobalEvents_ShutdownAndHub(t *testing.T) {
 	defer opResp.Body.Close()
 
 	// Trigger shutdown while SSE stream is open
+	shutdownDone := make(chan error, 1)
 	go func() {
 		time.Sleep(30 * time.Millisecond)
 		srv.TriggerShutdown()
-		_ = srv.Shutdown(context.Background())
+		shutdownDone <- srv.Shutdown(context.Background())
 	}()
 
 	reader := bufio.NewReader(opResp.Body)
@@ -199,4 +200,7 @@ func TestServer_GlobalEvents_ShutdownAndHub(t *testing.T) {
 		}
 	}
 	srv.Wait()
+	if err := <-shutdownDone; err != nil {
+		t.Fatalf("shutdown failed: %v", err)
+	}
 }

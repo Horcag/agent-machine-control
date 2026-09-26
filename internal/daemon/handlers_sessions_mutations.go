@@ -332,8 +332,7 @@ func mapSessionClientError(w http.ResponseWriter, err error) bool {
 }
 
 func (s *Server) mapSessionError(w http.ResponseWriter, err error) {
-	var deniedErr *app.PolicyDeniedError
-	if errors.As(err, &deniedErr) {
+	if deniedErr, ok := errors.AsType[*app.PolicyDeniedError](err); ok {
 		writeError(w, http.StatusForbidden, string(deniedErr.Reason), deniedErr.Message)
 		return
 	}

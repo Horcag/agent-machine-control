@@ -237,8 +237,7 @@ func TestSessionService_PolicyDenialReceipt(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error on open without permission")
 	}
-	var deniedErr *app.PolicyDeniedError
-	if !errors.As(err, &deniedErr) {
+	if _, ok := errors.AsType[*app.PolicyDeniedError](err); !ok {
 		t.Fatalf("expected PolicyDeniedError, got: %v", err)
 	}
 	if rcpt == nil || rcpt.Outcome.Status != domain.OutcomeDenied {

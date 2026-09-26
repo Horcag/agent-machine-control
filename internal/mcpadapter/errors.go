@@ -16,9 +16,8 @@ func mcpToolError(err error) *mcp.CallToolResult {
 		return mcpToolErrorText(cleanMsg)
 	}
 
-	var inputErr *InputError
 	var cleanMsg string
-	if errors.As(err, &inputErr) {
+	if inputErr, ok := errors.AsType[*InputError](err); ok {
 		cleanMsg = inputErr.Error()
 	} else {
 		msg := err.Error()

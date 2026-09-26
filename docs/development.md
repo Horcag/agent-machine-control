@@ -2,7 +2,7 @@
 
 ## Toolchain
 
-- Go 1.25 or newer.
+- Go 1.26 or newer.
 - `golangci-lint` v2.13.2 for the full lint target. Keep the local and CI versions aligned.
 - ShellCheck for the small repository shell-tooling surface.
 - GoReleaser v2 for packaging checks.

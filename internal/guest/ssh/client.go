@@ -451,14 +451,12 @@ func (c *sshChannel) Wait() (int, error) {
 			c.waitErr = nil
 			return
 		}
-		var exitErr *gossh.ExitError
-		if errors.As(err, &exitErr) {
+		if exitErr, ok := errors.AsType[*gossh.ExitError](err); ok {
 			c.exitCode = exitErr.ExitStatus()
 			c.waitErr = nil
 			return
 		}
-		var exitMissingErr *gossh.ExitMissingError
-		if errors.As(err, &exitMissingErr) {
+		if _, ok := errors.AsType[*gossh.ExitMissingError](err); ok {
 			c.exitCode = 0
 			c.waitErr = nil
 			return

@@ -145,7 +145,7 @@ The repository does not claim live Windows acceptance for these capabilities.
 
 ## Build the bootstrap
 
-Go 1.25 or newer is required.
+Go 1.26 or newer is required.
 
 ```sh
 go test ./...

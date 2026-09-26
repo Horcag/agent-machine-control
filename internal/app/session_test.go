@@ -349,8 +349,7 @@ func TestSessionService_DestructiveRequiresApproval(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected denial error on destructive operation without approval")
 	}
-	var deniedErr *app.PolicyDeniedError
-	if !errors.As(err, &deniedErr) {
+	if _, ok := errors.AsType[*app.PolicyDeniedError](err); !ok {
 		t.Errorf("expected PolicyDeniedError, got: %v", err)
 	}
 

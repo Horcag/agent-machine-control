@@ -197,8 +197,7 @@ func TestRecoveryService_StartMachine_WithoutRollback_ReclassifiesToDestructive_
 		t.Fatalf("expected policy denial for unapproved destructive start without rollback")
 	}
 
-	var deniedErr *app.PolicyDeniedError
-	if !errors.As(err, &deniedErr) {
+	if _, ok := errors.AsType[*app.PolicyDeniedError](err); !ok {
 		t.Fatalf("expected PolicyDeniedError, got %v", err)
 	}
 }

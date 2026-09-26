@@ -123,8 +123,7 @@ func (s *RecoveryService) executeMutation(
 	// 3. Rollback discovery & 4. Policy evaluation & 5. Approval check
 	decision, rollbackRef, err := s.prepareAndAuthorizeMutation(ctx, op, req, providerTargetID, now)
 	if err != nil {
-		var deniedErr *PolicyDeniedError
-		if errors.As(err, &deniedErr) {
+		if _, ok := errors.AsType[*PolicyDeniedError](err); ok {
 			finalizationCtx, cancel := boundedMutationFinalizationContext(ctx)
 			defer cancel()
 			receiptRecord, persistErr := s.persistOutcome(finalizationCtx, op, fp, decision, now, now, err, rollbackRef, req.ApprovalID)

@@ -127,8 +127,7 @@ func TestRecoveryService_Rollback_MalformedCandidate_FailsClosed(t *testing.T) {
 				t.Fatalf("expected policy denial for unapproved start when checkpoint candidate is malformed/mismatched")
 			}
 
-			var deniedErr *app.PolicyDeniedError
-			if !errors.As(err, &deniedErr) {
+			if _, ok := errors.AsType[*app.PolicyDeniedError](err); !ok {
 				t.Fatalf("expected PolicyDeniedError, got %v", err)
 			}
 		})

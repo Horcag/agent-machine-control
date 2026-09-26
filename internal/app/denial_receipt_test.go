@@ -224,8 +224,7 @@ func TestDenialAuditFailure(t *testing.T) {
 	if !syncCalled {
 		t.Fatalf("expected sync error to be triggered")
 	}
-	var deniedErr *app.PolicyDeniedError
-	if !errors.As(err, &deniedErr) {
+	if _, ok := errors.AsType[*app.PolicyDeniedError](err); !ok {
 		t.Fatalf("expected PolicyDeniedError joined with audit error, got %v", err)
 	}
 }

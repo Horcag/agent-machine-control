@@ -16,7 +16,7 @@ Use synthetic names and redact evidence before posting it.
 
 Requirements:
 
-- Go 1.25 or newer;
+- Go 1.26 or newer;
 - Git;
 - `golangci-lint` v2.13.2 for the full local lint target;
 - ShellCheck for repository shell tooling;

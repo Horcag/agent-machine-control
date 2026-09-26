@@ -210,8 +210,7 @@ func (m *Manager) dispatchBackend(ctx context.Context, op domain.Operation, req 
 }
 
 func sanitizeExecError(err error) (string, string) {
-	var deniedErr *app.PolicyDeniedError
-	if errors.As(err, &deniedErr) {
+	if deniedErr, ok := errors.AsType[*app.PolicyDeniedError](err); ok {
 		return string(deniedErr.Reason), deniedErr.Message
 	}
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, domain.ErrMissingDeadline) {

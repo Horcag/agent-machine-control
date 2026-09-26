@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/lease"
@@ -38,6 +39,12 @@ func AcquireSingletonLock(
 	checker lease.LivenessChecker,
 	now time.Time,
 ) (*SingletonLock, error) {
+	guard, err := lockSingletonGuard(filepath.Join(daemonDir, "singleton.guard"))
+	if err != nil {
+		return nil, fmt.Errorf("daemon: failed to lock singleton guard: %w", err)
+	}
+	defer guard.Close()
+
 	lockDir := filepath.Join(daemonDir, "singleton.lock")
 	ownerPath := filepath.Join(lockDir, "owner.json")
 
@@ -121,7 +128,7 @@ func tryReclaimLock(ownerPath, lockDir, daemonDir, runtimeID string, checker lea
 		return ErrDaemonRunning
 	}
 
-	if ownerRec.RuntimeID != runtimeID {
+	if ownerRec.RuntimeID != runtimeID && !sameLinuxHostDifferentBoot(ownerRec.RuntimeID, runtimeID) {
 		return ErrDaemonRunning
 	}
 
@@ -140,6 +147,39 @@ func tryReclaimLock(ownerPath, lockDir, daemonDir, runtimeID string, checker lea
 		return fmt.Errorf("daemon: failed to sync daemon dir after stale lock reclaim: %w", err)
 	}
 	return nil
+}
+
+func sameLinuxHostDifferentBoot(ownerRuntimeID, currentRuntimeID string) bool {
+	ownerHost, ownerBoot, ownerOK := linuxRuntimeParts(ownerRuntimeID)
+	currentHost, currentBoot, currentOK := linuxRuntimeParts(currentRuntimeID)
+	return ownerOK && currentOK && ownerHost == currentHost && ownerBoot != currentBoot
+}
+
+func linuxRuntimeParts(runtimeID string) (host, boot string, ok bool) {
+	remaining, ok := strings.CutPrefix(runtimeID, "linux:")
+	if !ok {
+		return "", "", false
+	}
+	host, boot, ok = strings.Cut(remaining, ":")
+	return host, boot, ok && host != "" && host != "unknown-host" && validLinuxBootID(boot)
+}
+
+func validLinuxBootID(boot string) bool {
+	if len(boot) != 36 {
+		return false
+	}
+	for i, char := range boot {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if char != '-' {
+				return false
+			}
+			continue
+		}
+		if ('0' > char || char > '9') && ('a' > char || char > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func readOwnerRecord(ownerPath string) (*lease.LockOwnerRecord, error) {
@@ -187,6 +227,12 @@ func ReadSingletonOwner(daemonDir string) (*lease.LockOwnerRecord, error) {
 
 // Release releases the singleton lock if still owned by this process identity.
 func (l *SingletonLock) Release() error {
+	guard, err := lockSingletonGuard(filepath.Join(filepath.Dir(l.lockDir), "singleton.guard"))
+	if err != nil {
+		return fmt.Errorf("daemon: failed to lock singleton guard during release: %w", err)
+	}
+	defer guard.Close()
+
 	ownerRec, err := readOwnerRecord(l.ownerPath)
 	if err != nil {
 		if os.IsNotExist(err) {
