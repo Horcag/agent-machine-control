@@ -27,7 +27,7 @@ func (d *LocalDaemon) Healthy(ctx context.Context, stateDir string) (bool, error
 	if err != nil {
 		return false, err
 	}
-	record, present, err := readOwnedEndpoint(sd.DaemonDir())
+	record, present, err := d.readOwnedEndpoint(sd.DaemonDir())
 	if err != nil {
 		return false, err
 	}
@@ -185,7 +185,7 @@ func daemonRelease(state app.BootstrapDaemonReleaseState) app.BootstrapDaemonRel
 	return app.BootstrapDaemonReleaseObservation{State: state}
 }
 
-func readOwnedEndpoint(daemonDir string) (daemon.EndpointRecord, bool, error) {
+func (d *LocalDaemon) readOwnedEndpoint(daemonDir string) (daemon.EndpointRecord, bool, error) {
 	record, err := daemon.ReadEndpointFile(daemonDir)
 	if err == nil {
 		return *record, true, nil
@@ -193,9 +193,12 @@ func readOwnedEndpoint(daemonDir string) (daemon.EndpointRecord, bool, error) {
 	if !os.IsNotExist(err) {
 		return daemon.EndpointRecord{}, false, app.ErrBootstrapDrift
 	}
-	if _, lockErr := os.Lstat(filepath.Join(daemonDir, "singleton.lock")); !os.IsNotExist(lockErr) {
+	observation, err := d.observeSingletonRelease(daemonDir)
+	if err != nil || (observation.State != app.BootstrapDaemonReleased && observation.State != app.BootstrapDaemonShutdownPending) {
 		return daemon.EndpointRecord{}, false, app.ErrBootstrapDrift
 	}
+	// A live exact singleton owner may still be initializing before endpoint publication.
+	// It is unavailable, never healthy, until the endpoint and HTTP identity agree.
 	return daemon.EndpointRecord{}, false, nil
 }
 
