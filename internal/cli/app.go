@@ -161,13 +161,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return ExitBackendUnavailable
 	}
 	refreshTarget := func(ctx context.Context) error {
-		_, refreshErr := app.RefreshTrustedInventory(ctx, inventory, func(host app.HostEntry) app.TrustedHostObserver {
-			if host.ID != domain.LocalHostID {
-				return nil
-			}
-			return adapter
-		}, 1)
-		return refreshErr
+		return app.RefreshLocalTrustedInventory(ctx, inventory, adapter)
 	}
 	targetService, err := app.NewTargetService(inventory, targetStore, app.WithTargetRefresh(refreshTarget))
 	if err != nil {

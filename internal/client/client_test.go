@@ -335,6 +335,26 @@ func TestClient_HTTPErrorMapping(t *testing.T) {
 	}
 }
 
+func TestClient_HTTPPolicyCategoryPreserved(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(daemon.ErrorEnvelope{Error: daemon.ErrorField{
+			Category: "approval_required", Message: "destructive/privileged operation requires active operator approval",
+		}})
+	}))
+	defer srv.Close()
+
+	cl := client.New(srv.URL, "test-token", client.WithHTTPClient(srv.Client()))
+	_, err := cl.GetOperation(context.Background(), "op-00000000000000000000000000000403")
+	if !errors.Is(err, client.ErrDenied) {
+		t.Fatalf("expected denied error, got %v", err)
+	}
+	var apiErr *client.APIError
+	if !errors.As(err, &apiErr) || apiErr.Category != "approval_required" || apiErr.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected structured approval_required HTTP error, got %v", err)
+	}
+}
+
 func TestClient_Health(t *testing.T) {
 	srv, stateDir := setupDaemon(t)
 	defer func() { _ = srv.Shutdown(context.Background()) }()

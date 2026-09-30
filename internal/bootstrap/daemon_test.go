@@ -32,6 +32,10 @@ func TestLocalDaemonVerifiesAndStopsOwnedEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewServer() error = %v", err)
 	}
+	healthy, err = controller.Healthy(context.Background(), stateDir)
+	if err != nil || healthy {
+		t.Fatalf("Healthy() while exact singleton owns startup = %v, %v; want unavailable without drift", healthy, err)
+	}
 	if err := server.Start(); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}

@@ -25,7 +25,7 @@ The adapter automatically reads `agent-mcp.token` from the state directory to au
 
 For local client environments where stdio subprocess execution is not ideal, you can launch the adapter in streamable HTTP mode by specifying the `--listen` flag.
 
-The adapter utilizes the Model Context Protocol Go SDK version v1.7.0. It negotiates the following protocol versions:
+The adapter utilizes the Model Context Protocol Go SDK version v1.8.0. It negotiates the following protocol versions:
 
 - `2026-07-28` (using `server/discover` RPC stateless probe)
 - `2025-11-25`

@@ -8,7 +8,6 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/app"
 	"github.com/Horcag/agent-machine-control/internal/approval"
 	"github.com/Horcag/agent-machine-control/internal/audit"
-	"github.com/Horcag/agent-machine-control/internal/domain"
 	"github.com/Horcag/agent-machine-control/internal/receipt"
 	"github.com/Horcag/agent-machine-control/internal/statedir"
 	"github.com/Horcag/agent-machine-control/internal/target"
@@ -31,13 +30,7 @@ func initializeTargetSubsystem(
 		return nil, nil, fmt.Errorf("daemon: failed to initialize target authority: %w", err)
 	}
 	refreshTarget := func(ctx context.Context) error {
-		_, refreshErr := app.RefreshTrustedInventory(ctx, inventory, func(host app.HostEntry) app.TrustedHostObserver {
-			if host.ID != domain.LocalHostID {
-				return nil
-			}
-			return backend
-		}, 1)
-		return refreshErr
+		return app.RefreshLocalTrustedInventory(ctx, inventory, backend)
 	}
 	targetService, err := app.NewTargetService(inventory, targetStore, app.WithTargetRefresh(refreshTarget))
 	if err != nil {

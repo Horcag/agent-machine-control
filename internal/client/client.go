@@ -46,7 +46,7 @@ func New(endpoint, token string, opts ...Option) *Client {
 	cl := &Client{
 		endpoint:   strings.TrimRight(endpoint, "/"),
 		token:      strings.TrimSpace(token),
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: &http.Client{Timeout: 90 * time.Second},
 	}
 	for _, opt := range opts {
 		opt(cl)
@@ -145,7 +145,7 @@ func mapHTTPError(resp *http.Response) error {
 	case http.StatusBadRequest:
 		return fmt.Errorf("%w: %s", ErrInvalidArgument, msg)
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return fmt.Errorf("%w: %s", ErrDenied, msg)
+		return fmt.Errorf("%w: %w", ErrDenied, apiErr)
 	case http.StatusNotFound:
 		return fmt.Errorf("%w: %s", ErrNotFound, msg)
 	case http.StatusConflict:

@@ -162,6 +162,9 @@ func (a *Adapter) SessionWrite(ctx context.Context, _ *mcp.CallToolRequest, in S
 
 	resp, err := cl.WriteSessionWithApprovalReference(ctx, in.SessionID, in.Data, in.Reason, in.IdempotencyKey, timeout, in.ApprovalID, deadline)
 	if err != nil {
+		if isApprovalRequired(err) {
+			return mcpToolErrorText("approval_required: session.write requires operator approval"), SessionWriteResult{}, nil
+		}
 		return mcpToolError(err), SessionWriteResult{}, nil
 	}
 
