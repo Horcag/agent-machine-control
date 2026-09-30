@@ -46,7 +46,7 @@ func New(endpoint, token string, opts ...Option) *Client {
 	cl := &Client{
 		endpoint:   strings.TrimRight(endpoint, "/"),
 		token:      strings.TrimSpace(token),
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: &http.Client{Timeout: 90 * time.Second},
 	}
 	for _, opt := range opts {
 		opt(cl)

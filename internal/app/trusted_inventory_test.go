@@ -16,8 +16,8 @@ func host(id, address string, enabled bool) app.HostEntry {
 	return app.HostEntry{ID: domain.HostID(id), Address: address, Enabled: enabled, QueryTimeout: time.Second}
 }
 
-func localHost(enabled bool) app.HostEntry {
-	return app.HostEntry{ID: domain.LocalHostID, Address: "local", Enabled: enabled, QueryTimeout: time.Second}
+func disabledLocalHost() app.HostEntry {
+	return app.HostEntry{ID: domain.LocalHostID, Address: "local", Enabled: false, QueryTimeout: time.Second}
 }
 
 func observed(hostID domain.HostID, id, name string, at time.Time) domain.MachineObservation {
@@ -83,7 +83,7 @@ func TestTrustedInventoryInjectsLocalHostAndPreservesExplicitDisable(t *testing.
 	}
 
 	disabled, err := app.NewTrustedInventory([]app.HostEntry{
-		localHost(false),
+		disabledLocalHost(),
 		host("host-a", "alpha.example", true),
 	})
 	if err != nil {
@@ -387,7 +387,7 @@ func TestTrustedInventoryMultipleInactiveMatchesAreAmbiguous(t *testing.T) {
 func TestRefreshTrustedInventoryDeterministicOrderConcurrencyCancellationAndPartialFailure(t *testing.T) {
 	now := time.Date(2026, 8, 30, 10, 0, 0, 0, time.UTC)
 	inv, err := app.NewTrustedInventory([]app.HostEntry{
-		localHost(false),
+		disabledLocalHost(),
 		host("host-a", "alpha.example", true),
 		host("host-b", "bravo.example", true),
 		host("host-c", "charlie.example", true),
@@ -486,7 +486,7 @@ func trackAppActive(active, maxActive *atomic.Int32) {
 }
 
 func TestRefreshTrustedInventoryNilObserverFailsClosed(t *testing.T) {
-	inv, err := app.NewTrustedInventory([]app.HostEntry{localHost(false), host("host-a", "alpha.example", true)})
+	inv, err := app.NewTrustedInventory([]app.HostEntry{disabledLocalHost(), host("host-a", "alpha.example", true)})
 	if err != nil {
 		t.Fatalf("NewTrustedInventory failed: %v", err)
 	}

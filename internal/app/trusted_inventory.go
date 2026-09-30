@@ -11,7 +11,10 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/domain"
 )
 
-const defaultHostQueryTimeout = 15 * time.Second
+const (
+	defaultHostQueryTimeout      = 15 * time.Second
+	defaultLocalHostQueryTimeout = 60 * time.Second
+)
 
 const localHostAddress = "local"
 
@@ -65,6 +68,9 @@ func (h HostEntry) Validate() error {
 func (h HostEntry) effectiveQueryTimeout() time.Duration {
 	if h.QueryTimeout > 0 {
 		return h.QueryTimeout
+	}
+	if h.ID == domain.LocalHostID {
+		return defaultLocalHostQueryTimeout
 	}
 	return defaultHostQueryTimeout
 }

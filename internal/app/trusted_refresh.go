@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/Horcag/agent-machine-control/internal/domain"
@@ -35,6 +36,35 @@ func RefreshTrustedInventory(ctx context.Context, inv *TrustedInventory, factory
 	}
 	ordered := refreshEnabledHosts(ctx, enabled, factory, concurrency)
 	return applyRefreshResults(ctx, inv, snapshots, ordered)
+}
+
+// RefreshLocalTrustedInventory refreshes the local route and reports its readiness.
+// Remote host failures remain independent of this local target operation.
+func RefreshLocalTrustedInventory(ctx context.Context, inv *TrustedInventory, observer TrustedHostObserver) error {
+	if inv == nil {
+		return errors.New("app: no trusted inventory configured")
+	}
+	for _, host := range inv.Hosts() {
+		if host.ID != domain.LocalHostID {
+			continue
+		}
+		if !host.Enabled {
+			return domain.ErrMachineHostDisabled
+		}
+		snapshot := refreshOneHost(ctx, host, func(HostEntry) TrustedHostObserver { return observer })
+		if err := inv.ApplySnapshot(snapshot); err != nil {
+			return err
+		}
+		switch snapshot.Health {
+		case HostHealthObserved:
+			return nil
+		case HostHealthAccessDenied:
+			return fmt.Errorf("%w: local inventory refresh: %w", domain.ErrMachineAccessDenied, snapshot.Err)
+		default:
+			return fmt.Errorf("%w: local inventory refresh: %w", domain.ErrMachineHostUnavailable, snapshot.Err)
+		}
+	}
+	return domain.ErrMachineHostUnavailable
 }
 
 func validateRefreshInputs(inv *TrustedInventory, factory HostObserverFactory) error {
@@ -116,12 +146,19 @@ func fillUnavailableSnapshots(results chan<- refreshResult, hosts []HostEntry, s
 
 func refreshOneHost(ctx context.Context, host HostEntry, factory HostObserverFactory) HostSnapshot {
 	hostCtx, cancel := context.WithTimeout(ctx, host.effectiveQueryTimeout())
+	if err := hostCtx.Err(); err != nil {
+		cancel()
+		return HostSnapshot{HostID: host.ID, Health: HostHealthUnavailable, Err: err}
+	}
 	observer := factory(host)
 	if observer == nil {
 		cancel()
 		return HostSnapshot{HostID: host.ID, Health: HostHealthUnavailable, Err: errors.New("app: nil trusted host observer")}
 	}
 	machines, err := observer.ListMachines(hostCtx)
+	if err == nil {
+		err = hostCtx.Err()
+	}
 	health := classifyRefreshHealth(hostCtx, err)
 	cancel()
 	return HostSnapshot{
