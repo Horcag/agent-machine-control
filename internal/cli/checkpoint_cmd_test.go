@@ -143,6 +143,7 @@ func setupTestApp(t *testing.T, backend *mockBackend, prompter cli.Prompter) *cl
 
 	return cli.NewApp(
 		discoverySvc,
+		cli.WithStateDir(dir),
 		cli.WithRecoveryService(recoverySvc),
 		cli.WithActor(actorCtx),
 		cli.WithPrompter(prompter),
