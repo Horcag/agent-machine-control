@@ -19,8 +19,9 @@ const (
 	// MaxStderrBytes bounds captured stderr from PowerShell processes (64 KB).
 	MaxStderrBytes = 64 * 1024
 
-	// DefaultCommandTimeout defines the fallback deadline when context has none.
-	DefaultCommandTimeout = 15 * time.Second
+	// DefaultCommandTimeout allows cold Hyper-V/WSL queries while keeping an explicit bound.
+	// A caller deadline always takes precedence.
+	DefaultCommandTimeout = 60 * time.Second
 )
 
 // Executor defines the low-level process execution interface used by the Hyper-V adapter.
@@ -49,6 +50,9 @@ func (e *DefaultExecutor) Execute(ctx context.Context, name string, args []strin
 	}
 
 	cmd := exec.CommandContext(execCtx, name, args...)
+	// Descendants can retain output pipes after the command exits or is killed.
+	// Bound the drain as well as the process lifetime.
+	cmd.WaitDelay = time.Second
 	if len(env) > 0 {
 		cmd.Env = commandEnvironment(os.Environ(), env, e.runningUnderWSL())
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 
 	"github.com/Horcag/agent-machine-control/internal/domain"
 	"github.com/Horcag/agent-machine-control/internal/target"
@@ -16,7 +15,7 @@ type TargetRefresh func(context.Context) error
 // TargetOption configures TargetService dependencies.
 type TargetOption func(*TargetService)
 
-// WithTargetRefresh injects the fresh inventory boundary used before every public target interaction.
+// WithTargetRefresh injects the fresh inventory boundary used for discovery and target planning.
 func WithTargetRefresh(refresh TargetRefresh) TargetOption {
 	return func(service *TargetService) {
 		service.refresh = refresh
@@ -45,11 +44,12 @@ func (r TargetResolution) Validate() error {
 	return nil
 }
 
-// TargetService owns durable default enrollment and inventory-backed resolution.
+// TargetService owns durable default enrollment and fresh enrolled-target resolution.
 type TargetService struct {
 	inventory *TrustedInventory
 	store     *target.Store
 	refresh   TargetRefresh
+	observer  MachineObserver
 }
 
 // ListLocalCandidates returns fresh eligible local targets without changing authority state.
@@ -189,45 +189,6 @@ func (s *TargetService) EnrollDefaultTarget(
 	}
 	publication, err := s.CommitTargetPlan(ctx, plan)
 	return plan.Resolution, publication, err
-}
-
-// ResolveTarget resolves default, stored alias, or an exact inventory reference to the enrolled identity.
-func (s *TargetService) ResolveTarget(ctx context.Context, reference string) (TargetResolution, error) {
-	value, err := s.store.Load(ctx)
-	if err != nil {
-		return TargetResolution{}, err
-	}
-	if err := s.refreshInventory(ctx); err != nil {
-		return TargetResolution{}, err
-	}
-
-	locator := value.Locator
-	if !isStoredTargetReference(reference, value) {
-		if err := s.validateExplicitTargetReference(reference, locator); err != nil {
-			return TargetResolution{}, err
-		}
-	}
-	return s.resolveCanonical(ctx, locator)
-}
-
-func isStoredTargetReference(reference string, value target.Default) bool {
-	return reference == "" || reference == "default" || slices.Contains(value.Aliases, reference)
-}
-
-func (s *TargetService) validateExplicitTargetReference(reference string, locator domain.MachineLocator) error {
-	if _, err := domain.ParseMachineLocator(reference); err != nil {
-		if _, err := domain.NormalizeMachineGUID(reference); err != nil {
-			return target.ErrDifferentTarget
-		}
-	}
-	entry, err := s.inventory.ResolveMachine(reference)
-	if err != nil {
-		return err
-	}
-	if entry.Locator != locator {
-		return target.ErrDifferentTarget
-	}
-	return nil
 }
 
 // ShowDefaultTarget returns the stored default only after inventory proves it remains routeable.

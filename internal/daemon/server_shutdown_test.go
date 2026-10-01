@@ -35,7 +35,7 @@ func (b *blockedFakeBackend) ListMachines(_ context.Context) ([]domain.MachineOb
 }
 
 func (b *blockedFakeBackend) InspectMachine(_ context.Context, id string) (domain.MachineObservation, error) {
-	return domain.MachineObservation{ID: id, State: domain.MachineStateOff}, nil
+	return daemonTestObservation(id), nil
 }
 
 func (b *blockedFakeBackend) Capabilities(_ context.Context, _ string) (domain.CapabilitySet, error) {

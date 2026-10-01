@@ -26,18 +26,23 @@ type exactRetryBackend struct{}
 func (exactRetryBackend) Doctor(context.Context) (app.DoctorReport, error) {
 	return app.DoctorReport{}, nil
 }
-func (exactRetryBackend) ListMachines(context.Context) ([]domain.MachineObservation, error) {
+func (exactRetryBackend) ListMachines(_ context.Context) ([]domain.MachineObservation, error) {
+	return []domain.MachineObservation{exactRetryObservation()}, nil
+}
+
+func exactRetryObservation() domain.MachineObservation {
 	locator, _ := domain.NewMachineLocator(domain.LocalHostID, exactRetryVMID)
-	return []domain.MachineObservation{{
+	return domain.MachineObservation{
 		HostID: domain.LocalHostID, Locator: locator, ID: exactRetryVMID, Name: "synthetic-exact-retry-vm",
 		State: domain.MachineStateRunning, RawState: "Running", Generation: 2, Version: "10.0",
 		MemoryAssignedBytes: 1024, Capabilities: domain.DirectMachineCapabilities(),
 		ObservedAt: time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC), ObservationType: domain.ObservationObserved,
-	}}, nil
+	}
 }
-func (exactRetryBackend) InspectMachine(context.Context, string) (domain.MachineObservation, error) {
-	return domain.MachineObservation{}, nil
+func (exactRetryBackend) InspectMachine(_ context.Context, _ string) (domain.MachineObservation, error) {
+	return exactRetryObservation(), nil
 }
+
 func (exactRetryBackend) Capabilities(context.Context, string) (domain.CapabilitySet, error) {
 	return domain.NewCapabilitySet(domain.CapabilityMachineStart), nil
 }

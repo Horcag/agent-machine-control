@@ -59,7 +59,7 @@ func (a *Adapter) executeScript(ctx context.Context, script string, env []string
 		return nil, ErrOutputExceededLimit
 	}
 	if ctx.Err() != nil || errors.Is(runErr, ErrCommandTimeout) {
-		return nil, fmt.Errorf("%w: %w", ErrCommandTimeout, ctx.Err())
+		return nil, errors.Join(ErrCommandTimeout, runErr, ctx.Err())
 	}
 	if runErr != nil {
 		return nil, ErrHostUnavailable

@@ -232,7 +232,7 @@ func (a *Adapter) ListMachines(ctx context.Context) ([]domain.MachineObservation
 		return nil, ErrOutputExceededLimit
 	}
 	if ctx.Err() != nil || errors.Is(runErr, ErrCommandTimeout) {
-		return nil, fmt.Errorf("%w: %w", ErrCommandTimeout, ctx.Err())
+		return nil, errors.Join(ErrCommandTimeout, runErr, ctx.Err())
 	}
 	if runErr != nil {
 		return nil, ErrHostUnavailable
@@ -274,7 +274,7 @@ func (a *Adapter) InspectMachine(ctx context.Context, id string) (domain.Machine
 		return domain.MachineObservation{}, ErrOutputExceededLimit
 	}
 	if ctx.Err() != nil || errors.Is(runErr, ErrCommandTimeout) {
-		return domain.MachineObservation{}, fmt.Errorf("%w: %w", ErrCommandTimeout, ctx.Err())
+		return domain.MachineObservation{}, errors.Join(ErrCommandTimeout, runErr, ctx.Err())
 	}
 	if runErr != nil {
 		return domain.MachineObservation{}, ErrHostUnavailable

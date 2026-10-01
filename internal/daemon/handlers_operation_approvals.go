@@ -8,7 +8,6 @@ import (
 
 	"github.com/Horcag/agent-machine-control/internal/app"
 	"github.com/Horcag/agent-machine-control/internal/domain"
-	"github.com/Horcag/agent-machine-control/internal/target"
 )
 
 func (s *Server) handleIssueOperationApproval(w http.ResponseWriter, r *http.Request) {
@@ -83,8 +82,7 @@ func writeOperationApprovalIssueError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusForbidden, "forbidden", "operation approval issuance is forbidden")
 	case errors.Is(err, app.ErrOperationApprovalNotRequired):
 		writeError(w, http.StatusConflict, "approval_not_required", "exact current operation does not require approval")
-	case errors.Is(err, target.ErrNoDefault), errors.Is(err, target.ErrDifferentTarget), errors.Is(err, target.ErrInventoryRefresh),
-		errors.Is(err, domain.ErrMachineHostUnavailable), errors.Is(err, domain.ErrMachineAccessDenied):
+	case isTargetResolutionFailure(err):
 		writeTargetResolutionError(w, err)
 	default:
 		if denied, ok := errors.AsType[*app.PolicyDeniedError](err); ok {

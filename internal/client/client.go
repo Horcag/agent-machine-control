@@ -46,7 +46,7 @@ func New(endpoint, token string, opts ...Option) *Client {
 	cl := &Client{
 		endpoint:   strings.TrimRight(endpoint, "/"),
 		token:      strings.TrimSpace(token),
-		httpClient: &http.Client{Timeout: 90 * time.Second},
+		httpClient: &http.Client{},
 	}
 	for _, opt := range opts {
 		opt(cl)
@@ -80,6 +80,18 @@ func (c *Client) Endpoint() string {
 }
 
 func (c *Client) doRequest(ctx context.Context, method, path string, body any, out any) error {
+	// Use the caller's operation deadline end-to-end. Only requests without a
+	// deadline receive the default bound; a custom HTTP client can shorten it.
+	if _, bounded := ctx.Deadline(); !bounded {
+		timeout := 90 * time.Second
+		if c.httpClient.Timeout > 0 {
+			timeout = c.httpClient.Timeout
+		}
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
 	var bodyReader io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -105,6 +117,9 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, o
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) {
 			return ctx.Err()
 		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("%w: %w", ErrTimeout, context.DeadlineExceeded)
+		}
 		return fmt.Errorf("%w: %v", ErrDaemonUnavailable, err)
 	}
 	defer resp.Body.Close()
@@ -113,21 +128,34 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, o
 		return mapHTTPError(resp)
 	}
 
-	if out != nil {
-		dec := json.NewDecoder(io.LimitReader(resp.Body, 1<<20))
-		dec.DisallowUnknownFields()
-		if err := dec.Decode(out); err != nil {
-			return fmt.Errorf("%w: %v", ErrMalformedResponse, err)
-		}
-	}
+	return decodeHTTPResponse(ctx, resp.Body, out)
+}
 
+// decodeHTTPResponse owns strict response parsing and preserves body-read cancellation.
+func decodeHTTPResponse(ctx context.Context, body io.Reader, out any) error {
+	if out == nil {
+		return nil
+	}
+	dec := json.NewDecoder(io.LimitReader(body, 1<<20))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(out); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("%w: %w", ErrTimeout, context.DeadlineExceeded)
+		}
+		return fmt.Errorf("%w: %v", ErrMalformedResponse, err)
+	}
 	return nil
 }
 
 func mapHTTPError(resp *http.Response) error {
 	var env daemon.ErrorEnvelope
 	dec := json.NewDecoder(io.LimitReader(resp.Body, 64*1024))
-	_ = dec.Decode(&env)
+	if err := dec.Decode(&env); errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return err
+	}
 
 	msg := env.Error.Message
 	if msg == "" {
@@ -143,18 +171,20 @@ func mapHTTPError(resp *http.Response) error {
 
 	switch resp.StatusCode {
 	case http.StatusBadRequest:
-		return fmt.Errorf("%w: %s", ErrInvalidArgument, msg)
+		return fmt.Errorf("%w: %w", ErrInvalidArgument, apiErr)
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return fmt.Errorf("%w: %w", ErrDenied, apiErr)
 	case http.StatusNotFound:
-		return fmt.Errorf("%w: %s", ErrNotFound, msg)
+		return fmt.Errorf("%w: %w", ErrNotFound, apiErr)
 	case http.StatusConflict:
-		return fmt.Errorf("%w: %s", ErrConflict, msg)
-	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
-		return fmt.Errorf("%w: %s", ErrDaemonUnavailable, msg)
+		return fmt.Errorf("%w: %w", ErrConflict, apiErr)
+	case http.StatusGatewayTimeout:
+		return fmt.Errorf("%w: %w", ErrTimeout, apiErr)
+	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable:
+		return fmt.Errorf("%w: %w", ErrDaemonUnavailable, apiErr)
 	default:
 		if resp.StatusCode >= 500 {
-			return fmt.Errorf("%w: %s", ErrMalformedResponse, msg)
+			return fmt.Errorf("%w: %w", ErrMalformedResponse, apiErr)
 		}
 		return apiErr
 	}

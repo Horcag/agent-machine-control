@@ -39,8 +39,8 @@ func TestSessionTargetResolutionErrorsMapToSanitizedFailClosedResponses(t *testi
 		{name: "reference miss", err: domain.ErrMachineReferenceMiss, status: http.StatusConflict, category: "target_mismatch"},
 		{name: "stale", err: domain.ErrMachineReferenceStale, status: http.StatusConflict, category: "target_mismatch"},
 		{name: "inventory unavailable", err: target.ErrInventoryRefresh, status: http.StatusServiceUnavailable, category: "target_unavailable"},
-		{name: "host unavailable", err: domain.ErrMachineHostUnavailable, status: http.StatusServiceUnavailable, category: "target_unavailable"},
-		{name: "access denied", err: domain.ErrMachineAccessDenied, status: http.StatusServiceUnavailable, category: "target_unavailable"},
+		{name: "host unavailable", err: domain.ErrMachineHostUnavailable, status: http.StatusServiceUnavailable, category: "host_unavailable"},
+		{name: "access denied", err: domain.ErrMachineAccessDenied, status: http.StatusForbidden, category: "access_denied"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

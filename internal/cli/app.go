@@ -163,7 +163,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	refreshTarget := func(ctx context.Context) error {
 		return app.RefreshLocalTrustedInventory(ctx, inventory, adapter)
 	}
-	targetService, err := app.NewTargetService(inventory, targetStore, app.WithTargetRefresh(refreshTarget))
+	targetService, err := app.NewTargetService(inventory, targetStore, app.WithTargetRefresh(refreshTarget), app.WithTargetObserver(adapter))
 	if err != nil {
 		fmt.Fprintf(stderr, "amc: failed to initialize target service: %v\n", err)
 		return ExitBackendUnavailable

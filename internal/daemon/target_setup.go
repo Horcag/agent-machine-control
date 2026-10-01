@@ -32,7 +32,7 @@ func initializeTargetSubsystem(
 	refreshTarget := func(ctx context.Context) error {
 		return app.RefreshLocalTrustedInventory(ctx, inventory, backend)
 	}
-	targetService, err := app.NewTargetService(inventory, targetStore, app.WithTargetRefresh(refreshTarget))
+	targetService, err := app.NewTargetService(inventory, targetStore, app.WithTargetRefresh(refreshTarget), app.WithTargetObserver(backend))
 	if err != nil {
 		return nil, nil, fmt.Errorf("daemon: failed to initialize target service: %w", err)
 	}

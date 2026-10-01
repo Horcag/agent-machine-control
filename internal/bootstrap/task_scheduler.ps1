@@ -113,6 +113,21 @@ function Assert-ExactOwned($Spec) {
     return $observation
 }
 
+function Set-OwnedTaskLifecycleAcl($Spec) {
+    $ownerSid = ([Security.Principal.SecurityIdentifier]::new([string] $Spec.user_sid)).Value
+    $sddl = "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;$ownerSid)"
+    $service = New-Object -ComObject 'Schedule.Service'
+    $service.Connect()
+    $folder = $service.GetFolder($Spec.task_path.TrimEnd([char] '\'))
+    $task = $folder.GetTask($Spec.task_name)
+    # TASK_DONT_ADD_PRINCIPAL_ACE: preserve the explicit private DACL exactly.
+    $task.SetSecurityDescriptor($sddl, 16)
+    # DACL_SECURITY_INFORMATION: read back only the lifecycle access boundary.
+    if (-not (Test-OwnedTaskLifecycleAcl ($task.GetSecurityDescriptor(4)) $ownerSid)) {
+        throw 'Scheduled task lifecycle ACL verification failed'
+    }
+}
+
 function Install-OwnedTask($Spec) {
     $before = Get-OwnedObservation $Spec
     if ($before.state -ne 'absent') {
@@ -127,6 +142,7 @@ function Install-OwnedTask($Spec) {
     }
 
     $registered = $false
+    $registrationAttempted = $false
     try {
         [IO.File]::WriteAllBytes($Spec.wrapper_path, (Read-EncodedBytes 'AMC_BOOTSTRAP_WRAPPER_B64'))
         [IO.File]::WriteAllBytes($Spec.metadata_path, (Read-EncodedBytes 'AMC_BOOTSTRAP_METADATA_B64'))
@@ -145,6 +161,7 @@ function Install-OwnedTask($Spec) {
         $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew `
             -RestartCount $Spec.restart_count -RestartInterval ([Xml.XmlConvert]::ToTimeSpan($Spec.restart_interval)) `
             -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+        $registrationAttempted = $true
         Register-ScheduledTask -TaskPath $Spec.task_path -TaskName $Spec.task_name -Action $action `
             -Principal $principal -Trigger $trigger -Settings $settings | Out-Null
         $registered = $true
@@ -152,10 +169,34 @@ function Install-OwnedTask($Spec) {
         if (-not $after.exact) {
             throw 'Scheduled task read-back verification failed'
         }
+        Set-OwnedTaskLifecycleAcl $Spec
     }
     catch {
-        if ($registered) {
-            Unregister-ScheduledTask -TaskPath $Spec.task_path -TaskName $Spec.task_name -Confirm:$false -ErrorAction SilentlyContinue
+        if ($registrationAttempted) {
+            try {
+                # A failed registration may have persisted, or another creator may
+                # have won the task name. Only a successful registration is ours to remove.
+                if ($registered) {
+                    Unregister-ScheduledTask -TaskPath $Spec.task_path -TaskName $Spec.task_name -Confirm:$false -ErrorAction Stop
+                }
+                $service = New-Object -ComObject 'Schedule.Service'
+                $service.Connect()
+                try {
+                    $folder = $service.GetFolder($Spec.task_path.TrimEnd([char] '\'))
+                    $null = $folder.GetTask($Spec.task_name)
+                    throw 'Scheduled task absence could not be verified'
+                }
+                catch {
+                    # HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND) proves exact task absence.
+                    if ($_.Exception.GetBaseException().HResult -ne -2147024894) { throw }
+                }
+            }
+            catch {
+                if ($registered) {
+                    throw 'Scheduled task rollback failed; private bootstrap artifacts retained for recovery'
+                }
+                throw 'Scheduled task registration outcome is uncertain; private bootstrap artifacts retained for recovery'
+            }
         }
         Remove-Item -LiteralPath $Spec.wrapper_path -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $Spec.metadata_path -Force -ErrorAction SilentlyContinue
