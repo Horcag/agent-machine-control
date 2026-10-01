@@ -8,6 +8,15 @@ begin.
 
 ## [Unreleased]
 
+### Fixed
+
+- Resolve and observe the enrolled target with one fresh exact provider query, without
+  depending on unrelated machines or repeating fleet discovery.
+- Preserve explicit HTTP operation deadlines and typed failure categories across transports.
+- Bound inherited subprocess output pipes after cancellation and retain executor timeout causes.
+- Probe machine and network-adapter queries in Hyper-V readiness checks.
+- Return sanitized MCP failure categories and validated operation/receipt references for recovery.
+
 ### Added
 
 - Initial open-source project structure.

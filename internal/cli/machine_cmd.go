@@ -71,12 +71,8 @@ func runMachineList(ctx context.Context, service *app.DiscoveryService, targetSv
 	if targetSvc == nil {
 		machines, err = service.List(ctx)
 	} else {
-		resolution, resolveErr := targetSvc.ShowDefaultTarget(ctx)
-		if resolveErr != nil {
-			return mapCLIError(resolveErr, stderr, "machine list")
-		}
-		observed, inspectErr := service.Inspect(ctx, resolution.ProviderVMID)
-		machines, err = []domain.MachineObservation{observed}, inspectErr
+		_, observed, observeErr := targetSvc.ObserveTarget(ctx, "default")
+		machines, err = []domain.MachineObservation{observed}, observeErr
 	}
 	if err != nil {
 		return mapCLIError(err, stderr, "machine list")
@@ -144,14 +140,9 @@ func runMachineInspect(ctx context.Context, service *app.DiscoveryService, targe
 		}
 	}
 
-	targetID, exitCode := resolveMachineInspectTarget(ctx, targetSvc, positional, stderr)
+	m, exitCode := observeMachineInspectTarget(ctx, service, targetSvc, positional, stderr)
 	if exitCode != ExitSuccess {
 		return exitCode
-	}
-
-	m, err := service.Inspect(ctx, targetID)
-	if err != nil {
-		return mapCLIError(err, stderr, "machine inspect")
 	}
 
 	if jsonOutput {
@@ -171,10 +162,10 @@ func runMachineInspect(ctx context.Context, service *app.DiscoveryService, targe
 	return ExitSuccess
 }
 
-func resolveMachineInspectTarget(ctx context.Context, targetSvc *app.TargetService, positional []string, stderr io.Writer) (string, int) {
+func observeMachineInspectTarget(ctx context.Context, service *app.DiscoveryService, targetSvc *app.TargetService, positional []string, stderr io.Writer) (domain.MachineObservation, int) {
 	if len(positional) > 1 {
 		fmt.Fprintf(stderr, "amc machine inspect: unexpected argument %q\n", positional[1])
-		return "", ExitUsage
+		return domain.MachineObservation{}, ExitUsage
 	}
 	reference := ""
 	if len(positional) == 1 {
@@ -183,19 +174,23 @@ func resolveMachineInspectTarget(ctx context.Context, targetSvc *app.TargetServi
 	if targetSvc == nil {
 		if reference == "" {
 			fmt.Fprintln(stderr, "amc machine inspect: missing required machine GUID")
-			return "", ExitUsage
+			return domain.MachineObservation{}, ExitUsage
 		}
 		if domain.ValidateMachineGUID(reference) != nil {
 			fmt.Fprintf(stderr, "amc machine inspect: invalid machine GUID %q\n", reference)
-			return "", ExitUsage
+			return domain.MachineObservation{}, ExitUsage
 		}
-		return reference, ExitSuccess
+		observed, err := service.Inspect(ctx, reference)
+		if err != nil {
+			return domain.MachineObservation{}, mapCLIError(err, stderr, "machine inspect")
+		}
+		return observed, ExitSuccess
 	}
-	resolution, err := targetSvc.ResolveTarget(ctx, reference)
+	_, observed, err := targetSvc.ObserveTarget(ctx, reference)
 	if err != nil {
-		return "", mapCLIError(err, stderr, "machine inspect")
+		return domain.MachineObservation{}, mapCLIError(err, stderr, "machine inspect")
 	}
-	return resolution.ProviderVMID, ExitSuccess
+	return observed, ExitSuccess
 }
 
 func printHumanInspect(w io.Writer, m domain.MachineObservation) {

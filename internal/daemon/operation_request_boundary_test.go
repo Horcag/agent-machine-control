@@ -52,8 +52,8 @@ func TestCreateOperationRequiredFieldsFailBeforeTargetResolution(t *testing.T) {
 
 	backend.mu.Lock()
 	defer backend.mu.Unlock()
-	if backend.lists != 0 || len(backend.starts) != 0 {
-		t.Fatalf("rejected fields crossed target/backend boundary: lists=%d starts=%v", backend.lists, backend.starts)
+	if backend.lists != 0 || len(backend.inspects) != 0 || len(backend.starts) != 0 {
+		t.Fatalf("rejected fields crossed target/backend boundary: lists=%d inspects=%v starts=%v", backend.lists, backend.inspects, backend.starts)
 	}
 	assertNoOperationRecords(t, stateDir)
 }
@@ -68,6 +68,7 @@ func TestCreateOperationExplicitDefaultResolvesTarget(t *testing.T) {
 	}
 	backend.mu.Lock()
 	backend.lists = 0
+	backend.inspects = nil
 	backend.mu.Unlock()
 
 	payload, err := json.Marshal(map[string]any{
@@ -83,8 +84,8 @@ func TestCreateOperationExplicitDefaultResolvesTarget(t *testing.T) {
 	}
 	backend.mu.Lock()
 	defer backend.mu.Unlock()
-	if backend.lists == 0 {
-		t.Fatal("explicit default did not resolve the enrolled target")
+	if backend.lists != 0 || len(backend.inspects) == 0 || backend.inspects[0] != daemonTestVMID {
+		t.Fatalf("default resolution queries: fleet=%d exact=%v", backend.lists, backend.inspects)
 	}
 }
 
@@ -111,6 +112,7 @@ func TestApprovalBoundOperationDeadlineSpellingFailsBeforeAuthorityResolution(t 
 	}
 	backend.mu.Lock()
 	backend.lists = 0
+	backend.inspects = nil
 	backend.mu.Unlock()
 
 	variants := map[string]string{
@@ -137,8 +139,8 @@ func TestApprovalBoundOperationDeadlineSpellingFailsBeforeAuthorityResolution(t 
 
 	backend.mu.Lock()
 	defer backend.mu.Unlock()
-	if backend.lists != 0 || len(backend.stops) != 0 {
-		t.Fatalf("non-canonical deadline crossed target/backend boundary: lists=%d stops=%v", backend.lists, backend.stops)
+	if backend.lists != 0 || len(backend.inspects) != 0 || len(backend.stops) != 0 {
+		t.Fatalf("non-canonical deadline crossed target/backend boundary: lists=%d inspects=%v stops=%v", backend.lists, backend.inspects, backend.stops)
 	}
 	assertNoOperationRecords(t, stateDir)
 	if _, err := os.Stat(filepath.Join(stateDir, "approvals", grant.ApprovalID+".json")); !os.IsNotExist(err) {

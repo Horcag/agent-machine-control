@@ -31,8 +31,8 @@ func (c *countingBackend) ListMachines(_ context.Context) ([]domain.MachineObser
 	return []domain.MachineObservation{daemonTestObservation(daemonTestVMID)}, nil
 }
 
-func (c *countingBackend) InspectMachine(_ context.Context, _ string) (domain.MachineObservation, error) {
-	return domain.MachineObservation{}, nil
+func (c *countingBackend) InspectMachine(_ context.Context, id string) (domain.MachineObservation, error) {
+	return daemonTestObservation(id), nil
 }
 
 func (c *countingBackend) Capabilities(_ context.Context, _ string) (domain.CapabilitySet, error) {

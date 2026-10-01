@@ -29,17 +29,21 @@ func (m *mockBackend) Doctor(_ context.Context) (app.DoctorReport, error) {
 }
 
 func (m *mockBackend) ListMachines(_ context.Context) ([]domain.MachineObservation, error) {
+	return []domain.MachineObservation{clientTestObservation()}, nil
+}
+
+func clientTestObservation() domain.MachineObservation {
 	locator, _ := domain.NewMachineLocator(domain.LocalHostID, clientTestVMID)
-	return []domain.MachineObservation{{
+	return domain.MachineObservation{
 		HostID: domain.LocalHostID, Locator: locator, ID: clientTestVMID, Name: "client-test-vm",
 		State: domain.MachineStateOff, RawState: "Off", Generation: 2, Version: "10.0",
 		MemoryAssignedBytes: 1024, Capabilities: domain.DirectMachineCapabilities(),
 		ObservedAt: time.Date(2026, 8, 31, 4, 0, 0, 0, time.UTC), ObservationType: domain.ObservationObserved,
-	}}, nil
+	}
 }
 
 func (m *mockBackend) InspectMachine(_ context.Context, _ string) (domain.MachineObservation, error) {
-	return domain.MachineObservation{}, nil
+	return clientTestObservation(), nil
 }
 
 func (m *mockBackend) Capabilities(_ context.Context, _ string) (domain.CapabilitySet, error) {

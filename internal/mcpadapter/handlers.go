@@ -73,19 +73,19 @@ func (a *Adapter) MachineStart(ctx context.Context, _ *mcp.CallToolRequest, in M
 
 	finalDTO, err := cl.WaitOperation(ctx, opDTO.OperationID, timeout, 0)
 	if err != nil {
-		return mcpToolError(err), MachineMutationResult{}, nil
+		return operationToolError(err, opDTO.OperationID, ""), MachineMutationResult{}, nil
 	}
 
 	if finalDTO.State != "completed" {
-		return mcpToolError(fmt.Errorf("operation failed: %s (category: %s)", finalDTO.ErrorMessage, finalDTO.ErrorCategory)), MachineMutationResult{}, nil
+		return operationToolError(&operationFailure{category: finalDTO.ErrorCategory}, opDTO.OperationID, finalDTO.ReceiptID), MachineMutationResult{}, nil
 	}
 
 	if finalDTO.ReceiptID == "" {
-		return mcpToolError(errors.New("operation completed but no receipt ID was returned")), MachineMutationResult{}, nil
+		return operationToolError(errors.New("operation completed but no receipt ID was returned"), opDTO.OperationID, ""), MachineMutationResult{}, nil
 	}
 	rcpt, err := cl.GetReceipt(ctx, finalDTO.ReceiptID)
 	if err != nil {
-		return mcpToolError(fmt.Errorf("failed to retrieve operation receipt: %w", err)), MachineMutationResult{}, nil
+		return operationToolError(fmt.Errorf("failed to retrieve operation receipt: %w", err), opDTO.OperationID, finalDTO.ReceiptID), MachineMutationResult{}, nil
 	}
 
 	obsDTO := MachineDTO{
@@ -95,7 +95,7 @@ func (a *Adapter) MachineStart(ctx context.Context, _ *mcp.CallToolRequest, in M
 	}
 	obsDTO, err = a.observeTargetMachine(ctx, in.ID, obsDTO)
 	if err != nil {
-		return mcpToolError(err), MachineMutationResult{}, nil
+		return operationToolError(err, opDTO.OperationID, finalDTO.ReceiptID), MachineMutationResult{}, nil
 	}
 
 	return nil, MachineMutationResult{
@@ -142,19 +142,19 @@ func (a *Adapter) MachineStop(ctx context.Context, _ *mcp.CallToolRequest, in Ma
 
 	finalDTO, err := cl.WaitOperation(ctx, opDTO.OperationID, timeout, 0)
 	if err != nil {
-		return mcpToolError(err), MachineMutationResult{}, nil
+		return operationToolError(err, opDTO.OperationID, ""), MachineMutationResult{}, nil
 	}
 
 	if finalDTO.State != "completed" {
-		return mcpToolError(fmt.Errorf("operation failed: %s (category: %s)", finalDTO.ErrorMessage, finalDTO.ErrorCategory)), MachineMutationResult{}, nil
+		return operationToolError(&operationFailure{category: finalDTO.ErrorCategory}, opDTO.OperationID, finalDTO.ReceiptID), MachineMutationResult{}, nil
 	}
 
 	if finalDTO.ReceiptID == "" {
-		return mcpToolError(errors.New("operation completed but no receipt ID was returned")), MachineMutationResult{}, nil
+		return operationToolError(errors.New("operation completed but no receipt ID was returned"), opDTO.OperationID, ""), MachineMutationResult{}, nil
 	}
 	rcpt, err := cl.GetReceipt(ctx, finalDTO.ReceiptID)
 	if err != nil {
-		return mcpToolError(fmt.Errorf("failed to retrieve operation receipt: %w", err)), MachineMutationResult{}, nil
+		return operationToolError(fmt.Errorf("failed to retrieve operation receipt: %w", err), opDTO.OperationID, finalDTO.ReceiptID), MachineMutationResult{}, nil
 	}
 
 	obsDTO := MachineDTO{
@@ -164,7 +164,7 @@ func (a *Adapter) MachineStop(ctx context.Context, _ *mcp.CallToolRequest, in Ma
 	}
 	obsDTO, err = a.observeTargetMachine(ctx, in.ID, obsDTO)
 	if err != nil {
-		return mcpToolError(err), MachineMutationResult{}, nil
+		return operationToolError(err, opDTO.OperationID, finalDTO.ReceiptID), MachineMutationResult{}, nil
 	}
 
 	return nil, MachineMutationResult{
@@ -210,24 +210,24 @@ func (a *Adapter) CheckpointCreate(ctx context.Context, _ *mcp.CallToolRequest, 
 
 	finalDTO, err := cl.WaitOperation(ctx, opDTO.OperationID, timeout, 0)
 	if err != nil {
-		return mcpToolError(err), CheckpointMutationResult{}, nil
+		return operationToolError(err, opDTO.OperationID, ""), CheckpointMutationResult{}, nil
 	}
 
 	if finalDTO.State != "completed" {
-		return mcpToolError(fmt.Errorf("operation failed: %s (category: %s)", finalDTO.ErrorMessage, finalDTO.ErrorCategory)), CheckpointMutationResult{}, nil
+		return operationToolError(&operationFailure{category: finalDTO.ErrorCategory}, opDTO.OperationID, finalDTO.ReceiptID), CheckpointMutationResult{}, nil
 	}
 
 	if finalDTO.ReceiptID == "" {
-		return mcpToolError(errors.New("operation completed but no receipt ID was returned")), CheckpointMutationResult{}, nil
+		return operationToolError(errors.New("operation completed but no receipt ID was returned"), opDTO.OperationID, ""), CheckpointMutationResult{}, nil
 	}
 	rcpt, err := cl.GetReceipt(ctx, finalDTO.ReceiptID)
 	if err != nil {
-		return mcpToolError(fmt.Errorf("failed to retrieve operation receipt: %w", err)), CheckpointMutationResult{}, nil
+		return operationToolError(fmt.Errorf("failed to retrieve operation receipt: %w", err), opDTO.OperationID, finalDTO.ReceiptID), CheckpointMutationResult{}, nil
 	}
 
 	snapDTO, err := a.observeTargetCheckpoint(ctx, in.ID, rcpt.RollbackRef, in.Name)
 	if err != nil {
-		return mcpToolError(err), CheckpointMutationResult{}, nil
+		return operationToolError(err, opDTO.OperationID, finalDTO.ReceiptID), CheckpointMutationResult{}, nil
 	}
 
 	return nil, CheckpointMutationResult{
@@ -274,19 +274,19 @@ func (a *Adapter) CheckpointRestore(ctx context.Context, _ *mcp.CallToolRequest,
 
 	finalDTO, err := cl.WaitOperation(ctx, opDTO.OperationID, timeout, 0)
 	if err != nil {
-		return mcpToolError(err), MachineMutationResult{}, nil
+		return operationToolError(err, opDTO.OperationID, ""), MachineMutationResult{}, nil
 	}
 
 	if finalDTO.State != "completed" {
-		return mcpToolError(fmt.Errorf("operation failed: %s (category: %s)", finalDTO.ErrorMessage, finalDTO.ErrorCategory)), MachineMutationResult{}, nil
+		return operationToolError(&operationFailure{category: finalDTO.ErrorCategory}, opDTO.OperationID, finalDTO.ReceiptID), MachineMutationResult{}, nil
 	}
 
 	if finalDTO.ReceiptID == "" {
-		return mcpToolError(errors.New("operation completed but no receipt ID was returned")), MachineMutationResult{}, nil
+		return operationToolError(errors.New("operation completed but no receipt ID was returned"), opDTO.OperationID, ""), MachineMutationResult{}, nil
 	}
 	rcpt, err := cl.GetReceipt(ctx, finalDTO.ReceiptID)
 	if err != nil {
-		return mcpToolError(fmt.Errorf("failed to retrieve operation receipt: %w", err)), MachineMutationResult{}, nil
+		return operationToolError(fmt.Errorf("failed to retrieve operation receipt: %w", err), opDTO.OperationID, finalDTO.ReceiptID), MachineMutationResult{}, nil
 	}
 
 	obsDTO := MachineDTO{
@@ -296,7 +296,7 @@ func (a *Adapter) CheckpointRestore(ctx context.Context, _ *mcp.CallToolRequest,
 	}
 	obsDTO, err = a.observeTargetMachine(ctx, in.ID, obsDTO)
 	if err != nil {
-		return mcpToolError(err), MachineMutationResult{}, nil
+		return operationToolError(err, opDTO.OperationID, finalDTO.ReceiptID), MachineMutationResult{}, nil
 	}
 
 	return nil, MachineMutationResult{

@@ -28,18 +28,23 @@ type retryShutdownBackend struct {
 func (b *retryShutdownBackend) Doctor(context.Context) (app.DoctorReport, error) {
 	return app.DoctorReport{}, nil
 }
-func (b *retryShutdownBackend) ListMachines(context.Context) ([]domain.MachineObservation, error) {
+func (b *retryShutdownBackend) ListMachines(_ context.Context) ([]domain.MachineObservation, error) {
+	return []domain.MachineObservation{retryShutdownObservation()}, nil
+}
+
+func retryShutdownObservation() domain.MachineObservation {
 	locator, _ := domain.NewMachineLocator(domain.LocalHostID, "c4a523d4-6b99-4d62-a5e2-4752c0f20001")
-	return []domain.MachineObservation{{
+	return domain.MachineObservation{
 		HostID: domain.LocalHostID, Locator: locator, ID: locator.VMID, Name: "shutdown-test-vm",
 		State: domain.MachineStateOff, RawState: "Off", Generation: 2, Version: "10.0",
 		MemoryAssignedBytes: 1024, Capabilities: domain.DirectMachineCapabilities(),
 		ObservedAt: time.Now().UTC(), ObservationType: domain.ObservationObserved,
-	}}, nil
+	}
 }
-func (b *retryShutdownBackend) InspectMachine(context.Context, string) (domain.MachineObservation, error) {
-	return domain.MachineObservation{}, nil
+func (b *retryShutdownBackend) InspectMachine(_ context.Context, _ string) (domain.MachineObservation, error) {
+	return retryShutdownObservation(), nil
 }
+
 func (b *retryShutdownBackend) Capabilities(context.Context, string) (domain.CapabilitySet, error) {
 	return domain.NewCapabilitySet(domain.CapabilityMachineStart), nil
 }

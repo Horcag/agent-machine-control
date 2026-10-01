@@ -41,6 +41,11 @@ try {
 ` + scriptAccessPreflightDoctor + `
 try {
     Get-VMHost -ErrorAction Stop | Out-Null
+    # Probe the query path used by machine observations, not only host settings.
+    $vms = @(Get-VM -ErrorAction Stop)
+    foreach ($vm in $vms) {
+        Get-VMNetworkAdapter -VM $vm -ErrorAction Stop | Out-Null
+    }
     @{
         schema_version = "1"
         ready = $true

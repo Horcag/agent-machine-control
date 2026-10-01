@@ -165,19 +165,18 @@ func TestMutation_TerminalDenial(t *testing.T) {
 	defer serverDenial.Close()
 
 	aDenial := &Adapter{client: client.New(serverDenial.URL, "token"), allowUnscopedTestTargetFallback: true}
-	resDenial, _, _ := aDenial.MachineStart(ctx, nil, MachineStartInput{
+	resDenial, _, err := aDenial.MachineStart(ctx, nil, MachineStartInput{
 		ID:             "c4a523d4-6b99-4d62-a5e2-4752c0f20001",
 		Reason:         "test",
 		IdempotencyKey: "key-denial",
 		Timeout:        "30s",
 	})
-	if resDenial == nil || !resDenial.IsError {
-		t.Error("expected tool error for terminal denial")
-	} else {
-		msg := resDenial.Content[0].(*mcp.TextContent).Text
-		if !strings.Contains(msg, "operation failed") || !strings.Contains(msg, "domain: denied by policy") {
-			t.Errorf("unexpected denial error message: %q", msg)
-		}
+	if err != nil || resDenial == nil || !resDenial.IsError || len(resDenial.Content) != 2 {
+		t.Fatalf("terminal denial result=%v error=%v", resDenial, err)
+	}
+	text, ok := resDenial.Content[0].(*mcp.TextContent)
+	if !ok || text.Text != "access_denied: operation denied by policy" {
+		t.Fatalf("daemon operation details were not sanitized: %v", resDenial.Content)
 	}
 }
 
@@ -238,7 +237,7 @@ func TestMutation_ReceiptFetchFailure(t *testing.T) {
 		t.Error("expected tool error for receipt fetch failure")
 	} else {
 		msg := resFetchErr.Content[0].(*mcp.TextContent).Text
-		if msg != "an internal daemon error occurred" {
+		if msg != "daemon_malformed_response: daemon returned an invalid response" {
 			t.Errorf("unexpected fetch error message: %q", msg)
 		}
 	}

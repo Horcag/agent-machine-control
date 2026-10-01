@@ -332,11 +332,11 @@ func TestSanitizedMCPToolError(t *testing.T) {
 		t.Errorf("expected generic error message, got %q", txt)
 	}
 
-	// Test category mapping: token -> authentication failed
+	// Arbitrary authentication-like text cannot select a public category.
 	resAuth := mcpToolError(errors.New("failed because token is bad"))
 	txtAuth := resAuth.Content[0].(*mcp.TextContent).Text
-	if txtAuth != "authentication failed" {
-		t.Errorf("expected 'authentication failed', got %q", txtAuth)
+	if txtAuth != "an internal daemon error occurred" {
+		t.Errorf("expected sanitized unknown error, got %q", txtAuth)
 	}
 }
 

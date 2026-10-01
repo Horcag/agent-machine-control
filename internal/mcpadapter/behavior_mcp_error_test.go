@@ -1,6 +1,7 @@
 package mcpadapter
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -8,7 +9,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Horcag/agent-machine-control/internal/app"
+	"github.com/Horcag/agent-machine-control/internal/backends/hyperv"
 	"github.com/Horcag/agent-machine-control/internal/client"
+	"github.com/Horcag/agent-machine-control/internal/domain"
+	"github.com/Horcag/agent-machine-control/internal/target"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -22,51 +27,6 @@ func TestMcpToolErrorAllPaths(t *testing.T) {
 			name:     "nil error",
 			err:      nil,
 			expected: "unknown error",
-		},
-		{
-			name:     "connection refused",
-			err:      errors.New("dial tcp 127.0.0.1:80: connection refused"),
-			expected: "service connection failed: daemon is unreachable",
-		},
-		{
-			name:     "dial tcp",
-			err:      errors.New("dial tcp error occurred"),
-			expected: "service connection failed: daemon is unreachable",
-		},
-		{
-			name:     "unauthorized",
-			err:      errors.New("unauthorized access"),
-			expected: "authentication failed",
-		},
-		{
-			name:     "token",
-			err:      errors.New("invalid token provided"),
-			expected: "authentication failed",
-		},
-		{
-			name:     "not found",
-			err:      errors.New("item not found in database"),
-			expected: "requested resource not found",
-		},
-		{
-			name:     "404 status",
-			err:      errors.New("received 404 status"),
-			expected: "requested resource not found",
-		},
-		{
-			name:     "timeout",
-			err:      errors.New("request timeout"),
-			expected: "operation timeout exceeded",
-		},
-		{
-			name:     "deadline exceeded",
-			err:      errors.New("context deadline exceeded"),
-			expected: "operation timeout exceeded",
-		},
-		{
-			name:     "domain error prefix",
-			err:      errors.New("domain: invalid operation parameter"),
-			expected: "domain: invalid operation parameter",
 		},
 		{
 			name:     "default fallback error",
@@ -86,12 +46,17 @@ func TestMcpToolErrorAllPaths(t *testing.T) {
 			err: fmt.Errorf("%w: %w", client.ErrDenied, &client.APIError{
 				StatusCode: http.StatusForbidden, Category: "forbidden", Message: "sensitive internal detail",
 			}),
+			expected: "access_denied: operation denied by policy",
+		},
+		{
+			name:     "domain prefix remains private",
+			err:      errors.New("domain: " + strings.Repeat("a", 250)),
 			expected: "an internal daemon error occurred",
 		},
 		{
-			name:     "domain error needing truncation",
-			err:      errors.New("domain: " + strings.Repeat("a", 250)),
-			expected: "domain: " + strings.Repeat("a", 189) + "...", // 197 chars of "domain: aaaa..." + 3 chars of "..." = 200
+			name:     "input error truncation",
+			err:      NewInputError(strings.Repeat("a", 250)),
+			expected: "invalid input: " + strings.Repeat("a", 182) + "...",
 		},
 		{
 			name:     "input error timeout",
@@ -125,6 +90,85 @@ func TestMcpToolErrorAllPaths(t *testing.T) {
 				t.Errorf("expected text length <= 200, got %d", len(txt.Text))
 			}
 		})
+	}
+}
+
+func TestMcpToolErrorTypedCategories(t *testing.T) {
+	tests := []struct {
+		err  error
+		want string
+	}{
+		{hyperv.ErrHostUnavailable, "backend_host_unavailable: backend management host is unavailable"},
+		{domain.ErrMachineHostUnavailable, "backend_host_unavailable: backend management host is unavailable"},
+		{hyperv.ErrModuleMissing, "backend_module_missing: Hyper-V PowerShell module is unavailable"},
+		{hyperv.ErrExecutableNotFound, "backend_unavailable: machine backend is unavailable"},
+		{hyperv.ErrBackendUnavailable, "backend_unavailable: machine backend is unavailable"},
+		{hyperv.ErrAccessDenied, "backend_access_denied: machine backend access denied"},
+		{domain.ErrMachineAccessDenied, "backend_access_denied: machine backend access denied"},
+		{hyperv.ErrMalformedResponse, "backend_malformed_response: machine backend returned an invalid response"},
+		{hyperv.ErrUnexpectedSchemaVersion, "backend_malformed_response: machine backend returned an invalid response"},
+		{hyperv.ErrTrailingData, "backend_malformed_response: machine backend returned an invalid response"},
+		{hyperv.ErrDuplicateMachineID, "backend_malformed_response: machine backend returned an invalid response"},
+		{hyperv.ErrOutputExceededLimit, "backend_output_limit: machine backend output exceeded its size limit"},
+		{hyperv.ErrCommandTimeout, "operation_timeout: operation timeout exceeded"},
+		{context.DeadlineExceeded, "operation_timeout: operation timeout exceeded"},
+		{client.ErrTimeout, "operation_timeout: operation timeout exceeded"},
+		{context.Canceled, "operation_canceled: operation was canceled"},
+		{client.ErrDaemonUnavailable, "service connection failed: daemon is unreachable"},
+		{client.ErrMalformedResponse, "daemon_malformed_response: daemon returned an invalid response"},
+		{client.ErrNotFound, "requested resource not found"},
+		{hyperv.ErrMachineNotFound, "requested resource not found"},
+		{client.ErrInvalidArgument, "invalid_argument: invalid operation input"},
+		{domain.ErrInvalidMachineID, "invalid_argument: invalid operation input"},
+		{client.ErrConflict, "operation_conflict: operation conflicts with current state"},
+		{client.ErrDenied, "access_denied: operation denied by policy"},
+		{&client.APIError{StatusCode: http.StatusUnauthorized, Message: "secret"}, "authentication failed"},
+		{&client.APIError{StatusCode: http.StatusInternalServerError, Category: "secret", Message: "secret"}, "an internal daemon error occurred"},
+		{errors.Join(target.ErrNoDefault, hyperv.ErrAccessDenied), "target is not enrolled"},
+		{errors.Join(errProtectedTargetUnavailable, hyperv.ErrHostUnavailable), "backend_host_unavailable: backend management host is unavailable"},
+		{errors.Join(context.Canceled, &client.APIError{StatusCode: http.StatusForbidden, Category: "approval_required"}), "approval_required: operator approval required for this operation"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.err.Error(), func(t *testing.T) {
+			result := mcpToolError(fmt.Errorf("secret-value /synthetic/private/key: %w", tt.err))
+			text := result.Content[0].(*mcp.TextContent).Text
+			if !result.IsError || text != tt.want {
+				t.Fatalf("tool error = %q, want %q", text, tt.want)
+			}
+		})
+	}
+}
+
+func TestMcpToolErrorArbitraryMessagesRemainPrivate(t *testing.T) {
+	for _, hint := range []string{"dial tcp", "connection refused", "token", "unauthorized", "not found", "404", "timeout", "deadline exceeded", "domain:"} {
+		result := mcpToolError(errors.New(hint + " secret-value /synthetic/private/key"))
+		if text := result.Content[0].(*mcp.TextContent).Text; text != "an internal daemon error occurred" {
+			t.Errorf("arbitrary message hint %q selected public text %q", hint, text)
+		}
+	}
+}
+
+func TestReadyDoctorThenBackendObservationFailure(t *testing.T) {
+	observer := getTestObserver()
+	observer.inspectErr = fmt.Errorf("synthetic credential=secret-value /synthetic/private/key: %w", hyperv.ErrHostUnavailable)
+	observer.listErr = observer.inspectErr
+	a := &Adapter{allowUnscopedTestTargetFallback: true, discoveryService: app.NewDiscoveryService(observer)}
+	result, doctor, err := a.Doctor(t.Context(), nil, DoctorInput{})
+	if result != nil || err != nil || !doctor.Ready {
+		t.Fatalf("doctor result=%v report=%+v error=%v", result, doctor, err)
+	}
+	inspect, _, err := a.MachineInspect(t.Context(), nil, MachineInspectInput{ID: "c4a523d4-6b99-4d62-a5e2-4752c0f20001"})
+	if err != nil || inspect == nil {
+		t.Fatalf("inspect result=%v error=%v", inspect, err)
+	}
+	list, _, err := a.MachineList(t.Context(), nil, MachineListInput{})
+	if err != nil || list == nil {
+		t.Fatalf("list result=%v error=%v", list, err)
+	}
+	for _, result := range []*mcp.CallToolResult{inspect, list} {
+		if text := result.Content[0].(*mcp.TextContent).Text; !result.IsError || text != "backend_host_unavailable: backend management host is unavailable" {
+			t.Fatalf("observation error = %q", text)
+		}
 	}
 }
 

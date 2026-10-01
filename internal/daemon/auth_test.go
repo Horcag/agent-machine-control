@@ -29,8 +29,8 @@ func (m *mockDaemonBackend) ListMachines(_ context.Context) ([]domain.MachineObs
 	return []domain.MachineObservation{daemonTestObservation(daemonTestVMID)}, nil
 }
 
-func (m *mockDaemonBackend) InspectMachine(_ context.Context, _ string) (domain.MachineObservation, error) {
-	return domain.MachineObservation{}, nil
+func (m *mockDaemonBackend) InspectMachine(_ context.Context, id string) (domain.MachineObservation, error) {
+	return daemonTestObservation(id), nil
 }
 
 func (m *mockDaemonBackend) Capabilities(_ context.Context, _ string) (domain.CapabilitySet, error) {

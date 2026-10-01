@@ -63,7 +63,7 @@ func (a *Adapter) getTargetService() (*app.TargetService, error) {
 			return backend
 		}, 1)
 		return refreshErr
-	}))
+	}), app.WithTargetObserver(backend))
 	if err != nil {
 		a.targetServiceErr = fmt.Errorf("%w: %w", errProtectedTargetUnavailable, err)
 		return nil, a.targetServiceErr
@@ -114,18 +114,14 @@ func (a *Adapter) resolveMutationTarget(ctx context.Context, targetID, reason, i
 }
 
 func (a *Adapter) observeTargetMachine(ctx context.Context, reference string, fallback MachineDTO) (MachineDTO, error) {
-	resolution, err := a.resolveTarget(ctx, reference)
+	observed, err := a.observeEnrolledTarget(ctx, reference)
 	if err != nil {
 		return MachineDTO{}, err
 	}
-	if resolution == nil {
+	if observed == nil {
 		return fallback, nil
 	}
-	observed, err := a.getDiscoveryService().Inspect(ctx, resolution.ProviderVMID)
-	if err != nil {
-		return MachineDTO{}, err
-	}
-	return convertToMachineDTO(observed), nil
+	return convertToMachineDTO(*observed), nil
 }
 
 func (a *Adapter) observeTargetCheckpoint(ctx context.Context, reference, checkpointID, fallbackName string) (CheckpointDTO, error) {
@@ -146,4 +142,23 @@ func (a *Adapter) observeTargetCheckpoint(ctx context.Context, reference, checkp
 		}
 	}
 	return CheckpointDTO{}, fmt.Errorf("observed checkpoint was not returned by provider")
+}
+
+// observeEnrolledTarget returns the same fresh observation used to authorize resolution.
+func (a *Adapter) observeEnrolledTarget(ctx context.Context, reference string) (*domain.MachineObservation, error) {
+	service, err := a.getTargetService()
+	if err != nil {
+		return nil, err
+	}
+	if service == nil {
+		if a.allowUnscopedTestTargetFallback {
+			return nil, nil
+		}
+		return nil, errProtectedTargetUnavailable
+	}
+	_, observed, err := service.ObserveTarget(ctx, reference)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errProtectedTargetUnavailable, err)
+	}
+	return &observed, nil
 }

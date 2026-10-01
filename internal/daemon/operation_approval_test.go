@@ -23,6 +23,7 @@ type approvalEffectsBackend struct {
 	mockDaemonBackend
 	mu       sync.Mutex
 	lists    int
+	inspects []string
 	starts   []string
 	stops    []string
 	creates  []string
@@ -34,6 +35,13 @@ func (b *approvalEffectsBackend) ListMachines(ctx context.Context) ([]domain.Mac
 	b.lists++
 	b.mu.Unlock()
 	return b.mockDaemonBackend.ListMachines(ctx)
+}
+
+func (b *approvalEffectsBackend) InspectMachine(ctx context.Context, id string) (domain.MachineObservation, error) {
+	b.mu.Lock()
+	b.inspects = append(b.inspects, id)
+	b.mu.Unlock()
+	return b.mockDaemonBackend.InspectMachine(ctx, id)
 }
 
 func (b *approvalEffectsBackend) Capabilities(context.Context, string) (domain.CapabilitySet, error) {

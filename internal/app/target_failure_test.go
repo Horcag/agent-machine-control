@@ -531,7 +531,7 @@ func TestTargetOperationValidationFailures(t *testing.T) {
 	if err := validateTargetPlan(invalidResolution); err == nil {
 		t.Fatal("plan with invalid resolution unexpectedly accepted")
 	}
-	if err := harness.coordinator.service.validateExplicitTargetReference(targetVMB, plan.Resolution.Locator); err == nil {
+	if err := validateTargetReference(targetVMB, target.Default{Locator: plan.Resolution.Locator}); err == nil {
 		t.Fatal("missing explicit target unexpectedly accepted")
 	}
 }

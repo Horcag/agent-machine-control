@@ -363,7 +363,7 @@ func mapSessionTargetError(w http.ResponseWriter, err error) bool {
 		writeTargetResolutionError(w, err)
 	case errors.Is(err, target.ErrDifferentTarget), errors.Is(err, domain.ErrMachineReferenceMiss), errors.Is(err, domain.ErrMachineReferenceStale):
 		writeError(w, http.StatusConflict, "target_mismatch", "target reference does not identify the enrolled target")
-	case errors.Is(err, target.ErrInventoryRefresh), errors.Is(err, domain.ErrMachineHostUnavailable), errors.Is(err, domain.ErrMachineAccessDenied):
+	case isTargetResolutionFailure(err):
 		writeTargetResolutionError(w, err)
 	default:
 		return false

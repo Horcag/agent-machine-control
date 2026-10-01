@@ -10,17 +10,16 @@ import (
 
 func (a *Adapter) MachineList(ctx context.Context, _ *mcp.CallToolRequest, _ MachineListInput) (*mcp.CallToolResult, MachineListResult, error) {
 	svc := a.getDiscoveryService()
-	resolution, resolveErr := a.resolveTarget(ctx, "")
+	observed, resolveErr := a.observeEnrolledTarget(ctx, "")
 	if resolveErr != nil {
 		return mcpToolError(resolveErr), MachineListResult{}, nil
 	}
 	var machines []domain.MachineObservation
 	var err error
-	if resolution == nil {
+	if observed == nil {
 		machines, err = svc.List(ctx)
 	} else {
-		machine, inspectErr := svc.Inspect(ctx, resolution.ProviderVMID)
-		machines, err = []domain.MachineObservation{machine}, inspectErr
+		machines = []domain.MachineObservation{*observed}
 	}
 	if err != nil {
 		return mcpToolError(err), MachineListResult{}, nil
@@ -39,18 +38,19 @@ func (a *Adapter) MachineList(ctx context.Context, _ *mcp.CallToolRequest, _ Mac
 }
 
 func (a *Adapter) MachineInspect(ctx context.Context, _ *mcp.CallToolRequest, in MachineInspectInput) (*mcp.CallToolResult, MachineInspectResult, error) {
-	resolution, err := a.resolveTarget(ctx, in.ID)
+	observed, err := a.observeEnrolledTarget(ctx, in.ID)
 	if err != nil {
 		return mcpToolError(err), MachineInspectResult{}, nil
 	}
-	if resolution == nil && domain.ValidateMachineGUID(in.ID) != nil {
-		return mcpToolError(NewInputError("invalid machine GUID")), MachineInspectResult{}, nil
+	var machine domain.MachineObservation
+	if observed == nil {
+		if domain.ValidateMachineGUID(in.ID) != nil {
+			return mcpToolError(NewInputError("invalid machine GUID")), MachineInspectResult{}, nil
+		}
+		machine, err = a.getDiscoveryService().Inspect(ctx, in.ID)
+	} else {
+		machine = *observed
 	}
-	targetID := in.ID
-	if resolution != nil {
-		targetID = resolution.ProviderVMID
-	}
-	machine, err := a.getDiscoveryService().Inspect(ctx, targetID)
 	if err != nil {
 		return mcpToolError(err), MachineInspectResult{}, nil
 	}
