@@ -54,11 +54,23 @@ transport errors cannot repair a failing Windows management service. Do not rest
 services or change VM configuration automatically to conceal that failure. Keep host evidence,
 inventories, guest data, and transcripts out of public issues and pull requests.
 
+## Managed bootstrap lifecycle
+
+Fresh Windows task installations set and read back a protected task DACL granting lifecycle
+control only to the current owner, SYSTEM, and Administrators. This allows the verified owner to
+stop and remove the task without relying on an inherited administrator-only delete permission.
+Task identity, persisted configuration, private artifact ACLs, and hashes are verified first.
+
+Existing task permissions are not silently rewritten or adopted. A legacy installation with
+insufficient owner rights can require a one-time administrator repair after verifying its exact
+ownership. An install rollback verifies that the exact task is absent before deleting its private
+artifacts; if rollback cannot remove the task, it retains those artifacts for recovery.
+
 ## Verification
 
 Regression tests cover single-query reuse, isolation from fleet failure, malformed or mismatched
 identities, disabled hosts, late cancellation, typed timeout propagation, inherited pipes, safe
 error redaction, and mutation recovery references. PowerShell script fixtures exercise readiness
-query failures when native PowerShell is available. Live acceptance should exercise repeated CLI,
+query failures and task lifecycle ACL/rollback failures when native PowerShell is available. Live acceptance should exercise repeated CLI,
 direct CLI, and MCP observations as well as the intended mutation and guest workflow on an
 authorized disposable target. Record unverified boundaries explicitly.

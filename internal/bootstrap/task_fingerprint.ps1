@@ -65,6 +65,39 @@ function Test-PrivateAclFingerprint(
     return $seen.ContainsKey($OwnerSid) -and $seen.ContainsKey('S-1-5-18')
 }
 
+# Fresh installs require direct lifecycle access for the exact user SID. A filtered
+# administrator token cannot use a read-only user ACE to delete its own task.
+function Test-OwnedTaskLifecycleAcl([string] $Sddl, [string] $OwnerSid) {
+    try {
+        $descriptor = [Security.AccessControl.RawSecurityDescriptor]::new($Sddl)
+        $protected = [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected
+        if (($descriptor.ControlFlags -band $protected) -eq 0 -or $null -eq $descriptor.DiscretionaryAcl) {
+            return $false
+        }
+        if ($descriptor.DiscretionaryAcl.Count -ne 3) {
+            return $false
+        }
+        $seen = @{}
+        foreach ($ace in $descriptor.DiscretionaryAcl) {
+            if ($ace -isnot [Security.AccessControl.CommonAce] -or $ace.IsCallback -or
+                $ace.AceQualifier -ne [Security.AccessControl.AceQualifier]::AccessAllowed -or
+                $ace.AceFlags -ne [Security.AccessControl.AceFlags]::None -or
+                $ace.AccessMask -ne [int] [Security.AccessControl.FileSystemRights]::FullControl) {
+                return $false
+            }
+            $sid = $ace.SecurityIdentifier.Value
+            if ($sid -notin @($OwnerSid, 'S-1-5-18', 'S-1-5-32-544') -or $seen.ContainsKey($sid)) {
+                return $false
+            }
+            $seen[$sid] = $true
+        }
+        return $seen.ContainsKey($OwnerSid) -and $seen.ContainsKey('S-1-5-18') -and $seen.ContainsKey('S-1-5-32-544')
+    }
+    catch {
+        return $false
+    }
+}
+
 function Test-HasProperty($Object, [string] $Name) {
     return $null -ne $Object -and $null -ne $Object.PSObject.Properties[$Name]
 }

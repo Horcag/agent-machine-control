@@ -23,7 +23,7 @@ func TestPowerShellFingerprintRegressions(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), powershellTestTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, path, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-")
+	cmd := exec.CommandContext(ctx, path, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "try { & ([scriptblock]::Create([Console]::In.ReadToEnd())) } catch { [Console]::Error.WriteLine($_); exit 1 }")
 	cmd.Stdin = strings.NewReader(taskFingerprintScript + "\n" + taskFingerprintTestScript)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -31,6 +31,33 @@ func TestPowerShellFingerprintRegressions(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "bootstrap fingerprint regressions: passed") {
 		t.Fatalf("PowerShell fingerprint regressions did not report success:\n%s", out)
+	}
+}
+
+//go:embed task_scheduler_test.ps1
+var taskSchedulerTestScript string
+
+func TestPowerShellSchedulerInstallRegressions(t *testing.T) {
+	t.Parallel()
+
+	path, err := exec.LookPath("powershell.exe")
+	if err != nil {
+		t.Skip("powershell.exe is required for executable scheduler regressions")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), powershellTestTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "try { & ([scriptblock]::Create([Console]::In.ReadToEnd())) } catch { [Console]::Error.WriteLine($_); exit 1 }")
+	functions, _, found := strings.Cut(taskSchedulerEntryScript, "$spec = Read-EncodedJson")
+	if !found {
+		t.Fatal("scheduler entrypoint boundary missing")
+	}
+	cmd.Stdin = strings.NewReader(taskFingerprintScript + "\n" + functions + "\n" + taskSchedulerTestScript)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("PowerShell scheduler regressions failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "bootstrap scheduler regressions: passed") {
+		t.Fatalf("PowerShell scheduler regressions did not report success:\n%s", out)
 	}
 }
 

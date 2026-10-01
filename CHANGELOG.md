@@ -17,6 +17,9 @@ begin.
 - Probe machine and network-adapter queries in Hyper-V readiness checks.
 - Return sanitized MCP failure categories and validated operation/receipt references for recovery.
 
+- Grant verified fresh bootstrap task owners lifecycle control and retain private artifacts when
+  installation rollback cannot remove the task.
+
 ### Added
 
 - Initial open-source project structure.

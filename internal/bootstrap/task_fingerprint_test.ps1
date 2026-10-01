@@ -103,6 +103,34 @@ function Test-AclFingerprints {
     Assert-False (Test-PrivateAclFingerprint 'other' ([IO.FileAttributes]::Normal) $acl 'S-1-5-21-1000' $false) 'non-regular object was accepted'
 }
 
+function Test-TaskLifecycleAclFingerprints {
+    $owner = 'S-1-5-21-1000'
+    $private = "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;$owner)"
+    Assert-True (Test-OwnedTaskLifecycleAcl $private $owner) 'private lifecycle ACL was rejected'
+    $descriptor = [Security.AccessControl.RawSecurityDescriptor]::new($private)
+    $ownerAce = @($descriptor.DiscretionaryAcl | Where-Object { $_.SecurityIdentifier.Value -eq $owner })[0]
+    # A filtered owner token has its user SID, but cannot rely on Administrators.
+    # FILE_GENERIC_READ/EXECUTE allows observation/start; DELETE is needed for removal.
+    foreach ($required in @(0x120089, 0x1200a0, 0x10000, 0x40000)) {
+        Assert-True (($ownerAce.AccessMask -band $required) -eq $required) 'owner lifecycle rights are incomplete'
+    }
+    foreach ($invalid in @(
+        "D:(A;ID;0x1f019f;;;BA)(A;ID;0x1f019f;;;SY)(A;ID;FA;;;BA)(A;;FR;;;$owner)",
+        "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;$owner)",
+        "D:P(A;;FA;;;SY)(A;;FA;;;BA)",
+        "D:P(A;;FA;;;SY)(A;;FA;;;$owner)",
+        "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;$owner)(A;;FR;;;WD)",
+        "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;ID;FA;;;$owner)",
+        "D:P(A;;FA;;;SY)(A;;FA;;;BA)(D;;FA;;;$owner)",
+        "D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;$owner)",
+        'D:',
+        'invalid'
+    )) {
+        Assert-False (Test-OwnedTaskLifecycleAcl $invalid $owner) 'unsafe task lifecycle ACL was accepted'
+    }
+    Assert-False (Test-OwnedTaskLifecycleAcl $private 'S-1-5-21-2000') 'different task owner was accepted'
+}
+
 function New-SyntheticSpec {
     return [pscustomobject]@{
         action_executable = 'C:\Windows\System32\cmd.exe'
@@ -277,6 +305,7 @@ function Test-NativeTaskDefinitionFingerprint {
 }
 
 Test-AclFingerprints
+Test-TaskLifecycleAclFingerprints
 Test-TaskFingerprints
 Test-NativeTaskDefinitionFingerprint
 'bootstrap fingerprint regressions: passed'
