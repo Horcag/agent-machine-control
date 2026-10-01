@@ -201,13 +201,13 @@ func TestTargetExactObservationBoundsQueryDeadline(t *testing.T) {
 	if err != nil || resolution.ProviderVMID != targetVMA || observed.ID != targetVMA {
 		t.Fatalf("normalized identity=%+v observation=%+v err=%v", resolution, observed, err)
 	}
-	if err := inventory.ReplaceHosts([]HostEntry{{ID: domain.LocalHostID, Address: "local", Enabled: true, QueryTimeout: time.Nanosecond}}); err != nil {
+	if err := inventory.ReplaceHosts([]HostEntry{{ID: domain.LocalHostID, Address: "local", Enabled: true, QueryTimeout: 10 * time.Millisecond}}); err != nil {
 		t.Fatal(err)
 	}
 	observer.inspect = func(ctx context.Context, _ string) (domain.MachineObservation, error) {
-		if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			t.Fatalf("expired query reached observer without cancellation: %v", ctx.Err())
-		}
+		// Windows timer resolution can leave a newly created nanosecond timer
+		// briefly pending. Exercise expiry rather than assuming synchronous cancellation.
+		<-ctx.Done()
 		return original, errors.New("late provider failure")
 	}
 	if _, _, err := service.ObserveTarget(t.Context(), "default"); !errors.Is(err, context.DeadlineExceeded) {
