@@ -118,7 +118,7 @@ function Set-OwnedTaskLifecycleAcl($Spec) {
     $sddl = "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;$ownerSid)"
     $service = New-Object -ComObject 'Schedule.Service'
     $service.Connect()
-    $folder = $service.GetFolder($Spec.task_path)
+    $folder = $service.GetFolder($Spec.task_path.TrimEnd([char] '\'))
     $task = $folder.GetTask($Spec.task_name)
     # TASK_DONT_ADD_PRINCIPAL_ACE: preserve the explicit private DACL exactly.
     $task.SetSecurityDescriptor($sddl, 16)
@@ -182,7 +182,7 @@ function Install-OwnedTask($Spec) {
                 $service = New-Object -ComObject 'Schedule.Service'
                 $service.Connect()
                 try {
-                    $folder = $service.GetFolder($Spec.task_path)
+                    $folder = $service.GetFolder($Spec.task_path.TrimEnd([char] '\'))
                     $null = $folder.GetTask($Spec.task_name)
                     throw 'Scheduled task absence could not be verified'
                 }

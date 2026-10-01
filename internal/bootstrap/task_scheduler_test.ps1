@@ -33,7 +33,7 @@ $script:service = [pscustomobject]@{}
 $script:service | Add-Member ScriptMethod Connect { }
 $script:service | Add-Member ScriptMethod GetFolder {
     param($path)
-    Assert-True ($path -eq '\Synthetic\') 'wrong scheduler folder requested'
+    Assert-True ($path -eq '\Synthetic') 'COM folder path has invalid trailing slash or unexpected identity'
     return $script:folder
 }
 function New-Object([string] $ComObject) {

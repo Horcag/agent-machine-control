@@ -35,6 +35,7 @@ type trackingTransport struct {
 	failWrite      bool
 	writeDelay     time.Duration
 	cancelOnWrite  context.CancelFunc
+	writeStarted   chan struct{}
 }
 
 func (t *trackingTransport) Dial(_ context.Context, target domain.MachineRef, _, _ uint16, _ string) (guestssh.Channel, error) {
@@ -70,6 +71,11 @@ func (c *trackingChannel) Read(p []byte) (int, error) {
 
 func (c *trackingChannel) Write(ctx context.Context, p []byte) (int, error) {
 	atomic.AddInt32(&c.parent.writeCalls, 1)
+	if c.parent.writeStarted != nil {
+		close(c.parent.writeStarted)
+		<-ctx.Done()
+		return 0, ctx.Err()
+	}
 	if c.parent.cancelOnWrite != nil {
 		c.parent.cancelOnWrite()
 		<-ctx.Done()
@@ -499,15 +505,13 @@ func TestSessionRegression_AuditReceiptIntegrityAndRedaction(t *testing.T) {
 	}
 }
 
-// Regression Test 9: Timeout / cancellation causes no late write effects.
-func TestSessionRegression_CancellationAndTimeout(t *testing.T) {
+// Regression Test 9: Cancellation after admission produces a receipt with no late write effects.
+func TestSessionRegression_CancellationAfterAdmission(t *testing.T) {
 	tempDir := t.TempDir()
 	sd, _ := statedir.Resolve(filepath.Join(tempDir, "state"))
 	_ = sd.EnsureDirs()
 
-	transport := &trackingTransport{
-		writeDelay: 2 * time.Second,
-	}
+	transport := &trackingTransport{writeStarted: make(chan struct{})}
 	sessionMgr := sessions.NewManager(sd.SessionsDir(), transport, time.Now)
 	auditStore := audit.NewStore(sd.AuditDir())
 	receiptStore := receipt.NewStore(sd.ReceiptsDir())
@@ -543,22 +547,34 @@ func TestSessionRegression_CancellationAndTimeout(t *testing.T) {
 		t.Fatalf("OpenSession failed: %v", err)
 	}
 
-	ctxTimeout, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	// A short wall-clock timeout can expire during Windows durable admission,
+	// before any operation exists. Cancel only once the transport has been reached.
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
+	type writeResult struct {
+		written int
+		rcpt    *domain.Receipt
+		err     error
+	}
+	result := make(chan writeResult, 1)
+	go func() {
+		written, rcpt, writeErr := svc.WriteSession(ctx, app.SessionWriteParams{
+			SessionID: obs.ID, Caller: actor, Data: "stalled write\r\n",
+			Reason: "cancel admitted write", IdempotencyKey: "idem-timeout-write",
+		})
+		result <- writeResult{written: written, rcpt: rcpt, err: writeErr}
+	}()
+	select {
+	case <-transport.writeStarted:
+	case <-ctx.Done():
+		t.Fatal("write did not reach transport before test deadline")
+	}
+	cancel()
+	got := <-result
+	if !errors.Is(got.err, context.Canceled) || got.written != 0 || got.rcpt == nil || got.rcpt.Outcome.Status != domain.OutcomeAborted {
+		t.Fatalf("admitted cancellation = written %d receipt %+v err %v", got.written, got.rcpt, got.err)
+	}
 
-	_, abortRcpt, err := svc.WriteSession(ctxTimeout, app.SessionWriteParams{
-		SessionID:      obs.ID,
-		Caller:         actor,
-		Data:           "stalled write\r\n",
-		Reason:         "timeout write",
-		IdempotencyKey: "idem-timeout-write",
-	})
-	if err == nil {
-		t.Fatal("expected timeout error")
-	}
-	if abortRcpt == nil || abortRcpt.Outcome.Status != domain.OutcomeAborted {
-		t.Errorf("expected aborted outcome receipt for timeout, got %+v", abortRcpt)
-	}
 }
 
 // Regression Test 10: Scope authorization on read/wait/list/get.
