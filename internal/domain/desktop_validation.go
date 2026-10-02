@@ -33,39 +33,58 @@ func (r DesktopRequest) Validate() error {
 			return ErrInvalidDesktopRequest
 		}
 	}
-	if len(r.Text) > 65536 || !utf8.ValidString(r.Text) || strings.ContainsRune(r.Text, 0) || len(r.Arguments) > 64 || len(r.Executable) > 1024 || strings.ContainsRune(r.Executable, 0) {
-		return ErrInvalidDesktopRequest
-	}
-	for _, arg := range r.Arguments {
-		if len(arg) > 4096 || !utf8.ValidString(arg) || strings.ContainsRune(arg, 0) {
-			return ErrInvalidDesktopRequest
-		}
-	}
-	if len(r.ElementID) > 256 || strings.ContainsAny(r.ElementID, "\r\n\x00") {
-		return ErrInvalidDesktopRequest
-	}
-	if r.WindowID != "" {
-		if _, err := strconv.ParseUint(r.WindowID, 10, 64); err != nil {
-			return ErrInvalidDesktopRequest
-		}
-	}
-	if strings.HasPrefix(r.Action, "window.") && r.WindowID == "" {
-		return ErrInvalidDesktopRequest
-	}
-	if r.Action == "launch" && r.Executable == "" {
-		return ErrInvalidDesktopRequest
-	}
-	if strings.HasPrefix(r.Action, "uia.") && r.Action != "uia.tree" && r.ElementID == "" {
-		return ErrInvalidDesktopRequest
-	}
-	if r.Axis != "" && r.Axis != "vertical" && r.Axis != "horizontal" {
-		return ErrInvalidDesktopRequest
-	}
-	if r.X < -65535 || r.X > 65535 || r.Y < -65535 || r.Y > 65535 || r.Width < 0 || r.Width > 65535 || r.Height < 0 || r.Height > 65535 || r.Delta < -12000 || r.Delta > 12000 {
-		return ErrInvalidDesktopRequest
-	}
-	if r.Action == "window.resize" && (r.Width == 0 || r.Height == 0) {
+	if !r.validPayload() || !r.validIdentity() || !r.validGeometry() {
 		return ErrInvalidDesktopRequest
 	}
 	return nil
 }
+
+func (r DesktopRequest) validPayload() bool {
+	if !desktopTextValid(r.Text, 65536) || len(r.Arguments) > 64 || !desktopTextValid(r.Executable, 1024) {
+		return false
+	}
+	for _, arg := range r.Arguments {
+		if !desktopTextValid(arg, 4096) {
+			return false
+		}
+	}
+	return r.Action != "launch" || r.Executable != ""
+}
+
+func desktopTextValid(text string, limit int) bool {
+	return len(text) <= limit && utf8.ValidString(text) && !strings.ContainsRune(text, 0)
+}
+
+func (r DesktopRequest) validIdentity() bool {
+	if len(r.ElementID) > 256 || strings.ContainsAny(r.ElementID, "\r\n\x00") {
+		return false
+	}
+	if r.WindowID != "" {
+		if _, err := strconv.ParseUint(r.WindowID, 10, 64); err != nil {
+			return false
+		}
+	}
+	if strings.HasPrefix(r.Action, "window.") && r.WindowID == "" {
+		return false
+	}
+	if strings.HasPrefix(r.Action, "uia.") && r.Action != "uia.tree" && r.ElementID == "" {
+		return false
+	}
+	return true
+}
+
+func (r DesktopRequest) validGeometry() bool {
+	if r.Axis != "" && r.Axis != "vertical" && r.Axis != "horizontal" {
+		return false
+	}
+	if !desktopCoordinateValid(r.X) || !desktopCoordinateValid(r.Y) || !desktopDimensionValid(r.Width) || !desktopDimensionValid(r.Height) || r.Delta < -12000 || r.Delta > 12000 {
+		return false
+	}
+	if r.Action == "window.resize" && (r.Width == 0 || r.Height == 0) {
+		return false
+	}
+	return true
+}
+
+func desktopCoordinateValid(value int) bool { return value >= -65535 && value <= 65535 }
+func desktopDimensionValid(value int) bool  { return value >= 0 && value <= 65535 }
