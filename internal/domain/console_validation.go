@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -95,6 +96,9 @@ func ConsoleKeyCodes(key string) ([]uint32, error) {
 			code = uint32(strings.ToUpper(part)[0])
 			ok = true
 		}
+		if functionCode, functionKey := consoleFunctionKey(part); functionKey {
+			code, ok = functionCode, true
+		}
 		if !ok || seen[code] || (index < len(parts)-1 && !consoleModifier(code)) {
 			return nil, ErrInvalidConsoleInput
 		}
@@ -102,6 +106,18 @@ func ConsoleKeyCodes(key string) ([]uint32, error) {
 		codes = append(codes, code)
 	}
 	return codes, nil
+}
+
+func consoleFunctionKey(part string) (uint32, bool) {
+	if len(part) < 2 || len(part) > 3 || part[0] != 'f' || part[1] < '1' || part[1] > '9' {
+		return 0, false
+	}
+	number, err := strconv.Atoi(part[1:])
+	if err != nil || number < 1 || number > 24 {
+		return 0, false
+	}
+	// #nosec G115 -- the checked range maps to virtual-key codes 0x70 through 0x87.
+	return uint32(0x70 + number - 1), true
 }
 
 func consoleModifier(code uint32) bool { return code == 16 || code == 17 || code == 18 || code == 91 }

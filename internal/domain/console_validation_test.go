@@ -21,3 +21,20 @@ func TestConsoleInputValidation(t *testing.T) {
 		t.Fatalf("chord: %v,%v", codes, err)
 	}
 }
+
+func TestConsoleFunctionKeys(t *testing.T) {
+	for _, test := range []struct {
+		key  string
+		code uint32
+	}{{"F1", 0x70}, {"F5", 0x74}, {"ctrl+F24", 0x87}} {
+		codes, err := ConsoleKeyCodes(test.key)
+		if err != nil || codes[len(codes)-1] != test.code {
+			t.Fatalf("%s: codes=%v error=%v", test.key, codes, err)
+		}
+	}
+	for _, key := range []string{"F0", "F25", "F01", "F+1", "F１", "F-1", "F999"} {
+		if (ConsoleInput{Kind: "key", Key: key}).Validate() == nil {
+			t.Fatalf("accepted invalid function key %s", key)
+		}
+	}
+}
