@@ -649,9 +649,11 @@
           "description": "Bounded console action in captured frame coordinates",
           "properties": {
             "button": {
+              "description": "left right or middle; defaults to left",
               "type": "string"
             },
             "count": {
+              "description": "Click count: 1 or 2; defaults to 1",
               "type": "integer"
             },
             "delta": {
@@ -661,27 +663,35 @@
               "type": "string"
             },
             "key": {
+              "description": "Key or chord such as enter ctrl+s alt+f4 or ctrl+shift+esc",
               "type": "string"
             },
             "kind": {
+              "description": "One of move click drag key type; wheel uses a guest desktop action",
               "type": "string"
             },
             "modifiers": {
+              "description": "Pointer modifiers joined by + such as ctrl+shift; supports ctrl alt shift win",
               "type": "string"
             },
             "text": {
+              "description": "Unicode text typed into the guest active window",
               "type": "string"
             },
             "to_x": {
+              "description": "Drag endpoint X in the captured PNG pixels",
               "type": "integer"
             },
             "to_y": {
+              "description": "Drag endpoint Y in the captured PNG pixels",
               "type": "integer"
             },
             "x": {
+              "description": "X in the captured PNG pixels; the backend scales to the guest native screen",
               "type": "integer"
             },
             "y": {
+              "description": "Y in the captured PNG pixels; the backend scales to the guest native screen",
               "type": "integer"
             }
           },
@@ -977,7 +987,7 @@
     }
   },
   {
-    "description": "Apply a guest window/UIA/clipboard/wheel/launch action or native console input under an operator-issued VM lab grant; optionally return a fresh PNG",
+    "description": "Provide exactly one semantic action or native input; an active operator-issued VM lab grant is selected automatically. Use action provision when the guest helper is unavailable. Copy observed window identities and element IDs; pointer input uses fresh frame_id and PNG pixels. Set observe_after for visual feedback.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -986,6 +996,7 @@
           "description": "Semantic guest action; native guest pixel coordinates",
           "properties": {
             "action": {
+              "description": "One of status cursor windows uia.tree clipboard.get provision remove window.focus window.move window.resize window.minimize window.maximize window.restore window.close uia.invoke uia.setvalue uia.select uia.toggle uia.expand uia.collapse uia.scroll clipboard.set wheel launch",
               "type": "string"
             },
             "arguments": {
@@ -998,24 +1009,30 @@
               ]
             },
             "axis": {
+              "description": "vertical or horizontal; defaults to vertical",
               "type": "string"
             },
             "deadline": {
+              "description": "Optional in MCP: copied from the outer deadline; otherwise an RFC3339 future time",
               "type": "string"
             },
             "delta": {
+              "description": "Wheel delta or UI Automation scroll amount; positive and negative directions are supported",
               "type": "integer"
             },
             "element_id": {
+              "description": "Copy the element ID from a fresh UI Automation tree; choose an action advertised in its patterns",
               "type": "string"
             },
             "executable": {
+              "description": "Absolute Windows executable path for launch",
               "type": "string"
             },
             "height": {
               "type": "integer"
             },
             "request_id": {
+              "description": "Optional in MCP: generated from the idempotency key; otherwise 32 lowercase hexadecimal characters",
               "type": "string"
             },
             "text": {
@@ -1025,15 +1042,19 @@
               "type": "integer"
             },
             "window_id": {
+              "description": "Decimal HWND copied from desktop_observe; pair with its window identity",
               "type": "string"
             },
             "window_identity": {
+              "description": "Copy the observed window identity exactly to reject reused HWNDs and changed processes",
               "type": "string"
             },
             "x": {
+              "description": "Native guest screen pixel X; use native_width rather than scaled PNG width",
               "type": "integer"
             },
             "y": {
+              "description": "Native guest screen pixel Y; use native_height rather than scaled PNG height",
               "type": "integer"
             }
           },
@@ -1056,9 +1077,11 @@
           "description": "Hypervisor input in captured frame pixels; keyboard works without guest helper",
           "properties": {
             "button": {
+              "description": "left right or middle; defaults to left",
               "type": "string"
             },
             "count": {
+              "description": "Click count: 1 or 2; defaults to 1",
               "type": "integer"
             },
             "delta": {
@@ -1068,27 +1091,35 @@
               "type": "string"
             },
             "key": {
+              "description": "Key or chord such as enter ctrl+s alt+f4 or ctrl+shift+esc",
               "type": "string"
             },
             "kind": {
+              "description": "One of move click drag key type; wheel uses a guest desktop action",
               "type": "string"
             },
             "modifiers": {
+              "description": "Pointer modifiers joined by + such as ctrl+shift; supports ctrl alt shift win",
               "type": "string"
             },
             "text": {
+              "description": "Unicode text typed into the guest active window",
               "type": "string"
             },
             "to_x": {
+              "description": "Drag endpoint X in the captured PNG pixels",
               "type": "integer"
             },
             "to_y": {
+              "description": "Drag endpoint Y in the captured PNG pixels",
               "type": "integer"
             },
             "x": {
+              "description": "X in the captured PNG pixels; the backend scales to the guest native screen",
               "type": "integer"
             },
             "y": {
+              "description": "Y in the captured PNG pixels; the backend scales to the guest native screen",
               "type": "integer"
             }
           },
@@ -1104,6 +1135,7 @@
           "type": "string"
         },
         "observe_after": {
+          "description": "Return a fresh PNG and window metadata from the same VM after the action",
           "type": "boolean"
         },
         "reason": {
@@ -1396,6 +1428,7 @@
               "type": "string"
             },
             "lab_grant_id": {
+              "description": "Optional: automatically selects the current caller active grant for this VM",
               "type": "string"
             },
             "schema_version": {
@@ -1733,7 +1766,7 @@
     }
   },
   {
-    "description": "Observe the VM PNG and guest windows or bounded UI Automation tree without host focus; native console survives helper disconnection",
+    "description": "Start here: observe the VM PNG with frame_id and native geometry plus guest windows and cursor; supply an observed window_id and identity for its bounded UI Automation tree. Native screenshots work when helper_available is false.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1751,6 +1784,7 @@
           "type": "string"
         },
         "window_identity": {
+          "description": "Copy the identity paired with window_id from the observed window",
           "type": "string"
         }
       },
@@ -2029,6 +2063,7 @@
           "type": "string"
         },
         "lab_grant_id": {
+          "description": "Optional: automatically selects the current caller active grant for this VM",
           "type": "string"
         },
         "schema_version": {

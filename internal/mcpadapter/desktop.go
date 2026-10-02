@@ -17,7 +17,7 @@ type DesktopObserveInput struct {
 	Width          int    `json:"width,omitempty"`
 	Height         int    `json:"height,omitempty"`
 	WindowID       string `json:"window_id,omitempty" jsonschema:"Optional native HWND for UI Automation tree"`
-	WindowIdentity string `json:"window_identity,omitempty"`
+	WindowIdentity string `json:"window_identity,omitempty" jsonschema:"Copy the identity paired with window_id from the observed window"`
 }
 
 type DesktopObserveResult struct {
@@ -27,7 +27,7 @@ type DesktopObserveResult struct {
 	Cursor            *domain.DesktopCursor  `json:"cursor,omitempty"`
 	HelperAvailable   bool                   `json:"helper_available"`
 	CoordinateSpace   string                 `json:"coordinate_space"`
-	LabGrantID        string                 `json:"lab_grant_id,omitempty"`
+	LabGrantID        string                 `json:"lab_grant_id,omitempty" jsonschema:"Optional: automatically selects the current caller active grant for this VM"`
 	LabGrantExpiresAt time.Time              `json:"lab_grant_expires_at,omitzero"`
 }
 
@@ -76,7 +76,7 @@ type DesktopActInput struct {
 	Reason         string                 `json:"reason"`
 	IdempotencyKey string                 `json:"idempotency_key"`
 	Deadline       string                 `json:"deadline"`
-	ObserveAfter   bool                   `json:"observe_after,omitempty"`
+	ObserveAfter   bool                   `json:"observe_after,omitempty" jsonschema:"Return a fresh PNG and window metadata from the same VM after the action"`
 }
 
 type DesktopActResult struct {

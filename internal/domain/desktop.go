@@ -3,20 +3,20 @@ package domain
 // DesktopRequest describes one guest desktop action in native screen coordinates.
 // Requests cross an authenticated guest transport; they never address the host UI.
 type DesktopRequest struct {
-	RequestID      string   `json:"request_id,omitempty"`
-	Deadline       string   `json:"deadline,omitempty"`
-	Action         string   `json:"action"`
-	WindowID       string   `json:"window_id,omitempty"`
-	WindowIdentity string   `json:"window_identity,omitempty"`
-	ElementID      string   `json:"element_id,omitempty"`
-	X              int      `json:"x,omitempty"`
-	Y              int      `json:"y,omitempty"`
+	RequestID      string   `json:"request_id,omitempty" jsonschema:"Optional in MCP: generated from the idempotency key; otherwise 32 lowercase hexadecimal characters"`
+	Deadline       string   `json:"deadline,omitempty" jsonschema:"Optional in MCP: copied from the outer deadline; otherwise an RFC3339 future time"`
+	Action         string   `json:"action" jsonschema:"One of status cursor windows uia.tree clipboard.get provision remove window.focus window.move window.resize window.minimize window.maximize window.restore window.close uia.invoke uia.setvalue uia.select uia.toggle uia.expand uia.collapse uia.scroll clipboard.set wheel launch"`
+	WindowID       string   `json:"window_id,omitempty" jsonschema:"Decimal HWND copied from desktop_observe; pair with its window identity"`
+	WindowIdentity string   `json:"window_identity,omitempty" jsonschema:"Copy the observed window identity exactly to reject reused HWNDs and changed processes"`
+	ElementID      string   `json:"element_id,omitempty" jsonschema:"Copy the element ID from a fresh UI Automation tree; choose an action advertised in its patterns"`
+	X              int      `json:"x,omitempty" jsonschema:"Native guest screen pixel X; use native_width rather than scaled PNG width"`
+	Y              int      `json:"y,omitempty" jsonschema:"Native guest screen pixel Y; use native_height rather than scaled PNG height"`
 	Width          int      `json:"width,omitempty"`
 	Height         int      `json:"height,omitempty"`
-	Delta          int      `json:"delta,omitempty"`
-	Axis           string   `json:"axis,omitempty"`
+	Delta          int      `json:"delta,omitempty" jsonschema:"Wheel delta or UI Automation scroll amount; positive and negative directions are supported"`
+	Axis           string   `json:"axis,omitempty" jsonschema:"vertical or horizontal; defaults to vertical"`
 	Text           string   `json:"text,omitempty"`
-	Executable     string   `json:"executable,omitempty"`
+	Executable     string   `json:"executable,omitempty" jsonschema:"Absolute Windows executable path for launch"`
 	Arguments      []string `json:"arguments,omitempty"`
 }
 
