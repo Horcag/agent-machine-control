@@ -36,9 +36,10 @@ func (a *Adapter) DesktopObserve(ctx context.Context, call *mcp.CallToolRequest,
 		in.Width, in.Height = 1024, 768
 	}
 	image, frame, err := a.ConsoleScreenshot(ctx, call, ConsoleScreenshotInput{Target: in.Target, Width: in.Width, Height: in.Height})
-	if err != nil || image.IsError {
+	if err != nil || image == nil || image.IsError {
 		return image, DesktopObserveResult{}, err
 	}
+	in.Target = frame.Frame.VMID // Bind semantic evidence and authority to the captured VM.
 	out := DesktopObserveResult{SchemaVersion: SchemaVersion, Frame: frame.Frame, CoordinateSpace: "console input uses frame pixels; guest desktop actions use native screen pixels"}
 	cl, err := a.getClient()
 	if err != nil {
@@ -124,7 +125,14 @@ func (a *Adapter) DesktopAct(ctx context.Context, call *mcp.CallToolRequest, in 
 	if err != nil {
 		return mcpToolError(err), out, nil
 	}
+	return a.observeDesktopActionResult(ctx, call, in, out)
+}
+
+func (a *Adapter) observeDesktopActionResult(ctx context.Context, call *mcp.CallToolRequest, in DesktopActInput, out DesktopActResult) (*mcp.CallToolResult, DesktopActResult, error) {
 	if in.ObserveAfter {
+		if out.Result.Receipt != nil {
+			in.Target = string(out.Result.Receipt.Target)
+		}
 		image, observation, observeErr := a.DesktopObserve(ctx, call, DesktopObserveInput{Target: in.Target})
 		if observeErr == nil && image != nil && !image.IsError {
 			out.Observation = &observation

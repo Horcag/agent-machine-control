@@ -53,13 +53,13 @@ func TestDesktopObserveMCPTransportAndHelperRecovery(t *testing.T) {
 					if req.Target != "default" || req.Width != 8 || req.Height != 4 {
 						t.Errorf("capture request=%+v", req)
 					}
-					response = domain.ConsoleFrame{Data: pngBytes.Bytes(), MIMEType: "image/png", FrameID: "synthetic-frame", Width: 8, Height: 4}
+					response = domain.ConsoleFrame{VMID: "local:c4a523d4-6b99-4d62-a5e2-4752c0f20001", Data: pngBytes.Bytes(), MIMEType: "image/png", FrameID: "synthetic-frame", Width: 8, Height: 4}
 				case "/v1/desktop/action":
 					var req app.DesktopActionRequest
 					if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 						t.Error(err)
 					}
-					if req.Target != "default" || req.Request.Validate() != nil || req.Request.Action != "uia.tree" || req.Request.WindowID != "42" || req.Request.WindowIdentity != "synthetic-window" {
+					if req.Target != "local:c4a523d4-6b99-4d62-a5e2-4752c0f20001" || req.Request.Validate() != nil || req.Request.Action != "uia.tree" || req.Request.WindowID != "42" || req.Request.WindowIdentity != "synthetic-window" {
 						t.Errorf("desktop request=%+v", req)
 					}
 					if !helperAvailable {
@@ -72,7 +72,7 @@ func TestDesktopObserveMCPTransportAndHelperRecovery(t *testing.T) {
 					if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 						t.Error(err)
 					}
-					if req["target"] != "default" {
+					if req["target"] != "local:c4a523d4-6b99-4d62-a5e2-4752c0f20001" {
 						t.Error("grant target changed")
 					}
 					response = app.ConsoleLabGrantStatus{State: "active", Grant: app.ConsoleLabGrant{GrantID: "own-grant", Beneficiary: "agent:mcp-local", ExpiresAt: expiry}}

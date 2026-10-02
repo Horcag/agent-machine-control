@@ -104,6 +104,7 @@ func (s *ConsoleService) collectRecordingFrames(ctx context.Context, actor domai
 		if err != nil {
 			return animation, observed, err
 		}
+		req.Target = frame.VMID // Freeze the enrolled VM across the sequence.
 		p, err := recordingPalettedFrame(frame.Data)
 		if err != nil {
 			return animation, observed, err

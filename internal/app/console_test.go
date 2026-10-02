@@ -77,7 +77,7 @@ func newConsoleFixture(t *testing.T) consoleFixture {
 	}
 	target := canonicalTargetService(t, state, backend)
 	clock := func() time.Time { return now }
-	recovery := app.NewRecoveryService(backend, lease.NewManager(state.LeasesDir()), audit.NewStore(state.AuditDir()), receipt.NewStore(state.ReceiptsDir()), approval.NewStore(state.ApprovalsDir()), app.WithRecoveryClock(clock), app.WithRecoveryTargetResolver(target))
+	recovery := app.NewRecoveryService(app.DesktopBackend{Backend: backend}, lease.NewManager(state.LeasesDir()), audit.NewStore(state.AuditDir()), receipt.NewStore(state.ReceiptsDir()), approval.NewStore(state.ApprovalsDir()), app.WithRecoveryClock(clock), app.WithRecoveryTargetResolver(target))
 	scopes := domain.NewScopeSet(domain.ScopeMachineRead, domain.ScopeMachineWrite, domain.ScopeEvidenceCapture, domain.ScopeOperationAdmin)
 	actor, err := domain.NewActorContext("operator:console-test", "operator:console-test", scopes, scopes)
 	if err != nil {

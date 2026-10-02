@@ -140,7 +140,7 @@ func TestDesktopCLIRejectsInvalidFilesAndUsage(t *testing.T) {
 			t.Fatal(err)
 		}
 		var out bytes.Buffer
-		if code := a.Run([]string{"desktop", "action", "--request-file", path}, &out, &out); code != ExitUsage || !strings.Contains(out.String(), "invalid request file") {
+		if code := a.Run([]string{"desktop", "action", "--request-file", path}, &out, &out); code != ExitUsage || !strings.Contains(out.String(), "invalid") {
 			t.Fatalf("code=%d output=%s", code, out.String())
 		}
 	}

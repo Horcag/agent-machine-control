@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Horcag/agent-machine-control/internal/app"
 	"github.com/Horcag/agent-machine-control/internal/auth"
 	"github.com/Horcag/agent-machine-control/internal/daemon"
 	"github.com/Horcag/agent-machine-control/internal/domain"
@@ -138,9 +139,13 @@ func decodeHTTPResponse(ctx context.Context, body io.Reader, out any) error {
 		return nil
 	}
 	responseLimit := int64(1 << 20)
-	if _, consoleFrame := out.(*domain.ConsoleFrame); consoleFrame {
+	switch out.(type) {
+	case *domain.ConsoleFrame:
 		// One million RGBA pixels plus PNG/base64 framing fit within this bound.
 		responseLimit = 8 << 20
+	case *app.ConsoleRecording:
+		// Bounded 20 MiB GIF data plus base64 framing and timestamps.
+		responseLimit = 32 << 20
 	}
 	dec := json.NewDecoder(io.LimitReader(body, responseLimit))
 	dec.DisallowUnknownFields()
