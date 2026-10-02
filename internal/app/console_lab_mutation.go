@@ -79,11 +79,13 @@ func (s *ConsoleService) ExecuteLabMutation(ctx context.Context, actor domain.Ac
 	req.Approval, req.ApprovalID = issued, string(issued.ID)
 	req.Timeout = 5 * time.Minute
 	result, resultErr = s.recovery.executeMutation(ctx, op, req, providerID, func(execCtx context.Context) error {
-		// Recheck authority after ordinary admission has acquired the machine lease.
-		if err := s.requireActiveLabGrant(execCtx, grant); err != nil {
-			return err
-		}
-		return execFn(execCtx)
+		// Fence epoch-changing publication across the final authority check and guest dispatch.
+		return s.target.WithEnrollmentFence(execCtx, func() error {
+			if err := s.requireActiveLabGrant(execCtx, grant); err != nil {
+				return err
+			}
+			return execFn(execCtx)
+		})
 	})
 	if resultErr == nil && result.Outcome.Status == domain.OutcomeFailed {
 		resultErr = errors.New("app: guest lab mutation previously failed")

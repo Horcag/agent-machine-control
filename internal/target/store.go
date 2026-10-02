@@ -132,7 +132,10 @@ func (s *Store) Save(ctx context.Context, value Default) (Publication, error) {
 	if err != nil {
 		return Publication{}, err
 	}
+	return s.withPublicationFence(ctx, true, func() (Publication, error) { return s.save(ctx, canonical, payload) })
+}
 
+func (s *Store) save(ctx context.Context, canonical Default, payload []byte) (Publication, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.pending != nil {
@@ -161,6 +164,10 @@ func (s *Store) Save(ctx context.Context, value Default) (Publication, error) {
 
 // Clear removes the enrolled authority with explicit commit and durability truth.
 func (s *Store) Clear(ctx context.Context) (Publication, error) {
+	return s.withPublicationFence(ctx, false, func() (Publication, error) { return s.clear(ctx) })
+}
+
+func (s *Store) clear(ctx context.Context) (Publication, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.pending != nil {
