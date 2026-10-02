@@ -25,12 +25,14 @@ try {
                 $arguments = Get-WorkerArguments $entry.BaseName
                 $child = Start-Process -FilePath $powerShell -ArgumentList $arguments -WindowStyle Hidden -PassThru
                 $milliseconds = [Math]::Min(30000, [Math]::Max(1, ($deadline - [DateTimeOffset]::UtcNow).TotalMilliseconds))
+                $failure = 'desktop_failed'
                 if (-not $child.WaitForExit([int]$milliseconds)) {
                     $child.Kill()
                     $child.WaitForExit()
-                    if (-not (Test-Path -LiteralPath $result)) {
-                        Write-PrivateFile $result ([Text.Encoding]::UTF8.GetBytes((@{request_id = $entry.BaseName; success = $false; error = 'desktop_timeout'} | ConvertTo-Json -Compress)))
-                    }
+                    $failure = 'desktop_timeout'
+                }
+                if (-not (Test-Path -LiteralPath $result)) {
+                    Write-PrivateFile $result ([Text.Encoding]::UTF8.GetBytes((@{request_id = $entry.BaseName; success = $false; error = $failure} | ConvertTo-Json -Compress)))
                 }
             } catch {
                 if (-not (Test-Path -LiteralPath $result)) {

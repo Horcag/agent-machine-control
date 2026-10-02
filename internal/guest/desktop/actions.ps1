@@ -50,11 +50,13 @@ function Get-Elements($hwnd) {
         $item = $queue.Dequeue()
         $element = $item.element
         $properties = $element.Current
-        $name = $properties.Name
+        $name = [string]$properties.Name
+        $automationID = [string]$properties.AutomationId
+        if ($automationID.Length -gt 256) { $automationID = $automationID.Substring(0, 256) }
         if ($properties.IsPassword) { $name = '' }
         if ($name.Length -gt 256) { $name = $name.Substring(0, 256) }
         $patterns = @($element.GetSupportedPatterns() | ForEach-Object { $_.ProgrammaticName.Replace('PatternIdentifiers.Pattern', '') })
-        $elements.Add(@{id = ($element.GetRuntimeId() -join ':'); name = $name; automation_id = $properties.AutomationId.Substring(0, [Math]::Min(256, $properties.AutomationId.Length)); control_type = $properties.ControlType.ProgrammaticName; bounds = (Get-Bounds $properties.BoundingRectangle); enabled = $properties.IsEnabled; offscreen = $properties.IsOffscreen; patterns = $patterns; reference = $element})
+        $elements.Add(@{id = ($element.GetRuntimeId() -join ':'); name = $name; automation_id = $automationID; control_type = $properties.ControlType.ProgrammaticName; bounds = (Get-Bounds $properties.BoundingRectangle); enabled = $properties.IsEnabled; offscreen = $properties.IsOffscreen; patterns = $patterns; reference = $element})
         if ($item.depth -ge 8) { continue }
         $child = $walker.GetFirstChild($element)
         while ($child -and $queue.Count + $elements.Count -lt 256) {
