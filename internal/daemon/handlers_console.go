@@ -23,6 +23,18 @@ func (s *Server) dispatchConsole(w http.ResponseWriter, r *http.Request, path st
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
 	switch path {
+	case "console/record":
+		var req app.ConsoleRecordRequest
+		if decodeStrictJSONObject(r.Body, &req) != nil {
+			writeError(w, http.StatusBadRequest, "invalid_argument", "invalid recording request")
+			return
+		}
+		out, err := s.consoleService.Record(r.Context(), caller, req)
+		if err != nil {
+			writeConsoleError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, out)
 	case "console/screenshot":
 		var req app.ConsoleScreenshotRequest
 		if err := decodeStrictJSONObject(r.Body, &req); err != nil {

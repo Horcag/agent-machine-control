@@ -21,6 +21,7 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/backends/hyperv"
 	"github.com/Horcag/agent-machine-control/internal/domain"
 	"github.com/Horcag/agent-machine-control/internal/events"
+	guestdesktop "github.com/Horcag/agent-machine-control/internal/guest/desktop"
 	guestssh "github.com/Horcag/agent-machine-control/internal/guest/ssh"
 	"github.com/Horcag/agent-machine-control/internal/lease"
 	"github.com/Horcag/agent-machine-control/internal/operations"
@@ -50,6 +51,7 @@ type Server struct {
 	approvalStore     *approval.Store
 	recoveryService   *app.RecoveryService
 	consoleService    *app.ConsoleService
+	desktopService    *app.DesktopService
 	targetService     *app.TargetService
 	targetCoordinator *app.TargetCoordinator
 	eventHub          *events.Hub
@@ -143,7 +145,7 @@ func NewServer(cfg Config) (*Server, error) {
 		return nil, err
 	}
 
-	recoverySvc := app.NewRecoveryService(backend, leaseMgr, auditStore, receiptStore, approvalStore, app.WithRecoveryTargetResolver(targetService))
+	recoverySvc := app.NewRecoveryService(app.DesktopBackend{Backend: backend}, leaseMgr, auditStore, receiptStore, approvalStore, app.WithRecoveryTargetResolver(targetService))
 	opMgr := operations.NewManager(sd.OperationsDir(), recoverySvc, receiptStore, auditStore, eventHub)
 
 	keyProvider := cfg.KeyProvider
@@ -194,7 +196,10 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 
 	if provider, ok := backend.(app.ConsoleProvider); ok {
-		srv.consoleService = app.NewConsoleService(provider, recoverySvc, targetService, filepath.Join(sd.Root(), "console-frames"))
+		srv.consoleService = app.NewConsoleService(provider, recoverySvc, targetService, filepath.Join(sd.Root(), "console-frames"), app.WithConsoleLabSafetyResolver(safetyResolver), app.WithConsoleLabEnrollmentIdentity(func(ctx context.Context, ref domain.MachineRef) (string, error) {
+			return targetService.EnrollmentIdentity(ctx, string(ref))
+		}))
+		srv.desktopService = app.NewDesktopService(guestdesktop.New(guestssh.NewTransport(keyProvider)), srv.consoleService)
 	}
 	srv.setupHTTPServer()
 	return srv, nil
@@ -274,6 +279,8 @@ func (s *Server) dispatchV1(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) dispatchOtherV1(w http.ResponseWriter, r *http.Request, path string) {
 	switch {
+	case strings.HasPrefix(path, "desktop/"):
+		s.dispatchDesktop(w, r, path)
 	case path == "audit":
 		if r.Method == http.MethodGet {
 			s.handleGetAudit(w, r)

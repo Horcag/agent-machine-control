@@ -16,7 +16,10 @@ import (
 
 func (a *App) runConsoleInput(ctx context.Context, direct bool, stateDir string, args []string, stdout, stderr io.Writer) int {
 	switch args[0] {
-	case "key", "type", "move", "click", "drag", "scroll":
+	case "scroll":
+		fmt.Fprintln(stderr, "amc console: scroll is unsupported by the native VM console; use guest desktop scrolling via amc desktop action with a scroll or uia.scroll request")
+		return ExitUsage
+	case "key", "type", "move", "click", "drag":
 	default:
 		fmt.Fprintln(stderr, "amc console: unknown action")
 		return ExitUsage
@@ -35,7 +38,9 @@ func (a *App) runConsoleInput(ctx context.Context, direct bool, stateDir string,
 	fs.StringVar(&input.Key, "key", "", "console key")
 	fs.StringVar(&input.Text, "text", "", "text (prefer --text-file for sensitive input)")
 	textFile := fs.String("text-file", "", "read typed text from a file")
-	fs.IntVar(&input.Delta, "delta", 0, "bounded scroll amount")
+	fs.IntVar(&input.Count, "count", 0, "click count: one or two")
+	fs.StringVar(&input.Modifiers, "modifiers", "", "pointer modifier chord: ctrl+shift, alt, or win")
+	grant := fs.String("lab-grant-id", "", "active operator-issued VM lab grant")
 	common, err := parseCommonFlags(fs, flags, stderr, "console "+args[0])
 	if err != nil || len(pos) > 1 {
 		return ExitUsage
@@ -52,7 +57,7 @@ func (a *App) runConsoleInput(ctx context.Context, direct bool, stateDir string,
 	if deadline.IsZero() {
 		deadline = a.now().Add(common.Timeout)
 	}
-	req := app.ConsoleInputRequest{Input: input, Reason: common.Reason, IdempotencyKey: common.IdempotencyKey, Deadline: deadline.UTC().Format(time.RFC3339Nano), ApprovalID: common.ApprovalID}
+	req := app.ConsoleInputRequest{Input: input, Reason: common.Reason, IdempotencyKey: common.IdempotencyKey, Deadline: deadline.UTC().Format(time.RFC3339Nano), ApprovalID: common.ApprovalID, LabGrantID: *grant}
 	if len(pos) == 1 {
 		req.Target = pos[0]
 	}

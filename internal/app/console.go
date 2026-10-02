@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"image/png"
+	"strings"
 	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/domain"
@@ -16,14 +17,20 @@ import (
 
 // ConsoleService shares console admission between direct, daemon, CLI and MCP.
 type ConsoleService struct {
-	provider  ConsoleProvider
-	recovery  *RecoveryService
-	target    *TargetService
-	framesDir string
+	provider      ConsoleProvider
+	recovery      *RecoveryService
+	target        *TargetService
+	framesDir     string
+	labSafety     SafetyResolver
+	labEnrollment ConsoleLabEnrollmentIdentity
 }
 
-func NewConsoleService(provider ConsoleProvider, recovery *RecoveryService, target *TargetService, framesDir string) *ConsoleService {
-	return &ConsoleService{provider: provider, recovery: recovery, target: target, framesDir: framesDir}
+func NewConsoleService(provider ConsoleProvider, recovery *RecoveryService, target *TargetService, framesDir string, options ...ConsoleOption) *ConsoleService {
+	service := &ConsoleService{provider: provider, recovery: recovery, target: target, framesDir: framesDir}
+	for _, option := range options {
+		option(service)
+	}
+	return service
 }
 
 func (s *ConsoleService) Screenshot(ctx context.Context, actor domain.ActorContext, req ConsoleScreenshotRequest) (domain.ConsoleFrame, error) {
@@ -96,6 +103,16 @@ func validateCapturedFrame(frame domain.ConsoleFrame, providerID string, width, 
 }
 
 func (s *ConsoleService) Input(ctx context.Context, actor domain.ActorContext, req ConsoleInputRequest) (domain.Receipt, error) {
+	if req.LabGrantID != "" {
+		return s.labInput(ctx, actor, req)
+	}
+	if strings.HasPrefix(req.ApprovalID, ConsoleLabApprovalPrefix) {
+		return domain.Receipt{}, ErrInvalidConsoleLabGrant
+	}
+	return s.consoleInput(ctx, actor, req)
+}
+
+func (s *ConsoleService) consoleInput(ctx context.Context, actor domain.ActorContext, req ConsoleInputRequest) (domain.Receipt, error) {
 	if err := req.Input.Validate(); err != nil {
 		return domain.Receipt{}, err
 	}

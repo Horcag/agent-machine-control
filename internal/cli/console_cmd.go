@@ -34,7 +34,7 @@ func consoleArgs(args []string) ([]string, []string) {
 		}
 		flags = append(flags, arg)
 		name := strings.TrimLeft(arg, "-")
-		if !strings.Contains(name, "=") && name != "json" && name != "async" && i+1 < len(args) {
+		if !strings.Contains(name, "=") && name != "json" && name != "async" && name != "for-mcp" && name != "acknowledge-external-effects" && i+1 < len(args) {
 			flags = append(flags, args[i+1])
 			i++
 		}
@@ -44,11 +44,14 @@ func consoleArgs(args []string) ([]string, []string) {
 
 func (a *App) runConsole(ctx context.Context, direct bool, stateDir string, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "amc console: requires screenshot, key, type, move, click, drag, or scroll")
+		fmt.Fprintln(stderr, "amc console: requires screenshot, record, key, type, move, click, or drag")
 		return ExitUsage
 	}
 	if args[0] == "screenshot" {
 		return a.runConsoleScreenshot(ctx, direct, stateDir, args[1:], stdout, stderr)
+	}
+	if args[0] == "record" {
+		return a.runConsoleRecord(ctx, direct, stateDir, args[1:], stdout, stderr)
 	}
 	return a.runConsoleInput(ctx, direct, stateDir, args, stdout, stderr)
 }

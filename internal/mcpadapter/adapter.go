@@ -289,6 +289,9 @@ func (a *Adapter) BuildServer() *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{Name: "console_screenshot", Description: "Capture the enrolled VM console as a PNG image"}, a.ConsoleScreenshot)
 	mcp.AddTool(server, &mcp.Tool{Name: "console_input", Description: "Send one approved bounded input action to the enrolled VM console"}, a.ConsoleInput)
+	mcp.AddTool(server, &mcp.Tool{Name: "desktop_observe", Description: "Start here: observe the VM PNG with frame_id and native geometry plus guest windows and cursor; supply an observed window_id and identity for its bounded UI Automation tree. Native screenshots work when helper_available is false."}, a.DesktopObserve)
+	mcp.AddTool(server, &mcp.Tool{Name: "desktop_act", Description: "Provide exactly one semantic action or native input; an active operator-issued VM lab grant is selected automatically. Use action provision when the guest helper is unavailable. Copy observed window identities and element IDs; pointer input uses fresh frame_id and PNG pixels. Set observe_after for visual feedback."}, a.DesktopAct)
+	mcp.AddTool(server, &mcp.Tool{Name: "console_record", Description: "Record 2-30 VM screenshots as a bounded animated GIF (at most 30 seconds); no host desktop recording"}, a.ConsoleRecord)
 	return server
 }
 
