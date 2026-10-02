@@ -1,8 +1,10 @@
 package desktop
 
 import (
+	"bytes"
 	"encoding/json"
 	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -13,7 +15,8 @@ func TestTransportStopsBeforeNextExpiredMutation(t *testing.T) {
 	}
 	source, _ := scripts.ReadFile("transport.ps1")
 	queue, _ := scripts.ReadFile("queue.ps1")
-	data, err := json.Marshal(map[string]string{"transport": string(source), "queue": string(queue)})
+	transport := strings.ReplaceAll(string(source), "\r\n", "\n")
+	data, err := json.Marshal(map[string]string{"transport": transport, "queue": string(queue)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -21,15 +24,31 @@ func TestTransportStopsBeforeNextExpiredMutation(t *testing.T) {
 	if output, err := runParserCheck(path, fixture, data); err != nil {
 		t.Fatalf("expiry fixtures: %v %s", err, output)
 	}
+	// A missing publication guard must fail because publication occurred, not
+	// because a fake staging file happens to be absent.
+	guarded := "        Assert-Deadline $deadline\n        [IO.File]::Move($tempPath, $inputPath)"
+	if strings.Count(transport, guarded) != 1 {
+		t.Fatal("publication guard fixture no longer matches production")
+	}
+	transport = strings.Replace(transport, guarded, "        [IO.File]::Move($tempPath, $inputPath)", 1)
+	data, err = json.Marshal(map[string]string{"transport": transport, "queue": string(queue)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output, err := runParserCheck(path, fixture, data); err == nil || !bytes.Contains(output, []byte("mutation_after_expiry:execute:3")) {
+		t.Fatalf("missing publication guard was not detected: %v %s", err, output)
+	}
 }
 
-// Only authentication is replaced with a synthetic principal. All transport
+// Authentication uses a synthetic principal. All transport
 // decisions and mutation guards execute unchanged; every external operation is
 // a recording stub. Advancing the deadline avoids wall-clock timing races.
 const transportExpiryFixture = `
 $ErrorActionPreference='Stop'
 $fixture=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([Console]::In.ReadToEnd()))|ConvertFrom-Json
 $source=$fixture.transport
+if(-not $source.Contains('[IO.File]::Move($tempPath, $inputPath)')){throw 'missing_publication_statement'}
+$source=$source.Replace('[IO.File]::Move($tempPath, $inputPath)', 'Publish-Input $tempPath $inputPath')
 $source=$source.Replace('$principal = [Security.Principal.WindowsPrincipal]::new($identity)', '$principal = [pscustomobject]@{}; $principal | Add-Member ScriptMethod IsInRole {return $true}')
 function Assert-Request {param($request) return [DateTimeOffset]::UtcNow.AddSeconds(30)}
 function Expire { $script:deadline=[DateTimeOffset]::MinValue }
@@ -45,6 +64,14 @@ function Get-ScheduledTask {param($TaskName,$TaskPath,$ErrorAction)
 }
 function New-PrivateDirectory {param($path) Record 'directory'}
 function Write-PrivateFile {param($path,$data) Record 'write'}
+function Publish-Input {param($temporary,$final)
+ if($temporary-ne ($final+'.tmp') -or $final-ne (Join-Path (Join-Path $root 'requests') (('a'*32)+'.json'))){throw 'wrong_publication_paths'}
+ $script:publishedWhileExpired=[DateTimeOffset]::UtcNow -ge $deadline
+ $script:published++
+ Record 'publish'
+ # Stop after recording publication; never wait for a real guest worker.
+ throw 'synthetic_publication_complete'
+}
 function New-ScheduledTaskAction {param($Execute,$Argument) return 'synthetic'}
 function New-ScheduledTaskPrincipal {param($UserId,$LogonType,$RunLevel) return 'synthetic'}
 function New-ScheduledTaskSettingsSet {param($MultipleInstances,$ExecutionTimeLimit,[switch]$AllowStartIfOnBatteries,[switch]$DontStopIfGoingOnBatteries) return 'synthetic'}
@@ -69,15 +96,17 @@ $root='C:\amc-synthetic';$sid='synthetic';$taskName='amc-synthetic';$powerShell=
 foreach($case in @(
  @{mode='provision';counts=0..9},
  @{mode='remove';counts=0..2},
- @{mode='execute';counts=0..3}
+ @{mode='execute';counts=0..4}
 )) {
  foreach($script:expireAfter in $case.counts){
   $script:mode=$case.mode
-  $script:operations=[Collections.Generic.List[string]]::new();$script:response=$null
+  $script:operations=[Collections.Generic.List[string]]::new();$script:response=$null;$script:published=0;$script:publishedWhileExpired=$false
   $files=@{};foreach($name in @('queue.ps1','server.ps1','worker.ps1','actions.ps1','native.cs')){$files[$name]='YQ=='}
   $request=[pscustomobject]@{mode=$script:mode;request_id=('a'*32);files=[pscustomobject]$files;hashes=@{};action='status'}
   . ([ScriptBlock]::Create($source))
   if($script:operations.Count-ne $script:expireAfter){throw ('mutation_after_expiry:'+ $script:mode+':'+$script:expireAfter+':'+($script:operations -join ','))}
+  $expectedPublications=0;if($script:mode-eq 'execute' -and $script:expireAfter-eq 4){$expectedPublications=1}
+  if($script:published-ne $expectedPublications -or $script:publishedWhileExpired){throw 'publication_expiry_contract'}
   if($null-eq $script:response -or $script:response.success -or $script:response.error-ne 'desktop_unavailable'){throw 'missing_private_failure_receipt'}
  }
 }
