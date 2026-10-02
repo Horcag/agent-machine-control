@@ -83,7 +83,13 @@ func (a *Adapter) parseConsoleFrame(output []byte, id string, width, height int)
 }
 
 func encodeConsoleRGB565(raw []byte, width, height int) ([]byte, error) {
-	if domain.ValidateConsoleDimensions(width, height) != nil || len(raw) != width*height*2 {
+	if domain.ValidateConsoleDimensions(width, height) != nil {
+		return nil, ErrMalformedResponse
+	}
+	// Observed native capture buffers also include four trailing bytes.
+	// Only the requested RGB565 pixels enter the PNG. Other lengths fail closed.
+	pixelBytes := width * height * 2
+	if len(raw) != pixelBytes && len(raw) != pixelBytes+4 {
 		return nil, ErrMalformedResponse
 	}
 	img := image.NewRGBA(image.Rect(0, 0, width, height))

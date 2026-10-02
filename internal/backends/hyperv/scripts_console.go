@@ -30,7 +30,7 @@ try {
     if ($settings.Count -ne 1 -or $service.Count -ne 1) { throw 'Guest settings unavailable' }
     $result = $service[0].GetVirtualSystemThumbnailImage($settings[0].__PATH, [uint16]$w, [uint16]$h)
     RequireSuccess $result
-    if ($result.ImageData.Length -ne $w*$h*2) { throw 'Invalid image' }
+    if ($result.ImageData.Length -ne ($w*$h*2) -and $result.ImageData.Length -ne ($w*$h*2+4)) { throw 'Invalid image' }
     @{ success=$true; vm_id=$id; width=$w; height=$h; native_width=[int]$head.CurrentHorizontalResolution; native_height=[int]$head.CurrentVerticalResolution; rgb565=[Convert]::ToBase64String([byte[]]$result.ImageData) } | ConvertTo-Json -Compress
 } catch {
     @{ success=$false; vm_id=$id } | ConvertTo-Json -Compress

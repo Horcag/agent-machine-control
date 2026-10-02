@@ -263,3 +263,29 @@ func TestConsoleDefaultDimensionsAndCapabilities(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestConsoleRGB565NativeTrailingMargin(t *testing.T) {
+	exact := []byte{0, 248, 224, 7}
+	expected, err := encodeConsoleRGB565(exact, 2, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Synthetic native-provider fixture: four ancillary bytes beyond its pixel plane.
+	padded := append(append([]byte(nil), exact...), []byte{4, 3, 2, 1}...)
+	actual, err := encodeConsoleRGB565(padded, 2, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(actual, expected) {
+		t.Fatal("provider trailing bytes entered PNG pixels")
+	}
+	for _, extra := range []int{1, 2, 3, 5, 6} {
+		malformed := append(append([]byte(nil), exact...), make([]byte, extra)...)
+		if _, err := encodeConsoleRGB565(malformed, 2, 1); err == nil {
+			t.Fatalf("accepted %d trailing bytes", extra)
+		}
+	}
+	if !strings.Contains(ScriptConsoleCapture, "-ne ($w*$h*2+4)") {
+		t.Fatal("script does not preserve bounded native payload")
+	}
+}
