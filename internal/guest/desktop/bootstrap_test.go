@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"os/exec"
@@ -63,13 +64,14 @@ const bootstrapFixtureProgram = `param($request)
 
 func runBootstrapWithPipe(t *testing.T, path string, data []byte, closeInput bool) ([]byte, error) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 36*time.Second)
 	defer cancel()
 	// #nosec G204 -- exact fixed bootstrap; the envelope executes only a fixed synthetic program.
-	command := exec.CommandContext(ctx, path, strings.Fields(transportCommand())[1:]...)
+	command := exec.CommandContext(ctx, path, readyBootstrapArguments(t)...)
 	command.WaitDelay = time.Second
-	var output, stderr bytes.Buffer
-	command.Stdout, command.Stderr = &output, &stderr
+	output := &bootstrapReadyOutput{ready: make(chan struct{})}
+	var stderr bytes.Buffer
+	command.Stdout, command.Stderr = output, &stderr
 	pipe, err := command.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -81,6 +83,18 @@ func runBootstrapWithPipe(t *testing.T, path string, data []byte, closeInput boo
 	// command.Process is the sole owned process; always reap it before returning.
 	done := make(chan error, 1)
 	go func() { done <- command.Wait() }()
+	startup := time.NewTimer(30 * time.Second)
+	defer startup.Stop()
+	select {
+	case <-output.ready:
+	case err := <-done:
+		t.Fatalf("bootstrap exited before readiness: %v", err)
+	case <-startup.C:
+		pipe.Close()
+		cancel()
+		<-done
+		t.Fatal("PowerShell did not reach bootstrap readiness within startup bound")
+	}
 	if _, err := pipe.Write(data); err != nil {
 		pipe.Close()
 		cancel()
@@ -94,7 +108,7 @@ func runBootstrapWithPipe(t *testing.T, path string, data []byte, closeInput boo
 	defer timer.Stop()
 	select {
 	case err := <-done:
-		return output.Bytes(), err
+		return bytes.TrimPrefix(output.Bytes(), []byte(bootstrapReadyMarker)), err
 	case <-timer.C:
 		// Release EOF before cancellation to let the original whole-stream bootstrap
 		// exit normally too. This avoids leaving a Windows interop child behind.
@@ -109,3 +123,51 @@ func runBootstrapWithPipe(t *testing.T, path string, data []byte, closeInput boo
 		return nil, errors.New("unreachable")
 	}
 }
+
+// The wrapper emits a fixed marker before the byte-for-byte production body. It
+// isolates inherited Core module paths without payload interpolation or UI APIs.
+const bootstrapReadyMarker = "amc-bootstrap-ready\n"
+
+func readyBootstrapArguments(t *testing.T) []string {
+	t.Helper()
+	args := strings.Fields(transportCommand())[1:]
+	body, err := base64.StdEncoding.DecodeString(args[len(args)-1])
+	if err != nil || len(body)%2 != 0 {
+		t.Fatal("production bootstrap encoding invalid")
+	}
+	const prefix = "$env:PSModulePath=Join-Path $PSHOME 'Modules';[Console]::Out.WriteLine('amc-bootstrap-ready');[Console]::Out.Flush();"
+	wrapped := make([]byte, len(prefix)*2, len(prefix)*2+len(body))
+	for i := range len(prefix) {
+		binary.LittleEndian.PutUint16(wrapped[i*2:], uint16(prefix[i]))
+	}
+	wrapped = append(wrapped, body...)
+	args[len(args)-1] = base64.StdEncoding.EncodeToString(wrapped)
+	decoded, err := base64.StdEncoding.DecodeString(args[len(args)-1])
+	if err != nil || !bytes.Equal(decoded[len(prefix)*2:], body) {
+		t.Fatal("readiness wrapper changed production bootstrap body")
+	}
+	return args
+}
+
+type bootstrapReadyOutput struct {
+	buffer   bytes.Buffer
+	ready    chan struct{}
+	signaled bool
+}
+
+func (output *bootstrapReadyOutput) Write(data []byte) (int, error) {
+	n, err := output.buffer.Write(data)
+	// WriteLine uses CRLF on Windows. Normalize only the fixed readiness line.
+	marker := []byte("amc-bootstrap-ready\r\n")
+	if !output.signaled && bytes.HasPrefix(output.Bytes(), marker) {
+		rest := bytes.Clone(output.Bytes()[len(marker):])
+		output.buffer.Reset()
+		output.buffer.WriteString(bootstrapReadyMarker)
+		output.buffer.Write(rest)
+		output.signaled = true
+		close(output.ready)
+	}
+	return n, err
+}
+
+func (output *bootstrapReadyOutput) Bytes() []byte { return output.buffer.Bytes() }
