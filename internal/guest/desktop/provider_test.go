@@ -43,16 +43,22 @@ func request(action string) Request {
 func TestExecuteCarriesGuestDataOnlyOnStdin(t *testing.T) {
 	runner := &runnerFake{}
 	req := request("clipboard.set")
-	req.Text = "synthetic secret; $(do-not-evaluate) 世界"
+	req.Text = "synthetic secret; $(do-not-evaluate) 世界\nnext line"
 	if _, err := New(runner).Execute(context.Background(), "local:aaaaaaaa-aaaa-4aaa-baaa-aaaaaaaaaaaa", req); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(runner.command, req.Text) || !strings.Contains(string(runner.input), "synthetic secret") {
 		t.Fatal("input interpolated or lost")
 	}
+	if !strings.HasSuffix(string(runner.input), "\n") || strings.Count(string(runner.input), "\n") != 1 {
+		t.Fatal("request is not one terminated compact JSON line")
+	}
 	var carried Request
 	if err := json.Unmarshal(runner.input, &carried); err != nil {
 		t.Fatal(err)
+	}
+	if carried.Text != req.Text {
+		t.Fatal("line framing changed guest text")
 	}
 	deadline, _ := time.Parse(time.RFC3339Nano, carried.Deadline)
 	if deadline.After(time.Now().Add(31 * time.Second)) {

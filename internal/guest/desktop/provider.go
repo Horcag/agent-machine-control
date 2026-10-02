@@ -108,7 +108,7 @@ func (p *Provider) exchange(ctx context.Context, target domain.MachineRef, req R
 	if err != nil {
 		return Response{}, ErrInvalidRequest
 	}
-	output, err := p.runner.RunCommand(ctx, target, transportCommand(), data, 512*1024)
+	output, err := p.runner.RunCommand(ctx, target, transportCommand(), append(data, '\n'), 512*1024)
 	if err != nil {
 		return Response{}, safeError(ctx)
 	}
@@ -127,8 +127,9 @@ func transportProgram() string {
 
 func transportCommand() string {
 	// Only the fixed embedded program is evaluated. Action/text fields remain JSON data.
-	// Stdin keeps both program and data below the Windows default-shell command limit.
-	bootstrap := `[Console]::InputEncoding=[Text.UTF8Encoding]::new($false);$envelope=[Console]::In.ReadToEnd()|ConvertFrom-Json;$program=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($envelope.program));$envelope.PSObject.Properties.Remove('program');& ([ScriptBlock]::Create($program)) $envelope`
+	// One compact JSON line avoids waiting for SSH stdin EOF. The fixed bootstrap
+	// stays below the shell command limit; program and guest data remain on stdin.
+	bootstrap := `$ErrorActionPreference='Stop';[Console]::InputEncoding=[Text.UTF8Encoding]::new($false);$envelope=[Console]::In.ReadLine()|ConvertFrom-Json;$program=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($envelope.program));$envelope.PSObject.Properties.Remove('program');& ([ScriptBlock]::Create($program)) $envelope`
 	runes := utf16.Encode([]rune(bootstrap))
 	data := make([]byte, 2*len(runes))
 	for i, code := range runes {
