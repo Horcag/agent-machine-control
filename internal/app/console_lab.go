@@ -106,7 +106,11 @@ func (s *ConsoleService) labIdentity(ctx context.Context, reference string) (Tar
 }
 
 func (s *ConsoleService) requireLabSafety(ctx context.Context, canonical string, acknowledge bool) error {
-	safety, err := s.labSafety.ResolveSafety(ctx, domain.MachineRef(canonical))
+	resolution, err := s.target.ResolveTarget(ctx, canonical)
+	if err != nil || resolution.Locator.String() != canonical {
+		return ErrInvalidConsoleLabGrant
+	}
+	safety, err := s.labSafety.ResolveSafety(ctx, domain.MachineRef(resolution.ProviderVMID))
 	if err != nil || (!safety.Contained && !acknowledge) || !safety.RollbackState.Available || !safety.RollbackState.Verified || safety.RollbackRef == "" {
 		return ErrInvalidConsoleLabGrant
 	}
