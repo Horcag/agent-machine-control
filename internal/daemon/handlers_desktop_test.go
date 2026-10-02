@@ -14,29 +14,34 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/app"
 )
 
+func assertDesktopDaemonInvalidEnvelope(t *testing.T, url, token, body string) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, url, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusBadRequest || !bytes.Contains(data, []byte("invalid_argument")) {
+		t.Fatalf("status=%d body=%s", resp.StatusCode, data)
+	}
+}
+
 func TestDesktopDaemonStrictRequestBoundary(t *testing.T) {
 	backend := &consoleDaemonBackend{mockDaemonBackend: &mockDaemonBackend{}}
 	endpoint, _, agent := setupConsoleDaemon(t, backend)
 	for _, path := range []string{"desktop/action", "desktop/lab/issue", "desktop/lab/status", "desktop/lab/active", "desktop/lab/revoke", "console/record"} {
 		for _, body := range []string{`{"actor":"operator:forged"}`, `{"unknown":true}`, `{} {}`, `null`, `[]`, `{`, `{"target":"` + strings.Repeat("x", 128*1024) + `"}`} {
 			t.Run(path+"/"+body[:min(len(body), 24)], func(t *testing.T) {
-				req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, endpoint+"/v1/"+path, strings.NewReader(body))
-				if err != nil {
-					t.Fatal(err)
-				}
-				req.Header.Set("Authorization", "Bearer "+agent)
-				resp, err := http.DefaultClient.Do(req)
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer resp.Body.Close()
-				data, err := io.ReadAll(resp.Body)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if resp.StatusCode != http.StatusBadRequest || !bytes.Contains(data, []byte("invalid_argument")) {
-					t.Fatalf("status=%d body=%s", resp.StatusCode, data)
-				}
+				assertDesktopDaemonInvalidEnvelope(t, endpoint+"/v1/"+path, agent, body)
 			})
 		}
 		status, _ := doJSONReq(t, http.MethodGet, endpoint+"/v1/"+path, agent, nil)

@@ -52,6 +52,40 @@ func desktopCLIHTTP(t *testing.T, handler http.HandlerFunc) *App {
 	return NewApp(nil, WithStateDir(state))
 }
 
+func assertDesktopCLIRequest(t *testing.T, r *http.Request, route string, expected any) {
+	t.Helper()
+	var got, want any
+	if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+		t.Error(err)
+	}
+	encoded, err := json.Marshal(expected)
+	if err != nil {
+		t.Error(err)
+	}
+	if err := json.Unmarshal(encoded, &want); err != nil {
+		t.Error(err)
+	}
+	if r.URL.Path != route || !reflect.DeepEqual(got, want) {
+		t.Errorf("route=%s got=%v want=%v", r.URL.Path, got, want)
+	}
+}
+
+func desktopCLIResponse(name string) any {
+	switch name {
+	case "enable":
+		return struct {
+			Grant   app.ConsoleLabGrant `json:"grant"`
+			Receipt domain.Receipt      `json:"receipt"`
+		}{Grant: app.ConsoleLabGrant{GrantID: "synthetic-receipt"}}
+	case "status":
+		return app.ConsoleLabGrantStatus{Grant: app.ConsoleLabGrant{GrantID: "synthetic-receipt"}, State: "active"}
+	case "disable":
+		return domain.Receipt{ReceiptID: "synthetic-receipt"}
+	default:
+		return app.DesktopActionResult{Receipt: &domain.Receipt{ReceiptID: "synthetic-receipt"}}
+	}
+}
+
 func TestDesktopCLIRequestsAndFlags(t *testing.T) {
 	deadline := "2026-10-02T20:00:00Z"
 	request := domain.DesktopRequest{RequestID: "0123456789abcdef0123456789abcdef", Deadline: deadline, Action: "clipboard.set", Text: "synthetic text"}
@@ -77,35 +111,8 @@ func TestDesktopCLIRequestsAndFlags(t *testing.T) {
 			calls := 0
 			a := desktopCLIHTTP(t, func(w http.ResponseWriter, r *http.Request) {
 				calls++
-				var got, want any
-				if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-					t.Error(err)
-				}
-				encoded, err := json.Marshal(tc.want)
-				if err != nil {
-					t.Error(err)
-				}
-				if err := json.Unmarshal(encoded, &want); err != nil {
-					t.Error(err)
-				}
-				if r.URL.Path != tc.route || !reflect.DeepEqual(got, want) {
-					t.Errorf("route=%s got=%v want=%v", r.URL.Path, got, want)
-				}
-				var response any
-				switch tc.name {
-				case "enable":
-					response = struct {
-						Grant   app.ConsoleLabGrant `json:"grant"`
-						Receipt domain.Receipt      `json:"receipt"`
-					}{Grant: app.ConsoleLabGrant{GrantID: "synthetic-receipt"}}
-				case "status":
-					response = app.ConsoleLabGrantStatus{Grant: app.ConsoleLabGrant{GrantID: "synthetic-receipt"}, State: "active"}
-				case "disable":
-					response = domain.Receipt{ReceiptID: "synthetic-receipt"}
-				default:
-					response = app.DesktopActionResult{Receipt: &domain.Receipt{ReceiptID: "synthetic-receipt"}}
-				}
-				if err := json.NewEncoder(w).Encode(response); err != nil {
+				assertDesktopCLIRequest(t, r, tc.route, tc.want)
+				if err := json.NewEncoder(w).Encode(desktopCLIResponse(tc.name)); err != nil {
 					t.Error(err)
 				}
 			})
@@ -115,6 +122,9 @@ func TestDesktopCLIRequestsAndFlags(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDesktopCLIObserveRequest(t *testing.T) {
 	a := desktopCLIHTTP(t, func(w http.ResponseWriter, r *http.Request) {
 		var got app.DesktopActionRequest
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
@@ -131,7 +141,7 @@ func TestDesktopCLIRequestsAndFlags(t *testing.T) {
 	}
 }
 
-func TestDesktopCLIRejectsInvalidFilesAndUsage(t *testing.T) {
+func TestDesktopCLIRejectsInvalidFiles(t *testing.T) {
 	a := desktopCLIHTTP(t, func(http.ResponseWriter, *http.Request) { t.Error("invalid request reached daemon") })
 	valid := `{"request_id":"0123456789abcdef0123456789abcdef","deadline":"2026-10-02T20:00:00Z","action":"windows"}`
 	for _, data := range []string{`{`, valid + ` {}`, strings.Replace(valid, `"action":"windows"`, `"action":"windows","actor":"operator:forged"`, 1), `null`, strings.Replace(valid, "windows", "window.resize", 1), valid[:len(valid)-1] + `,"text":"` + strings.Repeat("x", 128*1024) + `"}`} {
@@ -144,6 +154,10 @@ func TestDesktopCLIRejectsInvalidFilesAndUsage(t *testing.T) {
 			t.Fatalf("code=%d output=%s", code, out.String())
 		}
 	}
+}
+
+func TestDesktopCLIRejectsInvalidUsage(t *testing.T) {
+	a := desktopCLIHTTP(t, func(http.ResponseWriter, *http.Request) { t.Error("invalid request reached daemon") })
 	for _, args := range [][]string{{"desktop"}, {"--direct", "desktop", "observe"}, {"desktop", "observe", "--unknown"}, {"desktop", "observe", "one", "two"}, {"desktop", "action"}, {"desktop", "action", "extra"}, {"desktop", "enable", "extra"}, {"desktop", "unknown"}} {
 		var out bytes.Buffer
 		if code := a.Run(args, &out, &out); code != ExitUsage {

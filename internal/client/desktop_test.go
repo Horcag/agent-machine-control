@@ -11,6 +11,27 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/domain"
 )
 
+func assertDesktopClientRequest(t *testing.T, r *http.Request, path string, expected any) {
+	t.Helper()
+	if r.Method != http.MethodPost || r.URL.Path != path || r.Header.Get("Authorization") != "Bearer synthetic-agent-token" {
+		t.Errorf("request %s %s auth=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+	}
+	var got, want any
+	if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+		t.Error(err)
+	}
+	encoded, err := json.Marshal(expected)
+	if err != nil {
+		t.Error(err)
+	}
+	if err := json.Unmarshal(encoded, &want); err != nil {
+		t.Error(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("request got=%v want=%v", got, want)
+	}
+}
+
 func TestDesktopClientAuthenticatedContracts(t *testing.T) {
 	action := app.DesktopActionRequest{Target: "default", Request: domain.DesktopRequest{Action: "clipboard.set", Text: "synthetic text", RequestID: "0123456789abcdef0123456789abcdef", Deadline: "2026-10-02T20:00:00Z"}, Reason: "test action", IdempotencyKey: "action-key", LabGrantID: "own-grant"}
 	issue := app.ConsoleLabGrantIssueRequest{Target: "default", Beneficiary: "agent:mcp-local", Reason: "test grant", IdempotencyKey: "issue-key", ValidForMillis: 60000, AcknowledgeExternalEffects: true}
@@ -32,23 +53,7 @@ func TestDesktopClientAuthenticatedContracts(t *testing.T) {
 			calls := 0
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++
-				if r.Method != http.MethodPost || r.URL.Path != tc.path || r.Header.Get("Authorization") != "Bearer synthetic-agent-token" {
-					t.Errorf("request %s %s auth=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
-				}
-				var got, want any
-				if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-					t.Error(err)
-				}
-				encoded, err := json.Marshal(tc.request)
-				if err != nil {
-					t.Error(err)
-				}
-				if err := json.Unmarshal(encoded, &want); err != nil {
-					t.Error(err)
-				}
-				if !reflect.DeepEqual(got, want) {
-					t.Errorf("request got=%v want=%v", got, want)
-				}
+				assertDesktopClientRequest(t, r, tc.path, tc.request)
 				if err := json.NewEncoder(w).Encode(tc.response); err != nil {
 					t.Error(err)
 				}
