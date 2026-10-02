@@ -6,6 +6,16 @@ This document defines the bounded Windows VM desktop target and the evidence nee
 
 The model is a planner: it interprets images, UI elements, and terminal output and chooses operations. The executor captures state and applies validated operations. Reusing an executor does not reproduce proprietary model training. AMC retains machine identity, authorization, actor, reason, deadline, idempotency, and redacted receipts; optional tools cannot become that authority.
 
+### Public model protocols and reusable code
+
+OpenAI's [Computer Use API][openai-cu] asks the application to execute structured computer actions or model-generated interface code, then return a screenshot observation. The structured path pairs `computer_call_output.call_id` with the issued call and carries `output.type = computer_screenshot`; its documented PNG transport is `image_url = data:image/png;base64,...`. Generating a call is distinct from delivering its effect. These public API contracts do not establish how proprietary Codex desktop executors are implemented internally.
+
+Anthropic's [computer-use protocol][anthropic-cu] likewise leaves execution in the caller's environment. The application returns one `tool_result` per `tool_use`, with screenshot content represented by an `image` block whose `source` has `type = base64`, `media_type = image/png`, and encoded `data`. Ordered batches stop after a failure and return errors for skipped actions. This is a comparison of public protocols, not a recommendation to enable the locally disabled Claude backend.
+
+PNG bytes become an image observation when the client supplies the appropriate image block; base64 is a transport encoding, not OCR or a UI tree. Accessibility structure is a separate observation from UIA or another provider. AMC can reuse the capture, validate, execute, observe-again pattern without adding either model SDK. The [OpenAI sample executor][openai-sample] and [Anthropic reference demo][anthropic-sample] are MIT-licensed examples; preserve their notices and check copied dependencies. Their availability does not grant source access to proprietary model weights or Codex executor internals.
+
+### Executor comparison
+
 | Approach | Useful scope | Integration and license | Material limits |
 | --- | --- | --- | --- |
 | Native Hyper-V WMI | VM framebuffer capture and VM-addressed input; recovery independent of guest SSH/UI automation | Windows platform API; implement behind AMC backend capabilities, with PNG encoding in AMC | Thumbnail capture is image observation, not a UI tree or desktop video stream. Provider return values need decoding and effect verification. See [thumbnail API][thumbnail]. |
@@ -41,7 +51,7 @@ N = native VM console fallback; G = interactive guest helper; T = authenticated 
 | Reconnect / unattended operation | N independent recovery; G/T reconnect with fresh session proof | Unattended means no host interaction within declared guest state; it does not imply locked/logon/UAC support. Never replay uncertain mutation automatically | Drop transport after dispatch; inspect state before retry; reject stale session/window/capture identities; resume bounded observation after reconnect | Pending |
 | No host impact / concurrency | All routes | Exact VM GUID/session ownership; per-target mutation serialization; bounded lab authority; no host GUI input | Capture host foreground/cursor before/after, run two synthetic targets and prove isolation; cancellation releases guest inputs and leaves unrelated writers untouched | Pending |
 
-The project status supplied for this planning slice is native capture plus five input primitives implemented. That statement needs linked tests and installed-host results before any corresponding row becomes accepted. Guest UIA, recordings, ergonomic workflows, and lab authority are separate integration lanes. Fill evidence from the integrated build; do not infer acceptance from this document or an upstream project test.
+The integration owner reports source and synthetic fixture contract validation for integration commit `06cb7f1` and boundary commit `89e3e020903680e5ba5818d4cd99130d2f3df554`, whose commit unit hooks passed. This supports a contract-validation checkpoint; integrated quick/lint checks still need final receipts. On the installed build identified by the owner as `1ce`, native PNG capture, discovery of 25 MCP tools with active grants, and helper-unavailable fallback metadata passed. The helper HIGH-integrity label correction and live helper operation fixtures remain pending. These are scoped owner reports; operation rows stay pending until the deployment owner attaches exact build/session evidence. Fill evidence from the integrated build; do not infer acceptance from this document or an upstream project test.
 
 ## Validation gates and stop condition
 
@@ -55,6 +65,12 @@ Ready means each required row is accepted on the declared Windows/session matrix
 
 ## Primary sources
 
+Provider protocols: [OpenAI Computer Use][openai-cu] and [Anthropic computer use][anthropic-cu]. Public executors: [OpenAI sample][openai-sample] and [Anthropic reference demo][anthropic-sample]. These complement the platform and executor sources linked in the comparison table.
+
+[openai-cu]: https://developers.openai.com/api/docs/guides/tools-computer-use
+[anthropic-cu]: https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool
+[openai-sample]: https://github.com/openai/openai-cua-sample-app
+[anthropic-sample]: https://github.com/anthropics/anthropic-quickstarts/tree/main/computer-use-demo
 [thumbnail]: https://learn.microsoft.com/en-us/windows/win32/hyperv_v2/getvirtualsystemthumbnailimage-msvm-virtualsystemmanagementservice
 [uia]: https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-uiautomationoverview
 [sendinput]: https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput
