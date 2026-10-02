@@ -29,7 +29,7 @@ try {
                 $request = [IO.File]::ReadAllText($work) | ConvertFrom-Json
                 $deadline = Assert-Request $request
                 if ($request.request_id -ne $entry.BaseName) { throw 'invalid_request' }
-                $arguments = Get-WorkerArguments $entry.BaseName
+                $arguments = Get-WorkerArguments $entry.BaseName $request.action
                 $child = Start-Process -FilePath $powerShell -ArgumentList $arguments -WindowStyle Hidden -PassThru
                 $milliseconds = [Math]::Min(30000, [Math]::Max(1, ($deadline - [DateTimeOffset]::UtcNow).TotalMilliseconds))
                 $failure = 'desktop_failed'

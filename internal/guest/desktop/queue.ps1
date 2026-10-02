@@ -139,8 +139,15 @@ function Write-Response($response) {
     [Console]::Out.Write(($response | ConvertTo-Json -Compress -Depth 12))
 }
 
-function Get-WorkerArguments([string]$id) {
-    return '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File "' + (Join-Path $root 'worker.ps1') + '" -RequestID ' + $id
+function Get-WorkerArguments([string]$id, [string]$action = 'status') {
+    if ($id -cnotmatch '^[0-9a-f]{32}$') { throw 'invalid_request' }
+    # UIA clients use a windowless MTA; clipboard and other actions retain STA.
+    $uia = @('uia.tree', 'uia.invoke', 'uia.setvalue', 'uia.select', 'uia.toggle', 'uia.expand', 'uia.collapse', 'uia.scroll')
+    $sta = @('status', 'cursor', 'windows', 'clipboard.get', 'clipboard.set', 'launch', 'scroll', 'window.focus', 'window.move', 'window.resize', 'window.close', 'window.minimize', 'window.maximize', 'window.restore')
+    if ($uia -ccontains $action) { $apartment = '-MTA' }
+    elseif ($sta -ccontains $action) { $apartment = '-STA' }
+    else { throw 'unsupported_action' }
+    return '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass ' + $apartment + ' -WindowStyle Hidden -File "' + (Join-Path $root 'worker.ps1') + '" -RequestID ' + $id
 }
 
 function Get-LiveRequestIDs {
@@ -150,7 +157,9 @@ function Get-LiveRequestIDs {
     foreach ($process in $processes) {
         if ($process.CommandLine -cnotmatch ' ([0-9a-f]{32})$') { continue }
         $id = $Matches[1]
-        if (-not $process.CommandLine.EndsWith((Get-WorkerArguments $id), [StringComparison]::Ordinal)) { continue }
+        $staWorker = $process.CommandLine.EndsWith((Get-WorkerArguments $id 'status'), [StringComparison]::Ordinal)
+        $mtaWorker = $process.CommandLine.EndsWith((Get-WorkerArguments $id 'uia.tree'), [StringComparison]::Ordinal)
+        if (-not ($staWorker -or $mtaWorker)) { continue }
         if (-not [string]::Equals($process.ExecutablePath, $powerShell, [StringComparison]::OrdinalIgnoreCase)) { throw 'worker_identity_unproven' }
         $owner = Invoke-CimMethod -InputObject $process -MethodName GetOwnerSid -OperationTimeoutSec 2
         if ($owner.ReturnValue -ne 0 -or $owner.Sid -ne $sid) { throw 'worker_owner_unproven' }

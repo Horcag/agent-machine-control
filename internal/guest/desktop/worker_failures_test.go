@@ -43,7 +43,10 @@ function Assert-PrivatePath {param($path,$directory)
  if((Get-Item -LiteralPath $path).PSIsContainer-ne $directory){throw 'invalid_fixture_kind'}
 }
 function Assert-Request {param($request) return [DateTimeOffset]::UtcNow.AddSeconds(5)}
-function Get-WorkerArguments {param($id) return 'synthetic-worker-'+$id}
+function Get-WorkerArguments {param($id,$action)
+ if($action-cne 'uia.tree'){throw 'dispatcher_lost_action'}
+ return 'synthetic-worker-'+$id
+}
 function Write-PrivateFile {param($path,$data)
  if(-not $path.StartsWith($fixtureRoot+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'foreign_fixture_output'}
  if(-not $path.EndsWith('.json.tmp')){throw 'fallback_not_staged'}
@@ -85,7 +88,7 @@ try {
   $script:id='a'*32;$powerShell='synthetic-executable'
   $script:expectedResult=Join-Path (Join-Path $root 'results') ($script:id+'.json')
   $inputPath=Join-Path (Join-Path $root 'requests') ($script:id+'.json')
-  [IO.File]::WriteAllText($inputPath,('{"request_id":"'+$script:id+'"}'))
+  [IO.File]::WriteAllText($inputPath,('{"request_id":"'+$script:id+'","action":"uia.tree"}'))
   $script:kills=0;$script:disposed=0;$script:waits=0;$script:reaps=0
   $timer=[Diagnostics.Stopwatch]::StartNew()
   . ([ScriptBlock]::Create($source))
