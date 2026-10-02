@@ -126,7 +126,10 @@ func TestZeroHostRouteDefaultsToLocalCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatalf("zero local route capabilities: %v", err)
 	}
-	if !slices.Equal(caps.Slice(), domain.DirectMachineCapabilities().Slice()) {
+	expected := domain.DirectMachineCapabilities()
+	expected[domain.CapabilityConsoleScreenshot] = struct{}{}
+	expected[domain.CapabilityConsoleInput] = struct{}{}
+	if !slices.Equal(caps.Slice(), expected.Slice()) {
 		t.Fatalf("zero local route capabilities = %v, want direct capabilities", caps.Slice())
 	}
 }
