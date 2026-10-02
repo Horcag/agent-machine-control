@@ -91,6 +91,9 @@ type BootstrapSpec struct {
 	Distro                string `json:"distro"`
 	LinuxUser             string `json:"linux_user"`
 	StateDir              string `json:"state_dir"`
+	LauncherPath          string `json:"launcher_path,omitempty"`
+	LauncherSHA256        string `json:"launcher_sha256,omitempty"`
+	LauncherSource        string `json:"launcher_source,omitempty"`
 	WrapperPath           string `json:"wrapper_path"`
 	WrapperSHA256         string `json:"wrapper_sha256"`
 	MetadataPath          string `json:"metadata_path"`
@@ -154,6 +157,16 @@ func (s BootstrapSpec) validateArtifacts() error {
 	for _, digest := range []string{s.WrapperSHA256, s.MetadataSHA256, s.BinarySHA256} {
 		if err := domain.Fingerprint(digest).Validate(); err != nil {
 			return fmt.Errorf("%w: invalid executable fingerprint", ErrBootstrapDrift)
+		}
+	}
+	if s.LauncherPath != "" || s.LauncherSHA256 != "" || s.LauncherSource != "" {
+		for _, value := range []string{s.LauncherPath, s.LauncherSource} {
+			if err := domain.ValidateBoundedString(value, 1, 4096, ErrBootstrapDrift); err != nil {
+				return fmt.Errorf("%w: incomplete launcher artifact", ErrBootstrapDrift)
+			}
+		}
+		if err := domain.Fingerprint(s.LauncherSHA256).Validate(); err != nil || s.ActionExecutable != s.LauncherPath {
+			return fmt.Errorf("%w: invalid launcher identity", ErrBootstrapDrift)
 		}
 	}
 	return nil

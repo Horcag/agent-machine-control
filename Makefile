@@ -4,7 +4,10 @@ include quality/tool-versions.env
 
 GO_FILES := $(shell git ls-files --cached --others --exclude-standard '*.go')
 
-.PHONY: build test test-race coverage file-size fmt fmt-check mod-check tool-versions vet lint shellcheck actionlint vuln secrets docs quick check quality hooks graph-build graph-update graph-review clean
+.PHONY: bootstrap-launcher build test test-race coverage file-size fmt fmt-check mod-check tool-versions vet lint shellcheck actionlint vuln secrets docs quick check quality hooks graph-build graph-update graph-review clean
+
+bootstrap-launcher:
+	GOOS=windows CGO_ENABLED=0 go build -ldflags="-s -w -H=windowsgui" -o bin/amcd-launcher.exe ./cmd/amcd-launcher
 
 build:
 	go build ./cmd/...
