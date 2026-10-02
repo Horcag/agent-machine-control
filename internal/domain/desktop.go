@@ -3,8 +3,8 @@ package domain
 // DesktopRequest describes one guest desktop action in native screen coordinates.
 // Requests cross an authenticated guest transport; they never address the host UI.
 type DesktopRequest struct {
-	RequestID      string   `json:"request_id"`
-	Deadline       string   `json:"deadline"`
+	RequestID      string   `json:"request_id,omitempty"`
+	Deadline       string   `json:"deadline,omitempty"`
 	Action         string   `json:"action"`
 	WindowID       string   `json:"window_id,omitempty"`
 	WindowIdentity string   `json:"window_identity,omitempty"`

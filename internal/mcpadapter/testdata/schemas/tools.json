@@ -1038,8 +1038,6 @@
             }
           },
           "required": [
-            "request_id",
-            "deadline",
             "action"
           ],
           "type": [
