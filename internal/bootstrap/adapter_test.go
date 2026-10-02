@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"os"
@@ -18,6 +19,7 @@ func TestPowerShellAdapterIdentityDesiredAndLifecycleActions(t *testing.T) {
 	t.Parallel()
 
 	binary := filepath.Join(t.TempDir(), "amcd")
+	writeTestLauncher(t, filepath.Dir(binary))
 	if err := os.WriteFile(binary, []byte("synthetic-amcd"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -300,6 +302,7 @@ func TestBuildSpecProducesExactInteractiveLimitedFingerprint(t *testing.T) {
 	t.Parallel()
 
 	binary := filepath.Join(t.TempDir(), "amcd")
+	writeTestLauncher(t, filepath.Dir(binary))
 	if err := os.WriteFile(binary, []byte("synthetic-amcd"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -330,10 +333,10 @@ func TestBuildSpecProducesExactInteractiveLimitedFingerprint(t *testing.T) {
 func assertPowerShellFileAction(t *testing.T, spec app.BootstrapSpec) {
 	t.Helper()
 
-	if !strings.Contains(spec.ActionExecutable, "WindowsPowerShell\\v1.0\\powershell.exe") {
-		t.Fatalf("action executable = %q, want canonical Windows PowerShell", spec.ActionExecutable)
+	if spec.ActionExecutable != spec.LauncherPath || !strings.HasSuffix(spec.ActionExecutable, `\amcd-launcher.exe`) {
+		t.Fatalf("action executable = %q, want pinned GUI launcher", spec.ActionExecutable)
 	}
-	wantArguments := `-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "` + spec.WrapperPath + `"`
+	wantArguments := `-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "` + spec.WrapperPath + `"`
 	if spec.ActionArguments != wantArguments {
 		t.Fatalf("action arguments = %q, want %q", spec.ActionArguments, wantArguments)
 	}
@@ -362,13 +365,13 @@ func TestWrapperContainsOnlyFixedDaemonBootstrapInputs(t *testing.T) {
 			t.Errorf("wrapper missing %q: %s", required, text)
 		}
 	}
-	for _, forbidden := range []string{"token", "password", "vm_guid", "machine_id", "transcript", "--direct"} {
-		if strings.Contains(strings.ToLower(text), forbidden) {
+	for _, forbidden := range []string{"token", "password", "vm_guid", "machine_id", "transcript", "--direct", "-NoNewWindow", "Start-Process"} {
+		if strings.Contains(strings.ToLower(text), strings.ToLower(forbidden)) {
 			t.Errorf("wrapper contains forbidden %q: %s", forbidden, text)
 		}
 	}
 	for _, required := range []string{
-		"Start-Process", "-ArgumentList $arguments", "-NoNewWindow", "-Wait", "-PassThru", "exit $child.ExitCode",
+		"[Diagnostics.ProcessStartInfo]::new()", "$start.FileName", "$start.Arguments = $arguments -join", "$start.UseShellExecute = $false", "$start.CreateNoWindow = $true", "[Diagnostics.Process]::Start($start)", "$child.WaitForExit()", "exit $child.ExitCode",
 	} {
 		if !strings.Contains(text, required) {
 			t.Errorf("PowerShell launcher missing %q: %s", required, text)
@@ -491,6 +494,7 @@ type fakeCommandRunner struct {
 func newTestPowerShellAdapter(t *testing.T, environmentDistro, defaultDistro string) *PowerShellAdapter {
 	t.Helper()
 	binary := filepath.Join(t.TempDir(), "amcd")
+	writeTestLauncher(t, filepath.Dir(binary))
 	if err := os.WriteFile(binary, []byte("synthetic-amcd"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -548,4 +552,23 @@ type failingCommandRunner struct{}
 
 func (failingCommandRunner) Run(context.Context, string, map[string]string) ([]byte, error) {
 	return nil, errors.New("synthetic command failure")
+}
+
+func writeTestLauncher(t *testing.T, directory string) {
+	t.Helper()
+	// Minimal synthetic PE32+ header; no real executable or inventory is embedded.
+	data := make([]byte, 392)
+	copy(data, "MZ")
+	binary.LittleEndian.PutUint32(data[0x3c:], 128)
+	copy(data[128:], "PE\x00\x00")
+	fullData := data
+	data = data[128:]
+	binary.LittleEndian.PutUint16(data[4:], 0x8664)
+	binary.LittleEndian.PutUint16(data[20:], 240)
+	binary.LittleEndian.PutUint16(data[24:], 0x20b)
+	binary.LittleEndian.PutUint16(data[24+68:], 2)
+	binary.LittleEndian.PutUint32(data[24+108:], 16)
+	if err := os.WriteFile(filepath.Join(directory, "amcd-launcher.exe"), fullData, 0600); err != nil {
+		t.Fatal(err)
+	}
 }

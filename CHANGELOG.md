@@ -10,6 +10,9 @@ begin.
 
 ### Fixed
 
+- Launch the user-session daemon through a Windows GUI companion and consoleless
+  PowerShell/WSL children, retaining ordinary-user lifecycle control and pinned private artifacts.
+
 - Install the current-user daemon with an Interactive Limited logon task so ordinary
   installation and upgrades do not require S4U registration or repeated UAC.
 

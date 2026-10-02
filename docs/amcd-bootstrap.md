@@ -5,6 +5,15 @@ task launches the local WSL `amcd` process automatically without storing a passw
 token. It is host-control infrastructure; it does not select, enroll, start, stop, or otherwise
 mutate a virtual machine.
 
+## Package companion
+
+WSL bootstrap requires the matching architecture's `amcd-launcher.exe` beside the immutable Linux
+`amcd` executable. Download the `amcd-launcher` Windows archive from the same release and extract
+its executable beside `amcd`, or run `make bootstrap-launcher` when building from source. Installation
+checks that it is a regular Windows GUI executable, pins its SHA-256, copies it to protected Windows
+local storage, and verifies the copy before registering the task. Missing or console-subsystem
+companions fail before installation. The companion has no elevation or independent policy logic.
+
 ## Commands
 
 Run these commands from WSL with the same `amcd` binary and state directory that the scheduled
@@ -104,17 +113,21 @@ execution, battery, idle, network, wake, priority, compatibility, deletion, remo
 unified-scheduling, maintenance, or volatile settings. Version-specific settings are compared when
 the installed ScheduledTasks provider exposes them.
 
-The Windows-local PowerShell file launcher and metadata are stored below the current user's Local
-AppData. The Scheduled Task invokes canonical Windows PowerShell with fixed non-interactive `-File`
-arguments. The launcher uses `Start-Process` with the exact Windows `wsl.exe` path, validated WSL
-distribution and Linux user, exact Linux `amcd` path, state directory, loopback listen address, and
-fixed daemon flags; it waits and returns the child exit code. The files
+The Windows-local GUI launcher, PowerShell wrapper, and metadata are stored below the current user's
+Local AppData. The Scheduled Task starts `amcd-launcher.exe`, built with the Windows GUI subsystem,
+so its initial process does not allocate a console or activate Windows Terminal. It resolves canonical
+Windows PowerShell through `GetSystemDirectoryW` and starts it with `CREATE_NO_WINDOW` and fixed
+non-interactive `-File` arguments. The wrapper uses `ProcessStartInfo` with `UseShellExecute=false`
+and `CreateNoWindow=true` for the exact Windows `wsl.exe` path, validated WSL distribution and Linux
+user, exact Linux `amcd` path, state directory, loopback listen address, and fixed daemon flags.
+Both launchers wait and return the child's exit code. No Terminal preferences or unrelated windows
+or processes are changed. The three files
 and their directory have a canonical protected DACL with exactly two explicit FullControl allow
 ACEs: the current SID and LocalSystem. File ACEs have no inheritance or propagation; directory ACEs
 have exactly container and object inheritance with no propagation. Deny, inherited, extra, missing,
 weak, non-canonical, owner-drifted, reparse, and non-regular objects are rejected. ACLs and SHA-256
 hashes are re-verified before mutations. Metadata includes the exact binary hash and complete task
-fingerprint. Neither artifact contains bearer tokens, passwords, VM identity, inventory, guest data,
+fingerprint. No artifact contains bearer tokens, passwords, VM identity, inventory, guest data,
 or transcripts.
 
 ## Stop and removal behavior
@@ -125,8 +138,8 @@ endpoint is unavailable or the grace interval expires, and only after the comple
 fingerprint is read back again. Success requires endpoint, singleton, and process ownership to
 disappear and the exact task to no longer be running.
 
-`remove` performs the same stop protocol, unregisters only the exact owned task, re-verifies both
-artifact ACLs and hashes, and removes only the exact wrapper and metadata. It removes the dedicated
+`remove` performs the same stop protocol, unregisters only the exact owned task, re-verifies all
+artifact ACLs and hashes, and removes only the exact launcher, wrapper, and metadata. It removes the dedicated
 artifact directory only when empty.
 
 Each mutation is admitted with the explicit current Windows SID as actor, operator reason, absolute

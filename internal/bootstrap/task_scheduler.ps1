@@ -61,6 +61,28 @@ function Test-Hash([string] $LiteralPath, [string] $Expected) {
     return $actual -ceq $Expected
 }
 
+function Test-HasLauncher($Spec) {
+    return (Test-HasProperty $Spec 'launcher_path') -and -not [string]::IsNullOrEmpty([string] $Spec.launcher_path)
+}
+
+function Test-OwnedLauncher($Spec) {
+    if (-not (Test-HasLauncher $Spec)) { return $true }
+    return (Test-PrivateAcl $Spec.launcher_path $Spec.user_sid $false) -and (Test-Hash $Spec.launcher_path $Spec.launcher_sha256)
+}
+
+function Write-OwnedLauncher($Spec, [ref] $Created) {
+    if (-not (Test-HasLauncher $Spec)) { return }
+    if (-not (Test-Hash $Spec.launcher_source $Spec.launcher_sha256)) {
+        throw 'Bootstrap launcher source hash does not match'
+    }
+    $bytes = [IO.File]::ReadAllBytes($Spec.launcher_source)
+    $stream = [IO.File]::Open($Spec.launcher_path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    $Created.Value = $true
+    try { $stream.Write($bytes, 0, $bytes.Length) } finally { $stream.Dispose() }
+    Set-PrivateFileAcl $Spec.launcher_path $Spec.user_sid
+    if (-not (Test-OwnedLauncher $Spec)) { throw 'Bootstrap launcher verification failed' }
+}
+
 function Get-OwnedObservation($Spec) {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     if ($identity.User.Value -ne $Spec.user_sid -or $identity.Name -ne $Spec.account) {
@@ -70,15 +92,16 @@ function Get-OwnedObservation($Spec) {
     $task = Get-ScheduledTask -TaskPath $Spec.task_path -TaskName $Spec.task_name -ErrorAction SilentlyContinue
     $wrapperExists = Test-Path -LiteralPath $Spec.wrapper_path -PathType Leaf
     $metadataExists = Test-Path -LiteralPath $Spec.metadata_path -PathType Leaf
+    $launcherExists = (Test-HasLauncher $Spec) -and (Test-Path -LiteralPath $Spec.launcher_path)
     $directory = Split-Path -Parent $Spec.wrapper_path
     $directoryExists = Test-Path -LiteralPath $directory -PathType Container
-    if ($null -eq $task -and -not $wrapperExists -and -not $metadataExists) {
+    if ($null -eq $task -and -not $wrapperExists -and -not $metadataExists -and -not $launcherExists) {
         if ($directoryExists -and ((-not (Test-PrivateAcl $directory $Spec.user_sid $true)) -or @((Get-ChildItem -LiteralPath $directory -Force)).Count -ne 0)) {
             return [pscustomobject]@{ state = 'drift'; reason = 'bootstrap directory is not empty private owned state'; exact = $false; task_running = $false }
         }
         return [pscustomobject]@{ state = 'absent'; reason = 'owned task and artifacts are absent'; exact = $false; task_running = $false }
     }
-    if ($null -eq $task -or -not $wrapperExists -or -not $metadataExists) {
+    if ($null -eq $task -or -not $wrapperExists -or -not $metadataExists -or ((Test-HasLauncher $Spec) -and -not $launcherExists)) {
         return [pscustomobject]@{ state = 'drift'; reason = 'owned task artifacts are incomplete'; exact = $false; task_running = $false }
     }
     if (-not (Test-PrivateAcl $Spec.wrapper_path $Spec.user_sid $false) -or -not (Test-PrivateAcl $Spec.metadata_path $Spec.user_sid $false)) {
@@ -89,6 +112,10 @@ function Get-OwnedObservation($Spec) {
     }
     if (-not (Test-Hash $Spec.wrapper_path $Spec.wrapper_sha256) -or -not (Test-Hash $Spec.metadata_path $Spec.metadata_sha256)) {
         return [pscustomobject]@{ state = 'drift'; reason = 'owned artifact hash does not match'; exact = $false; task_running = $false }
+    }
+
+    if (-not (Test-OwnedLauncher $Spec)) {
+        return [pscustomobject]@{ state = 'drift'; reason = 'owned launcher identity does not match'; exact = $false; task_running = $false }
     }
 
     $persistedTaskXml = Export-ScheduledTask -TaskPath $Spec.task_path -TaskName $Spec.task_name -ErrorAction Stop
@@ -141,9 +168,14 @@ function Install-OwnedTask($Spec) {
         throw 'Bootstrap directory ACL verification failed'
     }
 
+    $launcherCreated = $false
     $registered = $false
     $registrationAttempted = $false
     try {
+        if (Test-HasLauncher $Spec) {
+            # Exact absent private directory was verified above. CreateNew refuses replacement.
+            Write-OwnedLauncher $Spec ([ref] $launcherCreated)
+        }
         [IO.File]::WriteAllBytes($Spec.wrapper_path, (Read-EncodedBytes 'AMC_BOOTSTRAP_WRAPPER_B64'))
         [IO.File]::WriteAllBytes($Spec.metadata_path, (Read-EncodedBytes 'AMC_BOOTSTRAP_METADATA_B64'))
         Set-PrivateFileAcl $Spec.wrapper_path $Spec.user_sid
@@ -172,6 +204,13 @@ function Install-OwnedTask($Spec) {
         Set-OwnedTaskLifecycleAcl $Spec
     }
     catch {
+        if ((Test-HasLauncher $Spec) -and -not $launcherCreated) {
+            # Losing CreateNew does not own any artifacts from a competing installer.
+            if ($createdDirectory -and @((Get-ChildItem -LiteralPath $directory -Force)).Count -eq 0) {
+                Remove-Item -LiteralPath $directory -Force -ErrorAction SilentlyContinue
+            }
+            throw
+        }
         if ($registrationAttempted) {
             try {
                 # A failed registration may have persisted, or another creator may
@@ -198,12 +237,40 @@ function Install-OwnedTask($Spec) {
                 throw 'Scheduled task registration outcome is uncertain; private bootstrap artifacts retained for recovery'
             }
         }
+        if ($launcherCreated -and (Test-Path -LiteralPath $Spec.launcher_path)) {
+            if (-not (Test-OwnedLauncher $Spec)) {
+                throw 'Bootstrap launcher outcome is uncertain; private artifacts retained for recovery'
+            }
+        }
         Remove-Item -LiteralPath $Spec.wrapper_path -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $Spec.metadata_path -Force -ErrorAction SilentlyContinue
-        if ($createdDirectory) {
+        if ($launcherCreated -and (Test-Path -LiteralPath $Spec.launcher_path)) { Remove-Item -LiteralPath $Spec.launcher_path -Force }
+        if ($createdDirectory -and @((Get-ChildItem -LiteralPath $directory -Force)).Count -eq 0) {
             Remove-Item -LiteralPath $directory -Force -ErrorAction SilentlyContinue
         }
         throw
+    }
+}
+
+function Remove-OwnedTask($spec) {
+    $owned = Assert-ExactOwned $spec
+    if ($owned.task_running) {
+        throw 'Owned task must be stopped before removal'
+    }
+    Unregister-ScheduledTask -TaskPath $spec.task_path -TaskName $spec.task_name -Confirm:$false
+    $directory = Split-Path -Parent $spec.wrapper_path
+    if (-not (Test-PrivateAcl $directory $spec.user_sid $true) -or -not (Test-PrivateAcl $spec.wrapper_path $spec.user_sid $false) -or -not (Test-PrivateAcl $spec.metadata_path $spec.user_sid $false)) {
+        throw 'Owned artifact identity changed before removal'
+    }
+    if (-not (Test-Hash $spec.wrapper_path $spec.wrapper_sha256) -or -not (Test-Hash $spec.metadata_path $spec.metadata_sha256)) {
+        throw 'Owned artifact hash changed before removal'
+    }
+    if (-not (Test-OwnedLauncher $spec)) { throw 'Owned launcher identity changed before removal' }
+    Remove-Item -LiteralPath $spec.wrapper_path -Force
+    Remove-Item -LiteralPath $spec.metadata_path -Force
+    if (Test-HasLauncher $spec) { Remove-Item -LiteralPath $spec.launcher_path -Force }
+    if ((Test-Path -LiteralPath $directory) -and @((Get-ChildItem -LiteralPath $directory -Force)).Count -eq 0) {
+        Remove-Item -LiteralPath $directory -Force
     }
 }
 
@@ -224,25 +291,7 @@ switch ($actionName) {
             Stop-ScheduledTask -TaskPath $spec.task_path -TaskName $spec.task_name
         }
     }
-    'remove' {
-        $owned = Assert-ExactOwned $spec
-        if ($owned.task_running) {
-            throw 'Owned task must be stopped before removal'
-        }
-        Unregister-ScheduledTask -TaskPath $spec.task_path -TaskName $spec.task_name -Confirm:$false
-        $directory = Split-Path -Parent $spec.wrapper_path
-        if (-not (Test-PrivateAcl $directory $spec.user_sid $true) -or -not (Test-PrivateAcl $spec.wrapper_path $spec.user_sid $false) -or -not (Test-PrivateAcl $spec.metadata_path $spec.user_sid $false)) {
-            throw 'Owned artifact identity changed before removal'
-        }
-        if (-not (Test-Hash $spec.wrapper_path $spec.wrapper_sha256) -or -not (Test-Hash $spec.metadata_path $spec.metadata_sha256)) {
-            throw 'Owned artifact hash changed before removal'
-        }
-        Remove-Item -LiteralPath $spec.wrapper_path -Force
-        Remove-Item -LiteralPath $spec.metadata_path -Force
-        if ((Test-Path -LiteralPath $directory) -and @((Get-ChildItem -LiteralPath $directory -Force)).Count -eq 0) {
-            Remove-Item -LiteralPath $directory -Force
-        }
-    }
+    'remove' { Remove-OwnedTask $spec }
     default { throw 'Unsupported bootstrap scheduler action' }
 }
 

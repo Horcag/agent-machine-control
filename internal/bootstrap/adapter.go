@@ -319,15 +319,20 @@ func buildSpec(host hostContext, identity app.BootstrapIdentity, distro, linuxUs
 	base := strings.TrimRight(host.LocalAppData, `\/`) + `\AgentMachineControl\bootstrap`
 	wrapperPath := base + `\amcd-current-user.ps1`
 	metadataPath := base + `\amcd-current-user.json`
-	powerShellExecutable := strings.TrimRight(host.SystemRoot, `\/`) + `\System32\WindowsPowerShell\v1.0\powershell.exe`
-	if hasPowerShellMetacharacter(host.WSLExecutable) || hasPowerShellMetacharacter(powerShellExecutable) || hasPowerShellMetacharacter(wrapperPath) {
+	launcherPath := base + `\amcd-launcher.exe`
+	launcherSource, launcherHash, err := launcherArtifact(binaryPath, distro)
+	if err != nil {
+		return app.BootstrapSpec{}, err
+	}
+	if hasPowerShellMetacharacter(host.WSLExecutable) || hasPowerShellMetacharacter(launcherPath) || hasPowerShellMetacharacter(wrapperPath) {
 		return app.BootstrapSpec{}, fmt.Errorf("%w: unsafe Windows host path", app.ErrBootstrapUnsupported)
 	}
 	spec := app.BootstrapSpec{
 		TaskPath: taskPath, TaskName: taskName,
-		ActionExecutable: powerShellExecutable,
-		ActionArguments:  `-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "` + wrapperPath + `"`,
-		Account:          identity.Account, UserSID: identity.SID, LogonType: "Interactive", RunLevel: "Limited",
+		ActionExecutable: launcherPath,
+		LauncherPath:     launcherPath, LauncherSource: launcherSource, LauncherSHA256: launcherHash,
+		ActionArguments: `-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "` + wrapperPath + `"`,
+		Account:         identity.Account, UserSID: identity.SID, LogonType: "Interactive", RunLevel: "Limited",
 		LogonTrigger: true, StartWhenAvailable: true, MultipleInstances: "IgnoreNew",
 		RestartCount: 3, RestartInterval: "PT1M", ExecutionTimeLimit: "PT0S",
 		AllowStartOnBatteries: true, DontStopOnBatteries: true,
@@ -376,14 +381,20 @@ $arguments = @(
     '%s',
     '--json'
 )
-$child = Start-Process -FilePath '%s' -ArgumentList $arguments -NoNewWindow -Wait -PassThru
+$start = [Diagnostics.ProcessStartInfo]::new()
+$start.FileName = '%s'
+$start.Arguments = $arguments -join ' '
+$start.UseShellExecute = $false
+$start.CreateNoWindow = $true
+$child = [Diagnostics.Process]::Start($start)
+$child.WaitForExit()
 exit $child.ExitCode
 `, quoteWindowsArgument(spec.Distro), quoteWindowsArgument(spec.LinuxUser), quoteWindowsArgument(spec.BinaryPath), quoteWindowsArgument(spec.StateDir), quoteWindowsArgument(spec.ListenAddress), spec.WSLExecutable)
 	return []byte(launcher), nil
 }
 
 // quoteWindowsArgument preserves one native argv value when Windows PowerShell
-// Start-Process joins ArgumentList entries into a single command line.
+// ProcessStartInfo.Arguments accepts one native Windows command line.
 func quoteWindowsArgument(value string) string {
 	if !windowsArgumentNeedsQuoting(value) {
 		return value

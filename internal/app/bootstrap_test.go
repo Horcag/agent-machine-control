@@ -175,7 +175,13 @@ func TestBootstrapSpecRejectsUnsafePrincipalAndTaskSettings(t *testing.T) {
 		"battery start blocked":  func(spec *BootstrapSpec) { spec.AllowStartOnBatteries = false },
 		"battery stop enabled":   func(spec *BootstrapSpec) { spec.DontStopOnBatteries = false },
 		"non-loopback listen":    func(spec *BootstrapSpec) { spec.ListenAddress = "0.0.0.0:8080" },
-		"changed wrapper hash":   func(spec *BootstrapSpec) { spec.WrapperSHA256 = "not-a-hash" },
+		"partial launcher":       func(spec *BootstrapSpec) { spec.LauncherPath = `C:\launcher.exe` },
+		"launcher action mismatch": func(spec *BootstrapSpec) {
+			spec.LauncherPath = `C:\launcher.exe`
+			spec.LauncherSource = `\\wsl.localhost\Synthetic\launcher.exe`
+			spec.LauncherSHA256 = spec.BinarySHA256
+		},
+		"changed wrapper hash": func(spec *BootstrapSpec) { spec.WrapperSHA256 = "not-a-hash" },
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {

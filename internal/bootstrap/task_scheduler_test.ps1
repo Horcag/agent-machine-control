@@ -5,6 +5,11 @@ function Assert-True([bool] $Value, [string] $Message) {
     if (-not $Value) { throw $Message }
 }
 
+$script:realOwnedObservation = ${function:Get-OwnedObservation}
+$script:realHash = ${function:Test-Hash}
+$script:useRealHash = $false
+$script:denyAclPath = ''
+
 # No scheduler objects are created: only an in-memory COM-shaped fixture is used.
 $script:task = [pscustomobject]@{ Sddl = ''; Flags = 0; ReadFlags = 0; WeakReadBack = $false; SetFailure = $false }
 $script:task | Add-Member ScriptMethod SetSecurityDescriptor {
@@ -56,10 +61,11 @@ function Get-OwnedObservation($Spec) {
     if ($script:registered) { return [pscustomobject]@{ state = 'stopped'; exact = -not $script:fingerprintDrift } }
     return [pscustomobject]@{ state = 'absent'; exact = $false }
 }
-function Test-PrivateAcl { return $true }
+function Test-PrivateAcl($LiteralPath) { return $LiteralPath -ne $script:denyAclPath }
 function Set-PrivateDirectoryAcl { }
 function Set-PrivateFileAcl { }
-function Test-Hash { return $true }
+ $script:sourceHashDenied = $false
+function Test-Hash($LiteralPath, $Expected) { if ($script:useRealHash) { return & $script:realHash $LiteralPath $Expected }; return -not ($script:sourceHashDenied -and $LiteralPath -eq $script:source) }
 function Read-EncodedBytes { return [byte[]]@(1, 2, 3) }
 function New-ScheduledTaskAction { }
 function New-ScheduledTaskPrincipal($UserId, $LogonType, $RunLevel) {
@@ -79,9 +85,12 @@ function Unregister-ScheduledTask {
 }
 
 $directory = Join-Path ([IO.Path]::GetTempPath()) ('amc-synthetic-bootstrap-' + [Guid]::NewGuid().ToString('N'))
+$script:source = Join-Path ([IO.Path]::GetTempPath()) ('amc-synthetic-launcher-' + [Guid]::NewGuid().ToString('N'))
+[IO.File]::WriteAllBytes($source, [byte[]]@(4, 5, 6))
 $spec = [pscustomobject]@{
     logon_type = 'Interactive'; user_sid = 'S-1-5-21-1000'; task_path = '\Synthetic\'; task_name = 'synthetic-task'
     wrapper_path = (Join-Path $directory 'wrapper.ps1'); metadata_path = (Join-Path $directory 'metadata.json')
+    launcher_path = (Join-Path $directory 'launcher.exe'); launcher_source = $source; launcher_sha256 = 'synthetic'
     wrapper_sha256 = 'synthetic'; metadata_sha256 = 'synthetic'; account = 'synthetic-account'
     action_executable = 'synthetic.exe'; action_arguments = ''; restart_count = 3; restart_interval = 'PT1M'
 }
@@ -121,7 +130,7 @@ try {
         try { Install-OwnedTask $spec } catch { $message = $_.Exception.Message }
         Assert-True ($message -eq 'Scheduled task rollback failed; private bootstrap artifacts retained for recovery') 'unsafe rollback error'
         Assert-True ($script:registered -and -not $script:removed) 'failed rollback unexpectedly removed task'
-        Assert-True ((Test-Path -LiteralPath $spec.wrapper_path) -and (Test-Path -LiteralPath $spec.metadata_path)) 'failed rollback deleted task artifacts'
+        Assert-True ((Test-Path -LiteralPath $spec.wrapper_path) -and (Test-Path -LiteralPath $spec.metadata_path) -and (Test-Path -LiteralPath $spec.launcher_path)) 'failed rollback deleted task artifacts'
         Remove-Item -LiteralPath $directory -Recurse -Force
     }
     $script:rollbackDenied = $false
@@ -140,12 +149,32 @@ try {
         }
         else {
             Assert-True ($message -eq 'Scheduled task registration outcome is uncertain; private bootstrap artifacts retained for recovery') 'uncertain registration error missing'
-            Assert-True ($script:registered -and (Test-Path -LiteralPath $spec.wrapper_path) -and (Test-Path -LiteralPath $spec.metadata_path)) 'uncertain registration deleted persisted task artifacts'
+            Assert-True ($script:registered -and (Test-Path -LiteralPath $spec.wrapper_path) -and (Test-Path -LiteralPath $spec.metadata_path) -and (Test-Path -LiteralPath $spec.launcher_path)) 'uncertain registration deleted persisted task artifacts'
             Remove-Item -LiteralPath $directory -Recurse -Force
         }
     }
     $script:registrationMode = ''
     $script:lookupDenied = $false
+
+    $script:registered = $false; $script:removed = $false
+    $script:sourceHashDenied = $true
+    $message = ''
+    try { Install-OwnedTask $spec } catch { $message = $_.Exception.Message }
+    Assert-True ($message -eq 'Bootstrap launcher source hash does not match') 'launcher source drift was accepted'
+    Assert-True (-not $script:registered -and -not (Test-Path -LiteralPath $directory)) 'source mismatch created a task or left artifacts'
+    $script:sourceHashDenied = $false
+
+    # A matching artifact from a concurrent installer is not this invocation's creation.
+    New-Item -ItemType Directory -Path $directory | Out-Null
+    [IO.File]::WriteAllBytes($spec.launcher_path, [byte[]]@(4, 5, 6))
+    [IO.File]::WriteAllBytes($spec.wrapper_path, [byte[]]@(7, 8))
+    [IO.File]::WriteAllBytes($spec.metadata_path, [byte[]]@(9, 10))
+    $message = ''
+    try { Install-OwnedTask $spec } catch { $message = $_.Exception.Message }
+    Assert-True (-not [string]::IsNullOrEmpty($message)) 'launcher CreateNew collision was accepted'
+    Assert-True ((Test-Path -LiteralPath $spec.launcher_path) -and -not $script:registered) 'matching concurrent launcher was deleted or registered'
+    Assert-True ((Test-Path -LiteralPath $spec.wrapper_path) -and (Test-Path -LiteralPath $spec.metadata_path)) 'concurrent installer artifacts were deleted'
+    Remove-Item -LiteralPath $directory -Recurse -Force
 
     $script:existing = $true
     $script:task.Sddl = ''
@@ -155,8 +184,43 @@ try {
     Assert-True $failed 'existing task was adopted'
     Assert-True (-not $script:registered -and -not $script:removed -and $script:task.Sddl -eq '') 'existing task was mutated'
     Assert-True (-not (Test-Path -LiteralPath $directory)) 'existing installation created artifacts'
+
+    # Exercise actual third-artifact observation and removal decisions, with generated files.
+    $script:existing = $false; $script:registered = $true
+    New-Item -ItemType Directory -Path $directory | Out-Null
+    foreach ($path in @($spec.launcher_path, $spec.wrapper_path, $spec.metadata_path)) { [IO.File]::WriteAllBytes($path, [byte[]]@(1, 2, 3)) }
+    $owned = $spec.PSObject.Copy()
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $owned.account = $identity.Name; $owned.user_sid = $identity.User.Value
+    $owned.wrapper_sha256 = 'sha256:' + (Get-FileHash $owned.wrapper_path).Hash.ToLowerInvariant()
+    $owned.metadata_sha256 = 'sha256:' + (Get-FileHash $owned.metadata_path).Hash.ToLowerInvariant()
+    $owned.launcher_sha256 = 'sha256:' + (Get-FileHash $owned.launcher_path).Hash.ToLowerInvariant()
+    $script:useRealHash = $true
+    function Get-ScheduledTask { if ($script:registered) { return [pscustomobject]@{ State = 'Ready' } }; return $null }
+    function Export-ScheduledTask { return '<synthetic />' }
+    function Test-OwnedTaskFingerprint { return $true }
+    function Get-OwnedObservation($Spec) { return & $script:realOwnedObservation $Spec }
+    Assert-True ((Get-OwnedObservation $owned).exact) 'exact GUI artifacts were rejected'
+    foreach ($drift in @('missing', 'hash', 'acl')) {
+        [IO.File]::WriteAllBytes($owned.launcher_path, [byte[]]@(1, 2, 3))
+        $script:denyAclPath = ''
+        if ($drift -eq 'missing') { Remove-Item -LiteralPath $owned.launcher_path }
+        if ($drift -eq 'hash') { [IO.File]::WriteAllBytes($owned.launcher_path, [byte[]]@(4, 5)) }
+        if ($drift -eq 'acl') { $script:denyAclPath = $owned.launcher_path }
+        Assert-True ((Get-OwnedObservation $owned).state -eq 'drift') "launcher $drift drift was accepted"
+        $failed = $false
+        try { Remove-OwnedTask $owned } catch { $failed = $true }
+        Assert-True ($failed -and $script:registered) "launcher $drift drift allowed task removal"
+        Assert-True ((Test-Path $owned.wrapper_path) -and (Test-Path $owned.metadata_path)) "launcher $drift drift deleted other artifacts"
+    }
+    $script:denyAclPath = ''
+    [IO.File]::WriteAllBytes($owned.launcher_path, [byte[]]@(1, 2, 3))
+    Remove-OwnedTask $owned
+    Assert-True (-not $script:registered -and -not (Test-Path $directory)) 'exact GUI installation was not fully removed'
+
 }
 finally {
+    Remove-Item -LiteralPath $source -Force
     if (Test-Path -LiteralPath $directory) { Remove-Item -LiteralPath $directory -Recurse -Force }
 }
 'bootstrap scheduler regressions: passed'

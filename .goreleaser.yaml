@@ -39,6 +39,14 @@ builds:
         -X github.com/Horcag/agent-machine-control/internal/buildinfo.commit={{.Commit}}
         -X github.com/Horcag/agent-machine-control/internal/buildinfo.date={{.Date}}
 
+  - id: amcd-launcher
+    main: ./cmd/amcd-launcher
+    binary: amcd-launcher
+    env: [CGO_ENABLED=0]
+    goos: [windows]
+    goarch: [amd64, arm64]
+    ldflags: ['-s -w -H=windowsgui']
+
 archives:
   - ids: [amc, amcd, amc-mcp]
     formats: [tar.gz]
@@ -53,6 +61,12 @@ archives:
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ title .Os }}_
       {{- if eq .Arch "amd64" }}x86_64{{ else }}{{ .Arch }}{{ end }}
+
+  - id: launcher
+    ids: [amcd-launcher]
+    formats: [zip]
+    files: [LICENSE, NOTICE]
+    name_template: 'amcd-launcher_{{ .Version }}_Windows_{{ .Arch }}'
 
 checksum:
   name_template: checksums.txt
