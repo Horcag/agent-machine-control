@@ -10,6 +10,9 @@ begin.
 
 ### Fixed
 
+- Install the current-user daemon with an Interactive Limited logon task so ordinary
+  installation and upgrades do not require S4U registration or repeated UAC.
+
 - Resolve and observe the enrolled target with one fresh exact provider query, without
   depending on unrelated machines or repeating fleet discovery.
 - Preserve explicit HTTP operation deadlines and typed failure categories across transports.

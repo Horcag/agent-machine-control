@@ -148,3 +148,26 @@ func TestBootstrapServiceUsesInjectedClockForDeadlineAdmission(t *testing.T) {
 		t.Fatalf("Ensure() error = %v, want deadline rejection from injected clock", err)
 	}
 }
+
+func TestBootstrapSpecAcceptsUserSessionAndExactLegacyPrincipal(t *testing.T) {
+	t.Parallel()
+	spec := syntheticBootstrapSpec()
+	identity := BootstrapIdentity{Account: spec.Account, SID: spec.UserSID}
+	for _, logon := range []string{"Interactive", "S4U"} {
+		spec.LogonType = logon
+		if err := spec.Validate(identity); err != nil {
+			t.Fatalf("Validate(%s): %v", logon, err)
+		}
+	}
+	for _, logon := range []string{"Password", "ServiceAccount", "InteractiveOrPassword", "Group", "None"} {
+		spec.LogonType = logon
+		if err := spec.Validate(identity); err == nil {
+			t.Fatalf("accepted unsafe logon %s", logon)
+		}
+	}
+	spec.LogonType = "Interactive"
+	spec.RunLevel = "Highest"
+	if err := spec.Validate(identity); err == nil {
+		t.Fatal("accepted elevated user task")
+	}
+}

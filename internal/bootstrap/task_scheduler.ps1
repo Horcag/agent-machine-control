@@ -156,7 +156,7 @@ function Install-OwnedTask($Spec) {
         }
 
         $action = New-ScheduledTaskAction -Execute $Spec.action_executable -Argument $Spec.action_arguments
-        $principal = New-ScheduledTaskPrincipal -UserId $Spec.account -LogonType S4U -RunLevel Limited
+        $principal = New-ScheduledTaskPrincipal -UserId $Spec.account -LogonType $Spec.logon_type -RunLevel Limited
         $trigger = New-ScheduledTaskTrigger -AtLogOn -User $Spec.account
         $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew `
             -RestartCount $Spec.restart_count -RestartInterval ([Xml.XmlConvert]::ToTimeSpan($Spec.restart_interval)) `

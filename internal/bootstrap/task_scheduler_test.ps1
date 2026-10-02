@@ -62,7 +62,9 @@ function Set-PrivateFileAcl { }
 function Test-Hash { return $true }
 function Read-EncodedBytes { return [byte[]]@(1, 2, 3) }
 function New-ScheduledTaskAction { }
-function New-ScheduledTaskPrincipal { }
+function New-ScheduledTaskPrincipal($UserId, $LogonType, $RunLevel) {
+    $script:principal = [pscustomobject]@{ UserId = $UserId; LogonType = $LogonType; RunLevel = $RunLevel }
+}
 function New-ScheduledTaskTrigger { }
 function New-ScheduledTaskSettingsSet { }
 function Register-ScheduledTask {
@@ -78,13 +80,14 @@ function Unregister-ScheduledTask {
 
 $directory = Join-Path ([IO.Path]::GetTempPath()) ('amc-synthetic-bootstrap-' + [Guid]::NewGuid().ToString('N'))
 $spec = [pscustomobject]@{
-    user_sid = 'S-1-5-21-1000'; task_path = '\Synthetic\'; task_name = 'synthetic-task'
+    logon_type = 'Interactive'; user_sid = 'S-1-5-21-1000'; task_path = '\Synthetic\'; task_name = 'synthetic-task'
     wrapper_path = (Join-Path $directory 'wrapper.ps1'); metadata_path = (Join-Path $directory 'metadata.json')
     wrapper_sha256 = 'synthetic'; metadata_sha256 = 'synthetic'; account = 'synthetic-account'
     action_executable = 'synthetic.exe'; action_arguments = ''; restart_count = 3; restart_interval = 'PT1M'
 }
 try {
     Install-OwnedTask $spec
+    Assert-True ($script:principal.UserId -eq $spec.account -and $script:principal.LogonType -eq 'Interactive' -and $script:principal.RunLevel -eq 'Limited') 'installation changed current-user Interactive Limited principal'
     Assert-True ($script:registered -and -not $script:removed) 'fresh installation did not persist'
     Assert-True (Test-OwnedTaskLifecycleAcl $script:task.Sddl $spec.user_sid) 'fresh installation omitted owner control'
     Assert-True ($script:task.Flags -eq 16 -and $script:task.ReadFlags -eq 4) 'task ACL flags changed'
