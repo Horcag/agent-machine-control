@@ -57,15 +57,8 @@ func (a *App) runDesktop(ctx context.Context, direct bool, stateDir string, args
 		}
 		out, err = cl.RevokeConsoleLabGrant(ctx, app.ConsoleLabGrantRevokeRequest{GrantID: *grant, Reason: *reason, IdempotencyKey: *key, Deadline: *deadline})
 	case "observe":
-		action := "windows"
-		if len(pos) == 1 {
-			action = pos[0]
-		}
-		var id [16]byte
-		if _, err = rand.Read(id[:]); err != nil {
-			return ExitMalformedProvider
-		}
-		out, err = cl.DesktopAction(ctx, app.DesktopActionRequest{Target: *target, Request: domain.DesktopRequest{RequestID: hex.EncodeToString(id[:]), Deadline: a.now().Add(30 * time.Second).Format(time.RFC3339Nano), Action: action}})
+		out, err = a.observeDesktop(ctx, cl, *target, pos)
+
 	case "action":
 		if len(pos) != 0 || *requestFile == "" {
 			return ExitUsage
@@ -131,4 +124,16 @@ func parseDesktopFlags(args []string, stderr io.Writer) (desktopFlags, bool) {
 		return desktopFlags{}, false
 	}
 	return desktopFlags{pos: pos, target: *target, reason: *reason, key: *key, grant: *grant, requestFile: *requestFile, forMCP: *forMCP, ack: *ack, validFor: *validFor, deadline: *deadline}, true
+}
+
+func (a *App) observeDesktop(ctx context.Context, cl *client.Client, target string, pos []string) (app.DesktopActionResult, error) {
+	action := "windows"
+	if len(pos) == 1 {
+		action = pos[0]
+	}
+	var id [16]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return app.DesktopActionResult{}, err
+	}
+	return cl.DesktopAction(ctx, app.DesktopActionRequest{Target: target, Request: domain.DesktopRequest{RequestID: hex.EncodeToString(id[:]), Deadline: a.now().Add(30 * time.Second).Format(time.RFC3339Nano), Action: action}})
 }

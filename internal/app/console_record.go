@@ -60,13 +60,11 @@ func (s *ConsoleService) Record(ctx context.Context, actor domain.ActorContext, 
 		animation.Delay = append(animation.Delay, req.IntervalMillis/10)
 		out.ObservedAt = append(out.ObservedAt, frame.ObservedAt)
 		if i > 0 {
-			delay := int(frame.ObservedAt.Sub(out.ObservedAt[i-1]).Milliseconds() / 10)
-			delay = max(1, delay)
-			if delay > 65535 {
-				return out, errors.New("app: invalid recording frame timing")
+			if err := setRecordingDelay(&animation, out.ObservedAt, i); err != nil {
+				return out, err
 			}
-			animation.Delay[i-1] = delay
 		}
+
 		if i < req.Frames-1 {
 			if err := waitRecordingFrame(ctx, req.IntervalMillis); err != nil {
 				return out, err
@@ -99,4 +97,13 @@ func waitRecordingFrame(ctx context.Context, intervalMillis int) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+func setRecordingDelay(animation *gif.GIF, observed []time.Time, index int) error {
+	delay := max(1, int(observed[index].Sub(observed[index-1]).Milliseconds()/10))
+	if delay > 65535 {
+		return errors.New("app: invalid recording frame timing")
+	}
+	animation.Delay[index-1] = delay
+	return nil
 }

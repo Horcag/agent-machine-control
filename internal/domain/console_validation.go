@@ -42,17 +42,10 @@ func (in ConsoleInput) validatePointerOptions() error {
 	if in.Count < 0 || in.Count > 2 || (in.Kind != "click" && in.Count != 0) || len(in.Modifiers) > 24 {
 		return ErrInvalidConsoleInput
 	}
-	seen := map[string]bool{}
-	modifiers := []string{}
-	if in.Modifiers != "" {
-		modifiers = strings.Split(in.Modifiers, "+")
+	if !validConsoleModifiers(in.Modifiers) {
+		return ErrInvalidConsoleInput
 	}
-	for _, modifier := range modifiers {
-		if (modifier != "ctrl" && modifier != "alt" && modifier != "shift" && modifier != "win") || seen[modifier] {
-			return ErrInvalidConsoleInput
-		}
-		seen[modifier] = true
-	}
+
 	if len(in.Modifiers) > 0 && in.Kind != "move" && in.Kind != "click" && in.Kind != "drag" {
 		return ErrInvalidConsoleInput
 	}
@@ -146,3 +139,18 @@ func consoleFunctionKey(part string) (uint32, bool) {
 }
 
 func consoleModifier(code uint32) bool { return code == 16 || code == 17 || code == 18 || code == 91 }
+
+func validConsoleModifiers(value string) bool {
+	seen := map[string]bool{}
+	modifiers := []string{}
+	if value != "" {
+		modifiers = strings.Split(value, "+")
+	}
+	for _, modifier := range modifiers {
+		if (modifier != "ctrl" && modifier != "alt" && modifier != "shift" && modifier != "win") || seen[modifier] {
+			return false
+		}
+		seen[modifier] = true
+	}
+	return true
+}
