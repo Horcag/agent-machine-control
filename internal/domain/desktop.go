@@ -3,20 +3,21 @@ package domain
 // DesktopRequest describes one guest desktop action in native screen coordinates.
 // Requests cross an authenticated guest transport; they never address the host UI.
 type DesktopRequest struct {
-	RequestID  string   `json:"request_id"`
-	Deadline   string   `json:"deadline"`
-	Action     string   `json:"action"`
-	WindowID   string   `json:"window_id,omitempty"`
-	ElementID  string   `json:"element_id,omitempty"`
-	X          int      `json:"x,omitempty"`
-	Y          int      `json:"y,omitempty"`
-	Width      int      `json:"width,omitempty"`
-	Height     int      `json:"height,omitempty"`
-	Delta      int      `json:"delta,omitempty"`
-	Axis       string   `json:"axis,omitempty"`
-	Text       string   `json:"text,omitempty"`
-	Executable string   `json:"executable,omitempty"`
-	Arguments  []string `json:"arguments,omitempty"`
+	RequestID      string   `json:"request_id"`
+	Deadline       string   `json:"deadline"`
+	Action         string   `json:"action"`
+	WindowID       string   `json:"window_id,omitempty"`
+	WindowIdentity string   `json:"window_identity,omitempty"`
+	ElementID      string   `json:"element_id,omitempty"`
+	X              int      `json:"x,omitempty"`
+	Y              int      `json:"y,omitempty"`
+	Width          int      `json:"width,omitempty"`
+	Height         int      `json:"height,omitempty"`
+	Delta          int      `json:"delta,omitempty"`
+	Axis           string   `json:"axis,omitempty"`
+	Text           string   `json:"text,omitempty"`
+	Executable     string   `json:"executable,omitempty"`
+	Arguments      []string `json:"arguments,omitempty"`
 }
 
 type DesktopBounds struct {
@@ -34,6 +35,7 @@ type DesktopCursor struct {
 
 type DesktopWindow struct {
 	ID        string        `json:"id"`
+	Identity  string        `json:"identity"`
 	Title     string        `json:"title"`
 	ClassName string        `json:"class_name"`
 	ProcessID int           `json:"process_id"`

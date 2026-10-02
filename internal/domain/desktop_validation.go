@@ -56,6 +56,9 @@ func desktopTextValid(text string, limit int) bool {
 }
 
 func (r DesktopRequest) validIdentity() bool {
+	if len(r.WindowIdentity) > 128 || strings.ContainsAny(r.WindowIdentity, "\r\n\x00") {
+		return false
+	}
 	if len(r.ElementID) > 256 || strings.ContainsAny(r.ElementID, "\r\n\x00") {
 		return false
 	}
