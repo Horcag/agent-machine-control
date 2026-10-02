@@ -74,6 +74,11 @@ operations, receipts, audit records, and persistent guest SSH/PTTY sessions. See
 `session open`, `read`, `write`, `control`, `wait`, `list`, `show`, `close`, and operator-only
 `session approve` commands.
 
+Guest window/UIA actions, cursor and clipboard access, application launch, bounded GIF recordings,
+and operator-enabled agent lab sessions are available through `desktop_observe`, `desktop_act`,
+and `console_record`. See [Guest desktop control](docs/guest-desktop.md) for the interaction loop
+and [the capability matrix](docs/desktop-capability-matrix.md) for acceptance boundaries.
+
 Native Hyper-V screenshots and keyboard/pointer actions are available through `amc console`,
 `console_screenshot`, and `console_input`. See [Native VM console](docs/vm-console.md) for private PNG
 output, frame coordinates, exact approvals, and acceptance limits.
