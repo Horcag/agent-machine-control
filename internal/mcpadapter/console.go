@@ -68,6 +68,10 @@ func (a *Adapter) ConsoleScreenshot(ctx context.Context, _ *mcp.CallToolRequest,
 }
 
 func (a *Adapter) ConsoleInput(ctx context.Context, _ *mcp.CallToolRequest, in ConsoleInputInput) (*mcp.CallToolResult, ConsoleInputResult, error) {
+	in.Input = defaultConsoleButton(in.Input)
+	if err := in.Input.Validate(); err != nil {
+		return mcpToolError(NewInputError(err.Error())), ConsoleInputResult{}, nil
+	}
 	cl, err := a.getClient()
 	if err != nil {
 		return mcpToolError(err), ConsoleInputResult{}, nil
@@ -77,4 +81,12 @@ func (a *Adapter) ConsoleInput(ctx context.Context, _ *mcp.CallToolRequest, in C
 		return mcpToolError(err), ConsoleInputResult{}, nil
 	}
 	return nil, ConsoleInputResult{SchemaVersion: SchemaVersion, Receipt: receipt.ConvertToDTO(rcpt)}, nil
+}
+
+// defaultConsoleButton applies the advertised MCP default before payload binding.
+func defaultConsoleButton(input domain.ConsoleInput) domain.ConsoleInput {
+	if input.Button == "" && (input.Kind == "click" || input.Kind == "drag") {
+		input.Button = "left"
+	}
+	return input
 }

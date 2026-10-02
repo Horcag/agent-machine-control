@@ -232,10 +232,10 @@ func TestDesktopActRejectsAmbiguityAndErrors(t *testing.T) {
 		{name: "none", noCalls: true},
 		{name: "both", noCalls: true, in: DesktopActInput{Action: &domain.DesktopRequest{}, Input: &domain.ConsoleInput{}}},
 		{name: "mismatched-deadline", noCalls: true, in: DesktopActInput{LabGrantID: "own-grant", Deadline: "2026-10-02T20:00:00Z", Action: &domain.DesktopRequest{Deadline: "2026-10-02T21:00:00Z"}}},
-		{name: "disabled", in: DesktopActInput{Input: &domain.ConsoleInput{}}, activeState: "disabled"},
-		{name: "grant-error", in: DesktopActInput{Input: &domain.ConsoleInput{}}, failPath: "/v1/desktop/lab/active"},
+		{name: "disabled", in: DesktopActInput{Input: &domain.ConsoleInput{Kind: "key", Key: "enter"}}, activeState: "disabled"},
+		{name: "grant-error", in: DesktopActInput{Input: &domain.ConsoleInput{Kind: "key", Key: "enter"}}, failPath: "/v1/desktop/lab/active"},
 		{name: "action-error", in: DesktopActInput{LabGrantID: "own-grant", Action: &domain.DesktopRequest{}}, failPath: "/v1/desktop/action"},
-		{name: "input-error", in: DesktopActInput{LabGrantID: "own-grant", Input: &domain.ConsoleInput{}}, failPath: "/v1/console/input"},
+		{name: "input-error", in: DesktopActInput{LabGrantID: "own-grant", Input: &domain.ConsoleInput{Kind: "key", Key: "enter"}}, failPath: "/v1/console/input"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0
@@ -263,9 +263,16 @@ func TestDesktopActRejectsAmbiguityAndErrors(t *testing.T) {
 
 func TestDesktopToolsRejectMissingDaemon(t *testing.T) {
 	a := NewAdapter(t.TempDir())
-	result, _, err := a.DesktopAct(t.Context(), nil, DesktopActInput{Input: &domain.ConsoleInput{}})
+	result, _, err := a.DesktopAct(t.Context(), nil, DesktopActInput{Input: &domain.ConsoleInput{Kind: "key", Key: "enter"}})
 	if err != nil || result == nil || !result.IsError {
 		t.Fatalf("missing daemon result=%+v err=%v", result, err)
+	}
+	if len(result.Content) != 1 {
+		t.Fatalf("missing daemon content=%+v", result.Content)
+	}
+	text, ok := result.Content[0].(*mcp.TextContent)
+	if !ok || text.Text != "service connection failed: daemon is unreachable" {
+		t.Fatalf("missing daemon content=%+v", result.Content)
 	}
 	result, _, err = a.DesktopObserve(t.Context(), nil, DesktopObserveInput{})
 	if err != nil || result == nil || !result.IsError {

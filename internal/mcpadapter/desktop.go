@@ -106,6 +106,13 @@ func (a *Adapter) DesktopAct(ctx context.Context, call *mcp.CallToolRequest, in 
 	if (in.Action == nil) == (in.Input == nil) {
 		return mcpToolError(NewInputError("provide exactly one action or input")), out, nil
 	}
+	if in.Input != nil {
+		input := defaultConsoleButton(*in.Input)
+		if err := input.Validate(); err != nil {
+			return mcpToolError(NewInputError(err.Error())), out, nil
+		}
+		in.Input = &input
+	}
 	cl, err := a.getClient()
 	if err != nil {
 		return mcpToolError(err), out, nil
