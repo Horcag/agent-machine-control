@@ -25,5 +25,6 @@ type ConsoleInputRequest struct {
 	Reason         string              `json:"reason"`
 	IdempotencyKey string              `json:"idempotency_key"`
 	Deadline       string              `json:"deadline"`
+	LabGrantID     string              `json:"lab_grant_id,omitempty"`
 	ApprovalID     string              `json:"approval_id,omitempty"`
 }
