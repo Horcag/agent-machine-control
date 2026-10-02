@@ -155,21 +155,14 @@ func TestSessionApprovalIssuanceFailsClosedWithoutPersistenceOwners(t *testing.T
 	}
 }
 
-func openIssuedAgentSession(t *testing.T, h *dynamicClassRetryHarness, key string) domain.SessionID {
+// seedApprovalIdentitySession creates owned fixture state without unrelated service
+// approval/finalization work; approved service opens are tested separately above.
+func seedApprovalIdentitySession(t *testing.T, h *dynamicClassRetryHarness, key string) domain.SessionID {
 	t.Helper()
-	issue := app.SessionApprovalIssueParams{
-		Kind: "session.open", Caller: sessionApprovalOperator(t), Target: h.target,
-		Reason: "create agent-owned session", IdempotencyKey: key, ValidFor: time.Minute,
-		Cols: 80, Rows: 24, Term: domain.DefaultTermType,
-	}
-	grant, _, err := h.svc.IssueSessionMutationApproval(context.Background(), issue)
-	if err != nil {
-		t.Fatal(err)
-	}
-	opened, _, err := h.svc.OpenSession(context.Background(), app.SessionOpenParams{
-		Target: h.target, Caller: h.actor, Reason: issue.Reason, IdempotencyKey: issue.IdempotencyKey,
-		Deadline: grant.Deadline, ApprovalID: grant.ApprovalID, Cols: 80, Rows: 24, Term: domain.DefaultTermType,
-	})
+	opened, err := h.manager.Open(context.Background(), domain.Operation{
+		Kind: "session.open", Target: domain.MachineRef(h.target), Actor: h.actor,
+		Reason: "seed approval identity fixture", IdempotencyKey: key,
+	}, 80, 24, domain.DefaultTermType)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,8 +171,13 @@ func openIssuedAgentSession(t *testing.T, h *dynamicClassRetryHarness, key strin
 
 func TestSessionApprovalIssuanceRejectsChangedFieldsForSameMutationIdentity(t *testing.T) {
 	h := newMCPApprovalReferenceHarness(t)
-	firstSession := openIssuedAgentSession(t, h, "idem-create-agent-session-one")
-	secondSession := openIssuedAgentSession(t, h, "idem-create-agent-session-two")
+	t.Cleanup(func() {
+		if err := h.manager.Shutdown(context.Background()); err != nil {
+			t.Errorf("close approval identity fixture sessions: %v", err)
+		}
+	})
+	firstSession := seedApprovalIdentitySession(t, h, "idem-create-agent-session-one")
+	secondSession := seedApprovalIdentitySession(t, h, "idem-create-agent-session-two")
 	operator := sessionApprovalOperator(t)
 
 	tests := []struct {
