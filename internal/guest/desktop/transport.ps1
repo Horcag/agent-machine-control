@@ -71,11 +71,9 @@ try {
         [Console]::Out.Write([IO.File]::ReadAllText($outputPath))
     } finally {
         if ($ownsTemp -and (Test-Path -LiteralPath $tempPath)) { Remove-Item -LiteralPath $tempPath -Force }
-        if ($ownsInput) {
-            foreach ($path in @($inputPath, $outputPath)) {
-                if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
-            }
-        }
+        # Keep the complete sensitive response private until exact-ID pruning after two minutes.
+        # The dispatcher must still see it when the worker exits; readers never remove it.
+        if ($ownsInput -and (Test-Path -LiteralPath $inputPath)) { Remove-Item -LiteralPath $inputPath -Force }
     }
 } catch {
     # Never expose exceptions containing paths, UIA properties, clipboard or typed input.

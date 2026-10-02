@@ -1,4 +1,11 @@
 . (Join-Path $PSScriptRoot 'queue.ps1')
+# Publish only complete private responses; failed staging files expire through queue pruning.
+function Write-FallbackResult([string]$path, [string]$id, [string]$failure) {
+    $temp = Join-Path (Split-Path -Parent $path) ([Guid]::NewGuid().ToString('N') + '.json.tmp')
+    Write-PrivateFile $temp ([Text.Encoding]::UTF8.GetBytes((@{request_id = $id; success = $false; error = $failure} | ConvertTo-Json -Compress)))
+    [IO.File]::Move($temp, $path)
+}
+
 Assert-Installed
 Assert-ConsoleSession
 $expiry = [DateTimeOffset]::UtcNow.AddMinutes(20)
@@ -32,11 +39,11 @@ try {
                     $failure = 'desktop_timeout'
                 }
                 if (-not (Test-Path -LiteralPath $result)) {
-                    Write-PrivateFile $result ([Text.Encoding]::UTF8.GetBytes((@{request_id = $entry.BaseName; success = $false; error = $failure} | ConvertTo-Json -Compress)))
+                    Write-FallbackResult $result $entry.BaseName $failure
                 }
             } catch {
                 if (-not (Test-Path -LiteralPath $result)) {
-                    Write-PrivateFile $result ([Text.Encoding]::UTF8.GetBytes((@{request_id = $entry.BaseName; success = $false; error = 'desktop_failed'} | ConvertTo-Json -Compress)))
+                    Write-FallbackResult $result $entry.BaseName 'desktop_failed'
                 }
             } finally {
                 if ($child) {

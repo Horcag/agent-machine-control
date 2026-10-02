@@ -46,7 +46,16 @@ function Assert-Request {param($request) return [DateTimeOffset]::UtcNow.AddSeco
 function Get-WorkerArguments {param($id) return 'synthetic-worker-'+$id}
 function Write-PrivateFile {param($path,$data)
  if(-not $path.StartsWith($fixtureRoot+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'foreign_fixture_output'}
- [IO.File]::WriteAllBytes($path,$data)
+ if(-not $path.EndsWith('.json.tmp')){throw 'fallback_not_staged'}
+ $file=[IO.File]::Open($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
+ try{
+  $half=[int]($data.Length/2);$file.Write($data,0,$half);$file.Flush()
+  if(Test-Path -LiteralPath $script:expectedResult){throw 'partial_final_response_visible'}
+  $file.Write($data,$half,$data.Length-$half)
+ }finally{$file.Dispose()}
+ if($script:mode-eq 'publication_conflict'){
+  [IO.File]::WriteAllText($script:expectedResult,'{"request_id":"'+$script:id+'","success":true,"text":"synthetic valid result"}')
+ }
 }
 function Start-Sleep {param($Milliseconds) $script:expiry=[DateTimeOffset]::MinValue}
 function Start-Process {param($FilePath,$ArgumentList,$WindowStyle,[switch]$PassThru)
@@ -69,7 +78,7 @@ function Start-Process {param($FilePath,$ArgumentList,$WindowStyle,[switch]$Pass
  return $process
 }
 try {
- foreach($script:mode in @('early_exit','timeout','valid')){
+ foreach($script:mode in @('early_exit','timeout','valid','publication_conflict')){
   $root=Join-Path $fixtureRoot $script:mode
   [IO.Directory]::CreateDirectory((Join-Path $root 'requests'))|Out-Null
   [IO.Directory]::CreateDirectory((Join-Path $root 'results'))|Out-Null
@@ -86,7 +95,7 @@ try {
   $response=[IO.File]::ReadAllText($script:expectedResult)|ConvertFrom-Json
   if($response.request_id-ne $script:id -or $script:disposed-ne 1 -or $script:waits-ne 1){throw 'response_identity_or_cleanup'}
   if(Test-Path -LiteralPath ($inputPath+'.work')){throw 'abandoned_work_file'}
-  if($script:mode-eq 'valid'){
+  if($script:mode-in @('valid','publication_conflict')){
    if(-not $response.success -or $response.text-ne 'synthetic valid result' -or $script:kills-ne 0){throw 'valid_result_changed'}
   }else{
    $expected='desktop_failed';if($script:mode-eq 'timeout'){$expected='desktop_timeout'}

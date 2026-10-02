@@ -51,11 +51,13 @@ try {
  $expired=@(
   (New-QueueFile 'requests' ('a'*32) '.json.tmp' $true),
   (New-QueueFile 'results' ('b'*32) '.json.tmp' $true),
+  (New-QueueFile 'results' ('4'*32) '.json' $true),
   (New-QueueFile 'requests' ('c'*32) '.json.work' $true),
   (New-QueueFile 'requests' ('d'*32) '.json' $true))
  $activeID='e'*32
  $active=@((New-QueueFile 'requests' $activeID '.json.work' $true),(New-QueueFile 'results' $activeID '.json.tmp' $true))
  $fresh=New-QueueFile 'requests' ('f'*32) '.json.tmp' $false
+ $freshResult=New-QueueFile 'results' ('5'*32) '.json' $false
  $insecureFile=New-QueueFile 'requests' ('0'*32) '.json.tmp' $true;$script:DeniedPaths=@($insecureFile)
  $busy=New-QueueFile 'requests' ('1'*32) '.json.tmp' $true
  $held=[IO.File]::Open($busy,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
@@ -65,7 +67,7 @@ try {
  $script:Processes=@(@{ExecutablePath=$powerShell;CommandLine=('"'+$powerShell+'" '+(Get-WorkerArguments $activeID));OwnerSID=$sid})
  Remove-ExpiredQueueFiles
  foreach($path in $expired){Require-File $path $false}
- foreach($path in @($active)+@($fresh,$insecureFile,$busy,$foreign,$upper,$invalidSuffix)){Require-File $path $true}
+ foreach($path in @($active)+@($fresh,$freshResult,$insecureFile,$busy,$foreign,$upper,$invalidSuffix)){Require-File $path $true}
  $held.Dispose();$held=$null
  Remove-ExpiredQueueFiles
  Require-File $busy $false
