@@ -97,9 +97,10 @@ function Invoke-DesktopAction($request) {
         return $response
     }
     if ($request.action -eq 'clipboard.set') {
-        if ($request.text.Length -gt 4096) { throw 'oversized_clipboard' }
-        if ($request.text -eq '') { [Windows.Forms.Clipboard]::Clear() }
-        else { [Windows.Forms.Clipboard]::SetText([string]$request.text) }
+        $text = [string]$request.text
+        if ($text.Length -gt 4096) { throw 'oversized_clipboard' }
+        if ($text -eq '') { [Windows.Forms.Clipboard]::Clear() }
+        else { [Windows.Forms.Clipboard]::SetText($text) }
         return $response
     }
     if ($request.action -eq 'launch') {
