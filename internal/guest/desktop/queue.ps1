@@ -65,3 +65,48 @@ function Assert-Request($request) {
 function Write-Response($response) {
     [Console]::Out.Write(($response | ConvertTo-Json -Compress -Depth 12))
 }
+
+function Get-WorkerArguments([string]$id) {
+    return '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File "' + (Join-Path $root 'worker.ps1') + '" -RequestID ' + $id
+}
+
+function Get-LiveRequestIDs {
+    $live = @{}
+    $processes = @(Get-CimInstance -ClassName Win32_Process -Filter "Name='powershell.exe'" -OperationTimeoutSec 2 | Select-Object -First 129)
+    if ($processes.Count -gt 128) { throw 'worker_inventory_unproven' }
+    foreach ($process in $processes) {
+        if ($process.CommandLine -cnotmatch ' ([0-9a-f]{32})$') { continue }
+        $id = $Matches[1]
+        if (-not $process.CommandLine.EndsWith((Get-WorkerArguments $id), [StringComparison]::Ordinal)) { continue }
+        if (-not [string]::Equals($process.ExecutablePath, $powerShell, [StringComparison]::OrdinalIgnoreCase)) { throw 'worker_identity_unproven' }
+        $owner = Invoke-CimMethod -InputObject $process -MethodName GetOwnerSid -OperationTimeoutSec 2
+        if ($owner.ReturnValue -ne 0 -or $owner.Sid -ne $sid) { throw 'worker_owner_unproven' }
+        # Process inspection is observational. Never stop a process discovered by name.
+        $live[$id] = $true
+    }
+    return $live
+}
+
+function Remove-ExpiredQueueFiles {
+    Assert-PrivatePath $root $true
+    $live = Get-LiveRequestIDs
+    $cutoff = [DateTime]::UtcNow.AddMinutes(-2)
+    foreach ($kind in @('requests', 'results')) {
+        $directory = Join-Path $root $kind
+        Assert-PrivatePath $directory $true
+        foreach ($entry in @(Get-ChildItem -LiteralPath $directory -Force | Select-Object -First 256)) {
+            $pattern = '^([0-9a-f]{32})\.json(?:\.tmp|\.work)?$'
+            if ($kind -eq 'results') { $pattern = '^([0-9a-f]{32})\.json(?:\.tmp)?$' }
+            if ($entry.Name -cnotmatch $pattern) { continue }
+            $id = $Matches[1]
+            if ($live.ContainsKey($id) -or $entry.LastWriteTimeUtc -ge $cutoff) { continue }
+            try { Assert-PrivatePath $entry.FullName $false } catch { continue }
+            # Open exclusively before deletion: an in-flight writer keeps its file.
+            try {
+                $file = [IO.File]::Open($entry.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
+                $file.Dispose()
+            } catch { continue }
+            try { Remove-Item -LiteralPath $entry.FullName -Force } catch { continue }
+        }
+    }
+}

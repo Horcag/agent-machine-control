@@ -65,6 +65,13 @@ function Get-Elements($hwnd) {
     return $elements.ToArray()
 }
 
+function Get-GuestCursor {
+    $cursor = [AMCDesktop+CursorInfo]::new()
+    $cursor.Size = [Runtime.InteropServices.Marshal]::SizeOf($cursor)
+    if (-not [AMCDesktop]::GetCursorInfo([ref]$cursor)) { throw 'cursor_unavailable' }
+    return @{x = $cursor.Position.X; y = $cursor.Position.Y; visible = ($cursor.Flags -band 1) -ne 0}
+}
+
 function Invoke-DesktopAction($request) {
     $sessionID = [Diagnostics.Process]::GetCurrentProcess().SessionId
     $elevated = [Security.Principal.WindowsPrincipal]::new($identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -72,14 +79,12 @@ function Invoke-DesktopAction($request) {
     if ($request.action -eq 'status') { return $response }
     if (-not [AMCDesktop]::InteractiveDesktop()) { throw 'protected_desktop' }
     if ($request.action -eq 'cursor') {
-        $cursor = [AMCDesktop+CursorInfo]::new()
-        $cursor.Size = [Runtime.InteropServices.Marshal]::SizeOf($cursor)
-        if (-not [AMCDesktop]::GetCursorInfo([ref]$cursor)) { throw 'cursor_unavailable' }
-        $response.cursor = @{x = $cursor.Position.X; y = $cursor.Position.Y; visible = ($cursor.Flags -band 1) -ne 0}
+        $response.cursor = Get-GuestCursor
         return $response
     }
     if ($request.action -eq 'windows') {
         $response.windows = @([AMCDesktop]::Windows() | ForEach-Object { Get-WindowInfo $_ })
+        $response.cursor = Get-GuestCursor
         return $response
     }
     if ($request.action -eq 'clipboard.get') {

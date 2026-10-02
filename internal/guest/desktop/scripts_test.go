@@ -13,11 +13,11 @@ import (
 
 func TestGuestScriptsEnforceInteractivePrivateBoundedExecution(t *testing.T) {
 	checks := map[string][]string{
-		"queue.ps1":     {"AreAccessRulesProtected", "unsafe_integrity", "S:(ML;OICI;NW;;;HI)", "foreign_task", "Get-FileHash", "Interactive", "Highest"},
+		"queue.ps1":     {"Remove-ExpiredQueueFiles", "GetOwnerSid", "Get-WorkerArguments", "-First 129", "-First 256", "FileShare]::None", "AreAccessRulesProtected", "unsafe_integrity", "S:(ML;OICI;NW;;;HI)", "foreign_task", "Get-FileHash", "Interactive", "Highest"},
 		"transport.ps1": {"-LogonType Interactive -RunLevel Highest", "-MultipleInstances IgnoreNew", "Assert-Installed", "Assert-Request", "'.tmp'", "deadline", "Stop-ScheduledTask"},
-		"server.ps1":    {"SessionId -eq 0", "WaitForExit", "$child.Kill()", "$child.Dispose()", "AddMinutes(20)", "-First 64"},
+		"server.ps1":    {"Remove-ExpiredQueueFiles", "AddSeconds(5)", "SessionId -eq 0", "WaitForExit", "$child.Kill()", "$child.Dispose()", "AddMinutes(20)", "-First 64"},
 		"worker.ps1":    {"SessionId -eq 0", "Add-Type -Path", "desktop_failed", "Assert-PrivatePath", "524288"},
-		"actions.ps1":   {"IsPassword", "GetRuntimeId", "elements.Count -lt 256", "item.depth -ge 8", "foreground_denied", "stale_window", "StartTime.ToUniversalTime().Ticks", "missing_window_identity", "InteractiveDesktop", "UseShellExecute = $false", "clipboard.get", "scroll", "uia.invoke", "uia.setvalue", "SelectionItemPattern", "TogglePattern", "ExpandCollapsePattern", "ScrollPattern", "horizontal"},
+		"actions.ps1":   {"Get-GuestCursor", "$response.cursor = Get-GuestCursor", "IsPassword", "GetRuntimeId", "elements.Count -lt 256", "item.depth -ge 8", "foreground_denied", "stale_window", "StartTime.ToUniversalTime().Ticks", "missing_window_identity", "InteractiveDesktop", "UseShellExecute = $false", "clipboard.get", "scroll", "uia.invoke", "uia.setvalue", "SelectionItemPattern", "TogglePattern", "ExpandCollapsePattern", "ScrollPattern", "horizontal"},
 	}
 	for name, markers := range checks {
 		data, _ := scripts.ReadFile(name)

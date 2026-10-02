@@ -43,12 +43,13 @@ try {
         exit 0
     } elseif ($request.mode -ne 'execute') { throw 'invalid_mode' }
     Assert-Installed
+    Remove-ExpiredQueueFiles
     Start-ScheduledTask -TaskName $taskName -TaskPath '\'
     $request.PSObject.Properties.Remove('files')
     $request.PSObject.Properties.Remove('hashes')
     $inputPath = Join-Path (Join-Path $root 'requests') ($request.request_id + '.json')
     $outputPath = Join-Path (Join-Path $root 'results') ($request.request_id + '.json')
-    if ((Get-ChildItem -LiteralPath (Join-Path $root 'requests') -Force).Count -ge 64) { throw 'queue_full' }
+    if (@(Get-ChildItem -LiteralPath (Join-Path $root 'requests') -Force | Where-Object { $_.Name -cmatch '^[0-9a-f]{32}\.json(?:\.tmp|\.work)?$' } | Select-Object -First 64).Count -ge 64) { throw 'queue_full' }
     foreach ($path in @($inputPath, ($inputPath + '.work'), $outputPath)) {
         if (Test-Path -LiteralPath $path) { throw 'duplicate_request' }
     }
