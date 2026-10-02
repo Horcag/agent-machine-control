@@ -121,8 +121,8 @@ func (s BootstrapSpec) validatePrincipal(identity BootstrapIdentity) error {
 	if s.TaskPath != `\AgentMachineControl\` || s.TaskName != "amcd-current-user" {
 		return fmt.Errorf("%w: non-canonical task identity", ErrBootstrapDrift)
 	}
-	if s.LogonType != "S4U" || s.RunLevel != "Limited" || !s.LogonTrigger {
-		return fmt.Errorf("%w: task must use current-user S4U Limited with a logon trigger", ErrBootstrapDrift)
+	if (s.LogonType != "Interactive" && s.LogonType != "S4U") || s.RunLevel != "Limited" || !s.LogonTrigger {
+		return fmt.Errorf("%w: task must use current-user Interactive or legacy S4U Limited with a logon trigger", ErrBootstrapDrift)
 	}
 	return nil
 }

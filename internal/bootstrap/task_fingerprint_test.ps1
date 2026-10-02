@@ -220,6 +220,14 @@ function Test-TaskFingerprints {
     $persistedTaskXml = New-SyntheticPersistedTaskXml
     Assert-True (Test-OwnedTaskFingerprint (New-SyntheticTask) $spec $persistedTaskXml) 'exact task fingerprint was rejected'
 
+    $interactive = New-SyntheticTask
+    $interactive.Principal.LogonType = 'Interactive'
+    Assert-False (Test-OwnedTaskFingerprint $interactive $spec $persistedTaskXml) 'logon-type drift from legacy S4U was accepted'
+    $sessionSpec = New-SyntheticSpec
+    $sessionSpec.logon_type = 'Interactive'
+    Assert-True (Test-OwnedTaskFingerprint $interactive $sessionSpec $persistedTaskXml) 'exact Interactive principal was rejected'
+    Assert-False (Test-OwnedTaskFingerprint (New-SyntheticTask) $sessionSpec $persistedTaskXml) 'legacy S4U was silently adopted as Interactive'
+
     $task = New-SyntheticTask
     $task.Principal.UserId = 'operator'
     Assert-True (Test-OwnedTaskFingerprint $task $spec $persistedTaskXml) 'persisted XML SID was not authoritative over a short CIM account name'

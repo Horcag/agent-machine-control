@@ -296,7 +296,7 @@ func TestShellRunnerDoesNotSynthesizeWSLEnvOutsideWSL(t *testing.T) {
 	}
 }
 
-func TestBuildSpecProducesExactS4ULimitedFingerprint(t *testing.T) {
+func TestBuildSpecProducesExactInteractiveLimitedFingerprint(t *testing.T) {
 	t.Parallel()
 
 	binary := filepath.Join(t.TempDir(), "amcd")
@@ -312,7 +312,7 @@ func TestBuildSpecProducesExactS4ULimitedFingerprint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildSpec() error = %v", err)
 	}
-	if spec.LogonType != "S4U" || spec.RunLevel != "Limited" || !spec.LogonTrigger || !spec.StartWhenAvailable {
+	if spec.LogonType != "Interactive" || spec.RunLevel != "Limited" || !spec.LogonTrigger || !spec.StartWhenAvailable {
 		t.Fatalf("unsafe principal/trigger/settings: %#v", spec)
 	}
 	if spec.MultipleInstances != "IgnoreNew" || spec.ExecutionTimeLimit != "PT0S" {
@@ -470,7 +470,7 @@ func TestTaskSchedulerScriptPinsOwnedTaskSecurityContract(t *testing.T) {
 	t.Parallel()
 
 	for _, required := range []string{
-		"WindowsIdentity]::GetCurrent", "-LogonType S4U", "-RunLevel Limited", "New-ScheduledTaskTrigger -AtLogOn",
+		"WindowsIdentity]::GetCurrent", "-LogonType $Spec.logon_type", "-RunLevel Limited", "New-ScheduledTaskTrigger -AtLogOn",
 		"-StartWhenAvailable", "-MultipleInstances IgnoreNew", "Test-PrivateAcl", "Test-Hash", "Unregister-ScheduledTask",
 		"AreAccessRulesCanonical", "FileSystemRights]::FullControl", "Test-OwnedTaskFingerprint", "AllowDemandStart",
 		"UseUnifiedSchedulingEngine", "Export-ScheduledTask", "Get-PersistedPrincipalSid", "Test-EmptyTaskRepetition",

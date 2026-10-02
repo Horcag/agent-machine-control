@@ -327,7 +327,7 @@ func buildSpec(host hostContext, identity app.BootstrapIdentity, distro, linuxUs
 		TaskPath: taskPath, TaskName: taskName,
 		ActionExecutable: powerShellExecutable,
 		ActionArguments:  `-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "` + wrapperPath + `"`,
-		Account:          identity.Account, UserSID: identity.SID, LogonType: "S4U", RunLevel: "Limited",
+		Account:          identity.Account, UserSID: identity.SID, LogonType: "Interactive", RunLevel: "Limited",
 		LogonTrigger: true, StartWhenAvailable: true, MultipleInstances: "IgnoreNew",
 		RestartCount: 3, RestartInterval: "PT1M", ExecutionTimeLimit: "PT0S",
 		AllowStartOnBatteries: true, DontStopOnBatteries: true,

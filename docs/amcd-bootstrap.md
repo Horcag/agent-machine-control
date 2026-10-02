@@ -50,6 +50,21 @@ operator intent. Reusing a key with a
 different action, reason, user, binary fingerprint, state directory, or task fingerprint is a
 conflict. Use `bootstrap status` separately when current-state or drift evidence is required.
 
+## Ordinary package upgrades
+
+Prepare and verify the new package before interruption. Preserve the old immutable package and
+protected task artifacts for rollback. Check active operations and sessions, then run `stop` and
+`remove` with the **old matching binary** and fresh reasons/idempotency keys. Confirm an absent
+result before switching the daemon link to the new package. Run `ensure` with the new binary and a
+new idempotency key, then verify fresh `status`, authenticated health, and the running executable's
+version/hash. CLI/MCP package updates alone do not replace a running daemon.
+
+For an Interactive installation, this cycle uses the normal current-user Windows token and does
+not request UAC. Do not delete/recreate unknown tasks, overwrite pinned binaries in place, or
+blindly replay failed mutations. If replacement fails, inspect the exact post-effect state and
+restore the retained old package through its matching controller; report recovery failure rather
+than claiming that the daemon was updated.
+
 ## Status and ownership
 
 `status` is read-only and reports one of these states:
@@ -66,10 +81,21 @@ Drift is fail-closed. `ensure`, `start`, `stop`, and `remove` do not replace, st
 delete ambiguous state. There is intentionally no automatic repair command.
 
 The task identity is fixed at `\AgentMachineControl\amcd-current-user`. Its principal is derived
-from `WindowsIdentity.GetCurrent()` and is pinned to current-user `S4U` with `Limited` run level.
+from `WindowsIdentity.GetCurrent()` and is pinned to current-user `Interactive` with `Limited` run level.
 It has a current-user logon trigger, `StartWhenAvailable`, `IgnoreNew` instance behavior, bounded
 restart-on-failure, battery-independent startup, and no execution time limit for the long-running
-daemon.
+daemon. Task startup requires that Windows user to be logged on; this is a user-session
+launcher rather than a machine service. Sign-out cleanup of a WSL child is not guaranteed by this
+bootstrap contract.
+No password, batch-logon privilege, persistent elevation, or UAC is needed for ordinary installation
+and lifecycle management when the task folder permits current-user task creation. This matches the
+[Windows task security contract](https://learn.microsoft.com/en-us/windows/win32/taskschd/security-contexts-for-running-tasks).
+
+Legacy `S4U` remains valid only for an exact, fingerprinted legacy spec. It is never silently
+adopted as `Interactive`. Stop and remove an old installation using its matching old binary before
+switching to a new immutable package and running `ensure`. A legacy task whose DACL excludes the
+current user can require one explicit administrator repair; the CLI does not bypass UAC or modify
+foreign task/folder permissions. New tasks grant the verified current SID direct lifecycle rights.
 
 Read-back compares one canonical action, principal, and logon trigger. It rejects action working
 directory or ID drift; principal defaults, extra privileges, disabled triggers, delay, boundary,
@@ -113,7 +139,7 @@ remove effect.
 ## Boundaries
 
 The bootstrap requires WSL interop, Windows PowerShell, and the ScheduledTasks module. Unsupported
-or non-WSL hosts fail before creating bootstrap state. A real S4U task canary remains an explicit
+or non-WSL hosts fail before creating bootstrap state. A real ordinary-user install/stop/remove/reinstall canary remains an explicit
 operator acceptance step on a disposable, rollback-protected Windows host.
 
 The daemon state directory belongs to one local WSL runtime at a time. Do not share it across
