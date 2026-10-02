@@ -26,7 +26,7 @@ func (a *App) runDesktop(ctx context.Context, direct bool, stateDir string, args
 		return ExitUsage
 	}
 	pos := options.pos
-	target, reason, key, grant, requestFile := &options.target, &options.reason, &options.key, &options.grant, &options.requestFile
+	target, reason, key, grant := &options.target, &options.reason, &options.key, &options.grant
 	forMCP, ack, validFor, deadline := &options.forMCP, &options.ack, &options.validFor, &options.deadline
 	cl, err := client.Discover(stateDir, client.TokenTypeOperator)
 	if err != nil {
@@ -60,15 +60,8 @@ func (a *App) runDesktop(ctx context.Context, direct bool, stateDir string, args
 		out, err = a.observeDesktop(ctx, cl, *target, pos)
 
 	case "action":
-		if len(pos) != 0 || *requestFile == "" {
-			return ExitUsage
-		}
-		var request domain.DesktopRequest
-		if err = readDesktopRequestFile(*requestFile, &request); err != nil {
-			fmt.Fprintln(stderr, "amc desktop: invalid request file")
-			return ExitUsage
-		}
-		out, err = cl.DesktopAction(ctx, app.DesktopActionRequest{Target: *target, Request: request, Reason: *reason, IdempotencyKey: *key, LabGrantID: *grant})
+		out, err = executeDesktopRequestFile(ctx, cl, options)
+
 	default:
 		return ExitUsage
 	}
@@ -136,4 +129,15 @@ func (a *App) observeDesktop(ctx context.Context, cl *client.Client, target stri
 		return app.DesktopActionResult{}, err
 	}
 	return cl.DesktopAction(ctx, app.DesktopActionRequest{Target: target, Request: domain.DesktopRequest{RequestID: hex.EncodeToString(id[:]), Deadline: a.now().Add(30 * time.Second).Format(time.RFC3339Nano), Action: action}})
+}
+
+func executeDesktopRequestFile(ctx context.Context, cl *client.Client, options desktopFlags) (app.DesktopActionResult, error) {
+	if len(options.pos) != 0 || options.requestFile == "" {
+		return app.DesktopActionResult{}, client.ErrInvalidArgument
+	}
+	var request domain.DesktopRequest
+	if err := readDesktopRequestFile(options.requestFile, &request); err != nil {
+		return app.DesktopActionResult{}, client.ErrInvalidArgument
+	}
+	return cl.DesktopAction(ctx, app.DesktopActionRequest{Target: options.target, Request: request, Reason: options.reason, IdempotencyKey: options.key, LabGrantID: options.grant})
 }

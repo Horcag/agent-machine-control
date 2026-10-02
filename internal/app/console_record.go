@@ -50,12 +50,11 @@ func (s *ConsoleService) Record(ctx context.Context, actor domain.ActorContext, 
 		if err != nil {
 			return out, err
 		}
-		img, err := png.Decode(bytes.NewReader(frame.Data))
+		p, err := recordingPalettedFrame(frame.Data)
 		if err != nil {
 			return out, err
 		}
-		p := image.NewPaletted(img.Bounds(), palette.Plan9)
-		draw.Draw(p, p.Bounds(), img, img.Bounds().Min, draw.Src)
+
 		animation.Image = append(animation.Image, p)
 		animation.Delay = append(animation.Delay, req.IntervalMillis/10)
 		out.ObservedAt = append(out.ObservedAt, frame.ObservedAt)
@@ -106,4 +105,14 @@ func setRecordingDelay(animation *gif.GIF, observed []time.Time, index int) erro
 	}
 	animation.Delay[index-1] = delay
 	return nil
+}
+
+func recordingPalettedFrame(data []byte) (*image.Paletted, error) {
+	img, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	p := image.NewPaletted(img.Bounds(), palette.Plan9)
+	draw.Draw(p, p.Bounds(), img, img.Bounds().Min, draw.Src)
+	return p, nil
 }
