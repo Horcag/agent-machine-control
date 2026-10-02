@@ -1,11 +1,12 @@
 . (Join-Path $PSScriptRoot 'queue.ps1')
 Assert-Installed
-if ([Diagnostics.Process]::GetCurrentProcess().SessionId -eq 0) { exit 1 }
+Assert-ConsoleSession
 $expiry = [DateTimeOffset]::UtcNow.AddMinutes(20)
 $child = $null
 $nextPrune = [DateTimeOffset]::MinValue
 try {
     while ([DateTimeOffset]::UtcNow -lt $expiry) {
+        Assert-ConsoleSession
         if ([DateTimeOffset]::UtcNow -ge $nextPrune) {
             Remove-ExpiredQueueFiles
             $nextPrune = [DateTimeOffset]::UtcNow.AddSeconds(5)

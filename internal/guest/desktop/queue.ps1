@@ -8,6 +8,69 @@ $taskName = 'AMC-Desktop-v1-' + $sid
 $powerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $taskArguments = '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File "' + (Join-Path $root 'server.ps1') + '"'
 
+# Pass the complete descriptor to Win32 creation: .NET ACL constructors omit labels.
+# This helper contains filesystem security APIs only, never host or guest UI APIs.
+if (-not ('AMCDesktopSecurity' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.IO;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+public static class AMCDesktopSecurity {
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Attributes {
+        public int Length;
+        public IntPtr Descriptor;
+        [MarshalAs(UnmanagedType.Bool)] public bool Inherit;
+    }
+    [DllImport("advapi32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    private static extern bool ConvertStringSecurityDescriptorToSecurityDescriptor(string value, uint revision, out IntPtr descriptor, out uint size);
+    [DllImport("advapi32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    private static extern bool ConvertSecurityDescriptorToStringSecurityDescriptor(IntPtr descriptor, uint revision, uint information, out IntPtr text, out uint size);
+    [DllImport("advapi32.dll", CharSet=CharSet.Unicode)]
+    private static extern uint GetNamedSecurityInfo(string path, uint type, uint information, out IntPtr owner, out IntPtr group, out IntPtr dacl, out IntPtr sacl, out IntPtr descriptor);
+    [DllImport("kernel32.dll")] public static extern uint WTSGetActiveConsoleSessionId();
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    private static extern bool CreateDirectory(string path, ref Attributes attributes);
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    private static extern SafeFileHandle CreateFile(string path, uint access, uint share, ref Attributes attributes, uint creation, uint flags, IntPtr template);
+    [DllImport("kernel32.dll")] private static extern IntPtr LocalFree(IntPtr value);
+    private static Attributes Parse(string sddl) {
+        IntPtr descriptor; uint size;
+        if (!ConvertStringSecurityDescriptorToSecurityDescriptor(sddl, 1, out descriptor, out size)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        return new Attributes {Length=Marshal.SizeOf(typeof(Attributes)), Descriptor=descriptor, Inherit=false};
+    }
+    public static void NewDirectory(string path, string sddl) {
+        Attributes attributes=Parse(sddl);
+        try {
+            if (!CreateDirectory(path, ref attributes)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        } finally { LocalFree(attributes.Descriptor); }
+    }
+    public static void NewFile(string path, string sddl, byte[] data) {
+        Attributes attributes=Parse(sddl);
+        try {
+            using (SafeFileHandle handle=CreateFile(path, 0x40000000, 0, ref attributes, 1, 0x80, IntPtr.Zero)) {
+                if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+                if (!Label(path).Contains(";NW;;;HI)")) throw new UnauthorizedAccessException("unsafe_integrity");
+                using (FileStream file=new FileStream(handle, FileAccess.Write)) file.Write(data, 0, data.Length);
+            }
+        } finally { LocalFree(attributes.Descriptor); }
+    }
+    public static string Label(string path) {
+        IntPtr owner, group, dacl, sacl, descriptor, text=IntPtr.Zero; uint size;
+        // LABEL_SECURITY_INFORMATION reads only MIC, without the audit-SACL privilege.
+        uint error=GetNamedSecurityInfo(path, 1, 0x10, out owner, out group, out dacl, out sacl, out descriptor);
+        if (error!=0) throw new Win32Exception((int)error);
+        try {
+            if (!ConvertSecurityDescriptorToStringSecurityDescriptor(descriptor, 1, 0x10, out text, out size)) throw new Win32Exception(Marshal.GetLastWin32Error());
+            return Marshal.PtrToStringUni(text);
+        } finally { if (text!=IntPtr.Zero) LocalFree(text); LocalFree(descriptor); }
+    }
+}
+'@
+}
+
 function Assert-PrivatePath([string]$path, [bool]$directory) {
     $item = Get-Item -LiteralPath $path -Force
     if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $item.PSIsContainer -ne $directory) { throw 'unsafe_path' }
@@ -19,23 +82,21 @@ function Assert-PrivatePath([string]$path, [bool]$directory) {
         if ($rule.AccessControlType -ne 'Allow' -or $rule.IdentityReference.Value -notin @($sid, 'S-1-5-18') -or $rule.IsInherited) { throw 'unsafe_acl' }
     }
     # High mandatory integrity prevents medium-integrity callers writing a Highest task queue.
-    $sddl = (Get-Acl -LiteralPath $path -Audit).Sddl
+    $sddl = [AMCDesktopSecurity]::Label($path)
     if ($sddl -notmatch '\(ML;[^;]*;NW;;;HI\)') { throw 'unsafe_integrity' }
 }
 
 function New-PrivateDirectory([string]$path) {
     if (Test-Path -LiteralPath $path) { Assert-PrivatePath $path $true; return }
-    $acl = [Security.AccessControl.DirectorySecurity]::new()
-    $acl.SetSecurityDescriptorSddlForm('O:' + $sid + 'G:' + $sid + 'D:P(A;OICI;FA;;;' + $sid + ')(A;OICI;FA;;;SY)S:(ML;OICI;NW;;;HI)')
-    [IO.Directory]::CreateDirectory($path, $acl) | Out-Null
+    $sddl = 'O:' + $sid + 'G:' + $sid + 'D:P(A;OICI;FA;;;' + $sid + ')(A;OICI;FA;;;SY)S:(ML;OICI;NW;;;HI)'
+    [AMCDesktopSecurity]::NewDirectory($path, $sddl)
     Assert-PrivatePath $path $true
 }
 
 function Write-PrivateFile([string]$path, [byte[]]$data) {
-    $acl = [Security.AccessControl.FileSecurity]::new()
-    $acl.SetSecurityDescriptorSddlForm('O:' + $sid + 'G:' + $sid + 'D:P(A;;FA;;;' + $sid + ')(A;;FA;;;SY)S:(ML;;NW;;;HI)')
-    $file = [IO.FileStream]::new($path, [IO.FileMode]::CreateNew, [Security.AccessControl.FileSystemRights]::FullControl, [IO.FileShare]::None, 4096, [IO.FileOptions]::None, $acl)
-    try { $file.Write($data, 0, $data.Length) } finally { $file.Dispose() }
+    $sddl = 'O:' + $sid + 'G:' + $sid + 'D:P(A;;FA;;;' + $sid + ')(A;;FA;;;SY)S:(ML;;NW;;;HI)'
+    [AMCDesktopSecurity]::NewFile($path, $sddl, $data)
+    Assert-PrivatePath $path $false
 }
 
 function Assert-Installed {
@@ -109,4 +170,10 @@ function Remove-ExpiredQueueFiles {
             try { Remove-Item -LiteralPath $entry.FullName -Force } catch { continue }
         }
     }
+}
+
+function Assert-ConsoleSession {
+    $session = [Diagnostics.Process]::GetCurrentProcess().SessionId
+    $console = [AMCDesktopSecurity]::WTSGetActiveConsoleSessionId()
+    if ($session -eq 0 -or $console -eq [uint32]::MaxValue -or $session -ne $console) { throw 'invalid_console_session' }
 }

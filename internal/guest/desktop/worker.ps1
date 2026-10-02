@@ -9,6 +9,7 @@ try {
     $request = [IO.File]::ReadAllText($path) | ConvertFrom-Json
     $deadline = Assert-Request $request
     if ($request.request_id -ne $RequestID -or [Diagnostics.Process]::GetCurrentProcess().SessionId -eq 0) { throw 'invalid_session' }
+    Assert-ConsoleSession
     Add-Type -Path (Join-Path $root 'native.cs')
     Add-Type -AssemblyName UIAutomationClient
     Add-Type -AssemblyName UIAutomationTypes

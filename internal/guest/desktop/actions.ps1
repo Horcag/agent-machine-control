@@ -73,6 +73,7 @@ function Get-GuestCursor {
 }
 
 function Invoke-DesktopAction($request) {
+    Assert-ConsoleSession
     $sessionID = [Diagnostics.Process]::GetCurrentProcess().SessionId
     $elevated = [Security.Principal.WindowsPrincipal]::new($identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     $response = @{session_id = $sessionID; elevated = $elevated}

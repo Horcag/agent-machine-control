@@ -122,6 +122,7 @@ $function=$ast.Find({param($node) $node -is [Management.Automation.Language.Func
 # Fake managed methods only: no native declarations, host GUI or real inventory.
 Add-Type -TypeDefinition 'using System; public static class AMCDesktop { public static bool InteractiveDesktop(){return true;} public static IntPtr[] Windows(){return new IntPtr[]{new IntPtr(123)};} }'
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent();$script:cursorCalls=0
+function Assert-ConsoleSession {}
 function Get-GuestCursor {$script:cursorCalls++;return @{x=21;y=31;visible=$true}}
 function Get-WindowInfo {param($hwnd) return @{id='123';title='synthetic window'}}
 $windows=Invoke-DesktopAction @{action='windows'}
