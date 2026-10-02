@@ -97,6 +97,8 @@ func TestToolList(t *testing.T) {
 	toolsResult := getExposedTools(ctx, t)
 
 	expectedTools := map[string]bool{
+		"console_screenshot": true,
+		"console_input":      true,
 		"doctor":             true,
 		"machine_list":       true,
 		"machine_inspect":    true,
@@ -134,8 +136,8 @@ func TestToolList(t *testing.T) {
 		}
 	}
 
-	if len(toolsResult.Tools) != 20 {
-		t.Errorf("expected exactly 20 tools, got %d", len(toolsResult.Tools))
+	if len(toolsResult.Tools) != 22 {
+		t.Errorf("expected exactly 22 tools, got %d", len(toolsResult.Tools))
 	}
 }
 

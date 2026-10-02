@@ -287,6 +287,8 @@ func (a *Adapter) BuildServer() *mcp.Server {
 		Description: "Close a persistent terminal session",
 	}, a.SessionClose)
 
+	mcp.AddTool(server, &mcp.Tool{Name: "console_screenshot", Description: "Capture the enrolled VM console as a PNG image"}, a.ConsoleScreenshot)
+	mcp.AddTool(server, &mcp.Tool{Name: "console_input", Description: "Send one approved bounded input action to the enrolled VM console"}, a.ConsoleInput)
 	return server
 }
 

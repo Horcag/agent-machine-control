@@ -630,6 +630,268 @@
     }
   },
   {
+    "description": "Send one approved bounded input action to the enrolled VM console",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": {
+          "type": "string"
+        },
+        "deadline": {
+          "description": "Exact canonical UTC operation deadline",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "type": "string"
+        },
+        "input": {
+          "additionalProperties": false,
+          "description": "Bounded console action in captured frame coordinates",
+          "properties": {
+            "button": {
+              "type": "string"
+            },
+            "delta": {
+              "type": "integer"
+            },
+            "frame_id": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "to_x": {
+              "type": "integer"
+            },
+            "to_y": {
+              "type": "integer"
+            },
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "target": {
+          "description": "Optional enrolled target reference",
+          "type": "string"
+        }
+      },
+      "required": [
+        "input",
+        "reason",
+        "idempotency_key",
+        "deadline"
+      ],
+      "type": "object"
+    },
+    "name": "console_input",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "receipt": {
+          "additionalProperties": false,
+          "properties": {
+            "actor": {
+              "type": "string"
+            },
+            "class": {
+              "type": "string"
+            },
+            "completed_at": {
+              "type": "string"
+            },
+            "effective_backend": {
+              "type": "string"
+            },
+            "evidence_refs": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "fingerprint": {
+              "type": "string"
+            },
+            "idempotency_fingerprint": {
+              "type": "string"
+            },
+            "idempotency_key": {
+              "type": "string"
+            },
+            "observation_type": {
+              "type": "string"
+            },
+            "operation_kind": {
+              "type": "string"
+            },
+            "outcome": {
+              "additionalProperties": false,
+              "properties": {
+                "error_category": {
+                  "type": "string"
+                },
+                "error_message": {
+                  "type": "string"
+                },
+                "exit_code": {
+                  "type": "integer"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status",
+                "exit_code"
+              ],
+              "type": "object"
+            },
+            "receipt_id": {
+              "type": "string"
+            },
+            "redaction_status": {
+              "type": "string"
+            },
+            "rollback_ref": {
+              "type": "string"
+            },
+            "started_at": {
+              "type": "string"
+            },
+            "target": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "receipt_id",
+            "operation_kind",
+            "fingerprint",
+            "actor",
+            "target",
+            "class",
+            "effective_backend",
+            "started_at",
+            "completed_at",
+            "outcome",
+            "observation_type",
+            "redaction_status"
+          ],
+          "type": "object"
+        },
+        "schema_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "receipt"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Capture the enrolled VM console as a PNG image",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "height": {
+          "description": "Maximum image height",
+          "type": "integer"
+        },
+        "target": {
+          "description": "Optional enrolled target reference",
+          "type": "string"
+        },
+        "width": {
+          "description": "Maximum image width",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "width",
+        "height"
+      ],
+      "type": "object"
+    },
+    "name": "console_screenshot",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "frame": {
+          "additionalProperties": false,
+          "properties": {
+            "frame_id": {
+              "type": "string"
+            },
+            "height": {
+              "type": "integer"
+            },
+            "mime_type": {
+              "type": "string"
+            },
+            "native_height": {
+              "type": "integer"
+            },
+            "native_width": {
+              "type": "integer"
+            },
+            "observed_at": {
+              "type": "string"
+            },
+            "sha256": {
+              "type": "string"
+            },
+            "vm_id": {
+              "type": "string"
+            },
+            "width": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "vm_id",
+            "frame_id",
+            "width",
+            "height",
+            "native_width",
+            "native_height",
+            "mime_type",
+            "sha256",
+            "observed_at"
+          ],
+          "type": "object"
+        },
+        "schema_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "frame"
+      ],
+      "type": "object"
+    }
+  },
+  {
     "description": "Return host diagnostics and provider capabilities",
     "inputSchema": {
       "additionalProperties": false,
