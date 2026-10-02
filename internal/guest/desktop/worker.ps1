@@ -15,6 +15,7 @@ try {
     Add-Type -AssemblyName UIAutomationTypes
     Add-Type -AssemblyName System.Windows.Forms
     . (Join-Path $root 'actions.ps1')
+    Assert-Deadline $deadline
     $response = Invoke-DesktopAction $request
     $response.request_id = $RequestID
     $response.success = $true

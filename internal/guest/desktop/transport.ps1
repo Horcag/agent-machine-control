@@ -12,38 +12,50 @@ try {
             }
         } else {
             if (Get-ScheduledTask -TaskName $taskName -TaskPath '\' -ErrorAction SilentlyContinue) { throw 'foreign_task' }
+            Assert-Deadline $deadline
             New-PrivateDirectory $root
-            foreach ($dir in @('requests', 'results')) { New-PrivateDirectory (Join-Path $root $dir) }
+            foreach ($dir in @('requests', 'results')) {
+                Assert-Deadline $deadline
+                New-PrivateDirectory (Join-Path $root $dir)
+            }
             foreach ($name in @('queue.ps1', 'server.ps1', 'worker.ps1', 'actions.ps1', 'native.cs')) {
                 $data = [Convert]::FromBase64String($request.files.$name)
+                Assert-Deadline $deadline
                 Write-PrivateFile (Join-Path $root $name) $data
             }
             $manifest = @{ version = 1; sid = $sid; hashes = $request.hashes }
+            Assert-Deadline $deadline
             Write-PrivateFile (Join-Path $root 'manifest.json') ([Text.Encoding]::UTF8.GetBytes(($manifest | ConvertTo-Json -Compress)))
             $action = New-ScheduledTaskAction -Execute $powerShell -Argument $taskArguments
             $principal = New-ScheduledTaskPrincipal -UserId $sid -LogonType Interactive -RunLevel Highest
             $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 21) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
             $trigger = New-ScheduledTaskTrigger -AtLogOn -User $sid
+            Assert-Deadline $deadline
             Register-ScheduledTask -TaskName $taskName -TaskPath '\' -Action $action -Principal $principal -Settings $settings -Trigger $trigger | Out-Null
             Assert-Installed
         }
         $request.action = 'status'
     } elseif ($request.mode -eq 'remove') {
         Assert-Installed
+        Assert-Deadline $deadline
         Stop-ScheduledTask -TaskName $taskName -TaskPath '\'
         $until = [DateTimeOffset]::UtcNow.AddSeconds(5)
         while ((Get-ScheduledTask -TaskName $taskName -TaskPath '\').State -eq 'Running') {
             if ([DateTimeOffset]::UtcNow -gt $until) { throw 'cleanup_timeout' }
             Start-Sleep -Milliseconds 50
         }
+        Assert-Deadline $deadline
         Unregister-ScheduledTask -TaskName $taskName -TaskPath '\' -Confirm:$false
         # Delete only this validated installation, never an arbitrary caller path.
+        Assert-Deadline $deadline
         Remove-Item -LiteralPath $root -Recurse -Force
         Write-Response @{request_id = $request.request_id; success = $true}
         exit 0
     } elseif ($request.mode -ne 'execute') { throw 'invalid_mode' }
     Assert-Installed
+    Assert-Deadline $deadline
     Remove-ExpiredQueueFiles
+    Assert-Deadline $deadline
     Start-ScheduledTask -TaskName $taskName -TaskPath '\'
     $request.PSObject.Properties.Remove('files')
     $request.PSObject.Properties.Remove('hashes')
@@ -57,8 +69,10 @@ try {
     $ownsTemp = $false
     $ownsInput = $false
     try {
+        Assert-Deadline $deadline
         Write-PrivateFile $tempPath ([Text.Encoding]::UTF8.GetBytes(($request | ConvertTo-Json -Compress -Depth 12)))
         $ownsTemp = $true
+        Assert-Deadline $deadline
         [IO.File]::Move($tempPath, $inputPath)
         $ownsInput = $true
         $ownsTemp = $false

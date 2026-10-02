@@ -13,15 +13,17 @@ import (
 )
 
 type runnerFake struct {
-	calls   int
-	command string
-	input   []byte
-	output  []byte
-	err     error
+	calls    int
+	deadline time.Time
+	command  string
+	input    []byte
+	output   []byte
+	err      error
 }
 
-func (r *runnerFake) RunCommand(_ context.Context, _ domain.MachineRef, command string, input []byte, limit int) ([]byte, error) {
+func (r *runnerFake) RunCommand(ctx context.Context, _ domain.MachineRef, command string, input []byte, limit int) ([]byte, error) {
 	r.calls++
+	r.deadline, _ = ctx.Deadline()
 	r.command, r.input = command, input
 	if limit != 512*1024 {
 		return nil, errors.New("incorrect output limit")
@@ -61,8 +63,50 @@ func TestExecuteCarriesGuestDataOnlyOnStdin(t *testing.T) {
 		t.Fatal("line framing changed guest text")
 	}
 	deadline, _ := time.Parse(time.RFC3339Nano, carried.Deadline)
-	if deadline.After(time.Now().Add(31 * time.Second)) {
+	if deadline.After(time.Now().Add(25 * time.Second)) {
 		t.Fatal("unbounded guest deadline")
+	}
+}
+
+func TestExchangePreservesBoundedEffectiveDeadline(t *testing.T) {
+	now := time.Now()
+	parent, cancel := context.WithDeadline(t.Context(), now.Add(5*time.Second))
+	defer cancel()
+	for _, test := range []struct {
+		name                      string
+		requestDeadline, expected time.Time
+		parent                    context.Context
+	}{
+		{"transport cap", now.Add(time.Minute), time.Time{}, t.Context()},
+		{"earlier request", now.Add(10 * time.Second), now.Add(10 * time.Second), t.Context()},
+		{"earlier parent", now.Add(time.Minute), now.Add(5 * time.Second), parent},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runner := &runnerFake{}
+
+			req := request("status")
+			req.Deadline = test.requestDeadline.UTC().Format(time.RFC3339Nano)
+			before := time.Now()
+			if _, err := New(runner).Execute(test.parent, "local:aaaaaaaa-aaaa-4aaa-baaa-aaaaaaaaaaaa", req); err != nil {
+				t.Fatal(err)
+			}
+			after := time.Now()
+			var carried Request
+			if err := json.Unmarshal(runner.input, &carried); err != nil {
+				t.Fatal(err)
+			}
+			actual, err := time.Parse(time.RFC3339Nano, carried.Deadline)
+			if err != nil || !actual.Equal(runner.deadline) {
+				t.Fatal("runner and guest received different deadlines")
+			}
+			if test.expected.IsZero() {
+				if actual.Before(before.Add(25*time.Second)) || actual.After(after.Add(25*time.Second)) {
+					t.Fatal("transport did not retain the 25-second budget")
+				}
+			} else if !actual.Equal(test.expected) {
+				t.Fatal("transport changed an earlier deadline")
+			}
+		})
 	}
 }
 

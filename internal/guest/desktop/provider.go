@@ -94,7 +94,9 @@ func (p *Provider) exchange(ctx context.Context, target domain.MachineRef, req R
 	}
 	ctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
-	ctx, cancelBound := context.WithTimeout(ctx, 30*time.Second)
+	// Leave ten seconds of clock skew headroom under the guest bootstrap
+	// 35-second admission bound, while retaining earlier caller deadlines.
+	ctx, cancelBound := context.WithTimeout(ctx, 25*time.Second)
 	defer cancelBound()
 	deadline, _ = ctx.Deadline()
 	req.Deadline = deadline.UTC().Format(time.RFC3339Nano)
@@ -129,7 +131,9 @@ func transportCommand() string {
 	// Only the fixed embedded program is evaluated. Action/text fields remain JSON data.
 	// One compact JSON line avoids waiting for SSH stdin EOF. The fixed bootstrap
 	// stays below the shell command limit; program and guest data remain on stdin.
-	bootstrap := `$ErrorActionPreference='Stop';[Console]::InputEncoding=[Text.UTF8Encoding]::new($false);$envelope=[Console]::In.ReadLine()|ConvertFrom-Json;$program=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($envelope.program));$envelope.PSObject.Properties.Remove('program');& ([ScriptBlock]::Create($program)) $envelope`
+	// Read exactly one byte per call to avoid console text reader buffering.
+	// The byte cap includes LF; UTF-8 decoding rejects loss.
+	bootstrap := `$ErrorActionPreference='Stop';$stream=[Console]::OpenStandardInput();$buffer=[IO.MemoryStream]::new();$one=New-Object byte[] 1;try{while($true){$read=$stream.Read($one,0,1);if($read -eq 0){throw 'truncated_request'};if($buffer.Length -ge 524288){throw 'oversized_request'};$buffer.Write($one,0,1);if($one[0] -eq 10){break}};if($buffer.Length -eq 1){throw 'empty_request'};$utf8=[Text.UTF8Encoding]::new($false,$true);$envelope=$utf8.GetString($buffer.ToArray(),0,[int]$buffer.Length-1)|ConvertFrom-Json}finally{$buffer.Dispose()};if($envelope.request_id -cnotmatch '^[0-9a-f]{32}$'){throw 'invalid_request'};$deadline=[DateTimeOffset]::Parse($envelope.deadline);$now=[DateTimeOffset]::UtcNow;if($deadline -le $now -or $deadline -gt $now.AddSeconds(35)){throw 'expired_request'};$program=$utf8.GetString([Convert]::FromBase64String($envelope.program));$envelope.PSObject.Properties.Remove('program');& ([ScriptBlock]::Create($program)) $envelope`
 	runes := utf16.Encode([]rune(bootstrap))
 	data := make([]byte, 2*len(runes))
 	for i, code := range runes {

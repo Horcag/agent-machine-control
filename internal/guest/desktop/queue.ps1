@@ -123,6 +123,10 @@ function Assert-Request($request) {
     return $deadline
 }
 
+function Assert-Deadline([DateTimeOffset]$deadline) {
+    if ([DateTimeOffset]::UtcNow -ge $deadline) { throw 'expired_request' }
+}
+
 function Write-Response($response) {
     [Console]::Out.Write(($response | ConvertTo-Json -Compress -Depth 12))
 }
