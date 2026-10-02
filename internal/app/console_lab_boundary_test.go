@@ -216,3 +216,29 @@ func TestConsoleLabAgentCannotReadForeignGrantOrRevoke(t *testing.T) {
 		t.Fatalf("refused revoke changed grant: %+v, %v", status, err)
 	}
 }
+
+type labBoundedSafety struct {
+	labSafetyFake
+	t *testing.T
+}
+
+func (s labBoundedSafety) ResolveSafety(ctx context.Context, target domain.MachineRef) (app.SafetyResolution, error) {
+	deadline, ok := ctx.Deadline()
+	if !ok || time.Until(deadline) > 5*time.Minute {
+		s.t.Fatal("grant preparation outlives its lease execution budget")
+	}
+	return s.labSafetyFake.ResolveSafety(ctx, target)
+}
+
+func TestConsoleLabAdmissionAndExecutionShareBoundedLeaseBudget(t *testing.T) {
+	f := newConsoleFixture(t)
+	configureLab(f)
+	app.WithConsoleLabSafetyResolver(labBoundedSafety{labSafetyFake: labSafetyFake{contained: true}, t: t})(f.service)
+	grant := issueLab(t, f)
+	if _, err := f.service.Input(context.Background(), labActor(t), labRequest(grant)); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.provider.inputs) != 1 {
+		t.Fatal("bounded action did not dispatch")
+	}
+}

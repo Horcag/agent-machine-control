@@ -50,6 +50,9 @@ func (s *ConsoleService) ExecuteLabMutation(ctx context.Context, actor domain.Ac
 	if err := validateLabMutation(actor, op, req, execFn); err != nil {
 		return result, err
 	}
+	// The grant lease must outlive admission, guest execution, and finalization together.
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
 	release, err := s.labLock(ctx, id)
 	if err != nil {
 		return result, err

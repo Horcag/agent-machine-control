@@ -18,6 +18,8 @@ func (s *ConsoleService) IssueLabGrant(ctx context.Context, actor domain.ActorCo
 	if err != nil {
 		return grant, result, err
 	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
 	id := labGrantID(actor.EffectiveActor, req.IdempotencyKey)
 	release, err := s.labLock(ctx, id)
 	if err != nil {

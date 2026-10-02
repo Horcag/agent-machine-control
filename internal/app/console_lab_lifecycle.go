@@ -49,6 +49,8 @@ func (s *ConsoleService) RevokeLabGrant(ctx context.Context, actor domain.ActorC
 	if err != nil || domain.ValidateReason(req.Reason) != nil || domain.ValidateIdempotencyKey(req.IdempotencyKey) != nil {
 		return result, ErrInvalidConsoleLabGrant
 	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
 	release, err := s.labLock(ctx, req.GrantID)
 	if err != nil {
 		return result, err
