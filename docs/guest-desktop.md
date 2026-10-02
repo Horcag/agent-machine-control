@@ -69,8 +69,9 @@ Semantic actions include:
 | `clipboard.set` | Bounded guest `text`; empty text clears the guest clipboard |
 | `launch` | Absolute Windows `.exe` path and separate `arguments` array |
 
-Window identities include HWND, process ID and process start time. Re-observe after a
-window disappears or an application restarts. UIA trees are bounded to 256 elements and
+Window identities bind HWND to process ID and process start time. They detect a
+different process lifetime, but cannot prove that the same process has not recycled
+its HWND. Re-observe after a window disappears or an application restarts. UIA trees are bounded to 256 elements and
 8 levels. Unsupported patterns, password controls and unavailable desktops are refused.
 Use the native PNG/input fallback for custom controls without useful accessibility data.
 
@@ -115,6 +116,14 @@ The guest helper needs an ordinary unlocked interactive desktop. It is not a uni
 UAC, logon or lock-screen injector. Native hypervisor observation/input remains the
 independent recovery path; supported protected-desktop effects require live VM evidence.
 No login policy or UAC setting is disabled by provisioning.
+
+The guest response queue uses private HIGH-integrity files and publishes complete
+responses atomically. Readers retain a completed response until the dispatcher has
+observed worker completion. Completed responses and failed staging files become
+eligible for protected pruning after two minutes. The running server prunes every
+five seconds; later transport calls also prune. This is cleanup eligibility, not a
+strict deletion timer when the helper is stopped. Sensitive response data stays out
+of receipts and the application retry cache.
 
 For accepted states, limitations and upstream comparisons, see the
 [capability matrix](desktop-capability-matrix.md).
