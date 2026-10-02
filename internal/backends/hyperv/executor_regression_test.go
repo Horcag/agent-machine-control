@@ -50,7 +50,8 @@ func TestExecutorCancellationBoundsInheritedOutputPipes(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	marker := t.TempDir() + "/descendant.pid"
-	command := fmt.Sprintf("sleep 30 & child=$!; printf '%%s %%s\\n' \"$$\" \"$child\" > %q; wait \"$child\"", marker)
+	markerTemp := marker + ".tmp"
+	command := fmt.Sprintf("sleep 30 & child=$!; if ! printf '%%s %%s\\n' \"$$\" \"$child\" > %q || ! mv %q %q; then kill \"$child\"; wait \"$child\"; exit 1; fi; wait \"$child\"", markerTemp, markerTemp, marker)
 	done := make(chan executorResult, 1)
 	go func() {
 		stdout, stderr, err := (&DefaultExecutor{}).Execute(ctx, shell, []string{"-c", command}, nil)
