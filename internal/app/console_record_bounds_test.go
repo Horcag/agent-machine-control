@@ -27,6 +27,7 @@ import (
 type boundsRecordingProviderFake struct {
 	mu        sync.Mutex
 	captures  int
+	targets   []string
 	colors    []color.RGBA
 	onCapture func(captureIndex int) error
 }
@@ -35,6 +36,7 @@ func (p *boundsRecordingProviderFake) CaptureConsole(_ context.Context, id strin
 	p.mu.Lock()
 	idx := p.captures
 	p.captures++
+	p.targets = append(p.targets, id)
 	onCap := p.onCapture
 	colors := p.colors
 	p.mu.Unlock()
@@ -70,7 +72,12 @@ func (p *boundsRecordingProviderFake) SendConsoleInput(_ context.Context, _ stri
 	return nil
 }
 
-func newBoundsRecordingFixture(t *testing.T, provider app.ConsoleProvider) (*app.ConsoleService, domain.ActorContext) {
+type boundsRecordingFixture struct {
+	consoleFixture
+	backend *mockBackend
+}
+
+func newBoundsRecordingFixture(t *testing.T, provider app.ConsoleProvider) boundsRecordingFixture {
 	t.Helper()
 	state, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
@@ -117,7 +124,10 @@ func newBoundsRecordingFixture(t *testing.T, provider app.ConsoleProvider) (*app
 		t.Fatal(err)
 	}
 	service := app.NewConsoleService(provider, recovery, target, filepath.Join(state.Root(), "console-frames"))
-	return service, actor
+	return boundsRecordingFixture{
+		consoleFixture: consoleFixture{service: service, recovery: recovery, actor: actor, root: state.Root(), now: &now},
+		backend:        backend,
+	}
 }
 
 func TestConsoleRecordArtifactDimensionsFrameOrderingAndSHA(t *testing.T) {
@@ -127,7 +137,7 @@ func TestConsoleRecordArtifactDimensionsFrameOrderingAndSHA(t *testing.T) {
 		{R: 0, G: 0, B: 255, A: 255}, // Frame 2: Blue
 	}
 	provider := &boundsRecordingProviderFake{colors: colors}
-	service, actor := newBoundsRecordingFixture(t, provider)
+	f := newBoundsRecordingFixture(t, provider)
 
 	req := app.ConsoleRecordRequest{
 		Target:         "default",
@@ -136,7 +146,7 @@ func TestConsoleRecordArtifactDimensionsFrameOrderingAndSHA(t *testing.T) {
 		Frames:         3,
 		IntervalMillis: 100,
 	}
-	out, err := service.Record(t.Context(), actor, req)
+	out, err := f.service.Record(t.Context(), f.actor, req)
 	if err != nil {
 		t.Fatalf("unexpected record failure: %v", err)
 	}
@@ -175,6 +185,11 @@ func TestConsoleRecordArtifactDimensionsFrameOrderingAndSHA(t *testing.T) {
 	if len(decoded.Delay) != 3 {
 		t.Fatalf("expected 3 delays, got %d", len(decoded.Delay))
 	}
+	assertRecordingFrames(t, decoded)
+}
+
+func assertRecordingFrames(t *testing.T, decoded *gif.GIF) {
+	t.Helper()
 	for i, delay := range decoded.Delay {
 		if delay < 1 {
 			t.Fatalf("frame %d delay %d must be positive", i, delay)
@@ -188,18 +203,10 @@ func TestConsoleRecordArtifactDimensionsFrameOrderingAndSHA(t *testing.T) {
 			t.Fatalf("frame %d bounds %dx%d mismatch", i, bounds.Dx(), bounds.Dy())
 		}
 		r, g, b, _ := frameImg.At(8, 4).RGBA()
-		switch i {
-		case 0:
-			if r <= g || r <= b {
-				t.Fatalf("frame 0 expected predominantly Red, got r=%d g=%d b=%d", r, g, b)
-			}
-		case 1:
-			if g <= r || g <= b {
-				t.Fatalf("frame 1 expected predominantly Green, got r=%d g=%d b=%d", r, g, b)
-			}
-		case 2:
-			if b <= r || b <= g {
-				t.Fatalf("frame 2 expected predominantly Blue, got r=%d g=%d b=%d", r, g, b)
+		channels := []uint32{r, g, b}
+		for channel, value := range channels {
+			if channel != i && channels[i] <= value {
+				t.Fatalf("frame %d expected dominant channel %d, got r=%d g=%d b=%d", i, i, r, g, b)
 			}
 		}
 	}
@@ -217,7 +224,7 @@ func TestConsoleRecordCancellationStopsSubsequentCaptures(t *testing.T) {
 		}
 		return nil
 	}
-	service, actor := newBoundsRecordingFixture(t, provider)
+	f := newBoundsRecordingFixture(t, provider)
 
 	req := app.ConsoleRecordRequest{
 		Target:         "default",
@@ -227,7 +234,7 @@ func TestConsoleRecordCancellationStopsSubsequentCaptures(t *testing.T) {
 		IntervalMillis: 100,
 	}
 
-	out, err := service.Record(ctx, actor, req)
+	out, err := f.service.Record(ctx, f.actor, req)
 	if err == nil {
 		t.Fatal("expected Record to return error on context cancellation, got nil")
 	}
@@ -246,7 +253,7 @@ func TestConsoleRecordCancellationStopsSubsequentCaptures(t *testing.T) {
 
 func TestConsoleRecordBoundsValidationEdges(t *testing.T) {
 	provider := &boundsRecordingProviderFake{}
-	service, actor := newBoundsRecordingFixture(t, provider)
+	f := newBoundsRecordingFixture(t, provider)
 
 	invalidCases := []struct {
 		name string
@@ -266,7 +273,7 @@ func TestConsoleRecordBoundsValidationEdges(t *testing.T) {
 
 	for _, tc := range invalidCases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := service.Record(t.Context(), actor, tc.req)
+			_, err := f.service.Record(t.Context(), f.actor, tc.req)
 			if err == nil {
 				t.Fatalf("expected error for %s, got nil", tc.name)
 			}
@@ -285,7 +292,7 @@ func TestConsoleRecordBoundsValidationEdges(t *testing.T) {
 
 	for _, tc := range validEdges {
 		t.Run(tc.name, func(t *testing.T) {
-			out, err := service.Record(t.Context(), actor, tc.req)
+			out, err := f.service.Record(t.Context(), f.actor, tc.req)
 			if err != nil {
 				t.Fatalf("expected success for valid edge %s, got error: %v", tc.name, err)
 			}

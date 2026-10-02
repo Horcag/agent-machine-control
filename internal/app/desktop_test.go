@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -71,11 +71,20 @@ func assertDesktopRedacted(t *testing.T, root string, result app.DesktopActionRe
 	if strings.Contains(string(data), desktopSecret) || (actionErr != nil && strings.Contains(actionErr.Error(), desktopSecret)) {
 		t.Fatal("sensitive desktop payload exposed in receipt/error")
 	}
-	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+	privateRoot, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := privateRoot.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	err = fs.WalkDir(privateRoot.FS(), ".", func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil || entry.IsDir() {
 			return walkErr
 		}
-		data, err := os.ReadFile(path)
+		data, err := privateRoot.ReadFile(path)
 		if err != nil {
 			return err
 		}
@@ -112,54 +121,65 @@ func TestDesktopObservationUsesProviderUUIDAndSensitiveAuthority(t *testing.T) {
 func TestDesktopAdmissionRejectsBeforeDispatch(t *testing.T) {
 	for _, variant := range []string{"invalid actor", "missing read", "missing evidence", "missing write", "invalid envelope", "expired", "unbounded", "foreign target", "derived approval", "mixed authority", "missing approval"} {
 		t.Run(variant, func(t *testing.T) {
-			f := newConsoleFixture(t)
-			actor := f.actor
-			req := desktopRequest(f, "status")
-			var want error
-			switch variant {
-			case "invalid actor":
-				actor = domain.ActorContext{}
-			case "missing read", "missing evidence", "missing write":
-				scopes := domain.NewScopeSet(domain.ScopeMachineRead)
-				if variant == "missing read" {
-					scopes = domain.NewScopeSet(domain.ScopeEvidenceCapture)
-				}
-				if variant == "missing write" {
-					req.Request.Action = "clipboard.set"
-				}
-				var err error
-				actor, err = domain.NewActorContext("agent:test", "agent:test", scopes, scopes)
-				if err != nil {
-					t.Fatal(err)
-				}
-			case "invalid envelope":
-				req.Request.RequestID = "invalid"
-				want = domain.ErrInvalidDesktopRequest
-			case "expired":
-				req.Request.Deadline = f.now.Format(time.RFC3339Nano)
-				want = domain.ErrMissingDeadline
-			case "unbounded":
-				req.Request.Deadline = f.now.Add(time.Minute + time.Second).Format(time.RFC3339Nano)
-				want = domain.ErrMissingDeadline
-			case "foreign target":
-				req.Target = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb"
-			case "derived approval":
-				req.ApprovalID = app.ConsoleLabApprovalPrefix + strings.Repeat("a", 32)
-				want = app.ErrInvalidConsoleLabGrant
-			case "mixed authority":
-				req.ApprovalID = "approval-test"
-				req.LabGrantID = "grant-test"
-				want = app.ErrInvalidConsoleLabGrant
-			case "missing approval":
-				req.Request.Action = "clipboard.set"
-			}
-			p := desktopProvider(req)
-			_, err := app.NewDesktopService(p, f.service).Action(context.Background(), actor, req)
-			if err == nil || (want != nil && !errors.Is(err, want)) || len(p.targets) != 0 {
-				t.Fatalf("admission = %v, dispatches = %v", err, p.targets)
-			}
+			testDesktopAdmissionCase(t, variant)
 		})
 	}
+}
+
+func testDesktopAdmissionCase(t *testing.T, variant string) {
+	t.Helper()
+	f := newConsoleFixture(t)
+	actor, req, want := desktopAdmissionVariant(t, f, variant)
+	p := desktopProvider(req)
+	_, err := app.NewDesktopService(p, f.service).Action(context.Background(), actor, req)
+	if err == nil || (want != nil && !errors.Is(err, want)) || len(p.targets) != 0 {
+		t.Fatalf("admission = %v, dispatches = %v", err, p.targets)
+	}
+}
+
+func desktopAdmissionVariant(t *testing.T, f consoleFixture, variant string) (domain.ActorContext, app.DesktopActionRequest, error) {
+	t.Helper()
+	actor := f.actor
+	req := desktopRequest(f, "status")
+	var want error
+	switch variant {
+	case "invalid actor":
+		actor = domain.ActorContext{}
+	case "missing read", "missing evidence", "missing write":
+		scopes := domain.NewScopeSet(domain.ScopeMachineRead)
+		if variant == "missing read" {
+			scopes = domain.NewScopeSet(domain.ScopeEvidenceCapture)
+		}
+		if variant == "missing write" {
+			req.Request.Action = "clipboard.set"
+		}
+		var err error
+		actor, err = domain.NewActorContext("agent:test", "agent:test", scopes, scopes)
+		if err != nil {
+			t.Fatal(err)
+		}
+	case "invalid envelope":
+		req.Request.RequestID = "invalid"
+		want = domain.ErrInvalidDesktopRequest
+	case "expired":
+		req.Request.Deadline = f.now.Format(time.RFC3339Nano)
+		want = domain.ErrMissingDeadline
+	case "unbounded":
+		req.Request.Deadline = f.now.Add(time.Minute + time.Second).Format(time.RFC3339Nano)
+		want = domain.ErrMissingDeadline
+	case "foreign target":
+		req.Target = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb"
+	case "derived approval":
+		req.ApprovalID = app.ConsoleLabApprovalPrefix + strings.Repeat("a", 32)
+		want = app.ErrInvalidConsoleLabGrant
+	case "mixed authority":
+		req.ApprovalID = "approval-test"
+		req.LabGrantID = "grant-test"
+		want = app.ErrInvalidConsoleLabGrant
+	case "missing approval":
+		req.Request.Action = "clipboard.set"
+	}
+	return actor, req, want
 }
 
 func TestDesktopMissingDependenciesFailClosed(t *testing.T) {
@@ -249,36 +269,46 @@ func TestDesktopNormalApprovedFailedRetryReturnsErrorWithoutRedispatch(t *testin
 func TestDesktopSuccessRetryCachesOnlyReceipt(t *testing.T) {
 	for _, authority := range []string{"normal", "lab"} {
 		t.Run(authority, func(t *testing.T) {
-			f := newConsoleFixture(t)
-			req := desktopRequest(f, "clipboard.set")
-			req.Request.Text = desktopSecret
-			actor := f.actor
-			if authority == "normal" {
-				req = approveDesktop(t, f, req)
-			} else {
-				configureLab(f)
-				req.LabGrantID = issueLab(t, f).GrantID
-				actor = labActor(t)
-			}
-			p := desktopProvider(req)
-			service := app.NewDesktopService(p, f.service)
-			first, err := service.Action(context.Background(), actor, req)
-			if err != nil || first.Receipt == nil || first.Receipt.Outcome.Status != domain.OutcomeSuccess || first.CachedReceipt || first.Response.Text != desktopSecret {
-				t.Fatalf("first = %+v, %v", first, err)
-			}
-			retry, err := service.Action(context.Background(), actor, req)
-			if err != nil || retry.Receipt == nil || retry.Receipt.ReceiptID != first.Receipt.ReceiptID || !retry.CachedReceipt || !reflect.DeepEqual(retry.Response, domain.DesktopResponse{}) {
-				t.Fatalf("retry = %+v, %v", retry, err)
-			}
-			if len(p.targets) != 1 || p.targets[0] != domain.MachineRef(desktopVMID) {
-				t.Fatalf("retry dispatch = %v", p.targets)
-			}
-			assertDesktopRedacted(t, f.root, first, nil)
-			req.Request.Text = "changed payload"
-			if _, err := service.Action(context.Background(), actor, req); err == nil || len(p.targets) != 1 {
-				t.Fatalf("changed payload accepted: %v", err)
-			}
+			testDesktopSuccessRetryCase(t, authority)
 		})
+	}
+}
+
+func testDesktopSuccessRetryCase(t *testing.T, authority string) {
+	t.Helper()
+	f := newConsoleFixture(t)
+	req := desktopRequest(f, "clipboard.set")
+	req.Request.Text = desktopSecret
+	actor := f.actor
+	if authority == "normal" {
+		req = approveDesktop(t, f, req)
+	} else {
+		configureLab(f)
+		req.LabGrantID = issueLab(t, f).GrantID
+		actor = labActor(t)
+	}
+	p := desktopProvider(req)
+	service := app.NewDesktopService(p, f.service)
+	first, err := service.Action(context.Background(), actor, req)
+	if err != nil || first.Receipt == nil || first.Receipt.Outcome.Status != domain.OutcomeSuccess || first.CachedReceipt || first.Response.Text != desktopSecret {
+		t.Fatalf("first = %+v, %v", first, err)
+	}
+	retry, err := service.Action(context.Background(), actor, req)
+	assertDesktopCachedRetry(t, first, retry, p.targets, err)
+	assertDesktopRedacted(t, f.root, first, nil)
+	req.Request.Text = "changed payload"
+	if _, err := service.Action(context.Background(), actor, req); err == nil || len(p.targets) != 1 {
+		t.Fatalf("changed payload accepted: %v", err)
+	}
+}
+
+func assertDesktopCachedRetry(t *testing.T, first, retry app.DesktopActionResult, targets []domain.MachineRef, err error) {
+	t.Helper()
+	if err != nil || retry.Receipt == nil || retry.Receipt.ReceiptID != first.Receipt.ReceiptID || !retry.CachedReceipt || !reflect.DeepEqual(retry.Response, domain.DesktopResponse{}) {
+		t.Fatalf("retry = %+v, %v", retry, err)
+	}
+	if len(targets) != 1 || targets[0] != domain.MachineRef(desktopVMID) {
+		t.Fatalf("retry dispatch = %v", targets)
 	}
 }
 
@@ -313,29 +343,39 @@ func TestDesktopProvisionNormalizesRequestIDAndRemoveSynthesizesResponse(t *test
 	for _, action := range []string{"provision", "remove"} {
 		for _, fail := range []bool{false, true} {
 			t.Run(action+"/"+map[bool]string{false: "success", true: "failure"}[fail], func(t *testing.T) {
-				f := newConsoleFixture(t)
-				configureLab(f)
-				req := desktopRequest(f, action)
-				req.LabGrantID = issueLab(t, f).GrantID
-				p := desktopProvider(req)
-				p.response.RequestID = "provider-provision-id"
-				if fail {
-					p.err = errors.New(desktopSecret)
-				}
-				result, err := app.NewDesktopService(p, f.service).Action(context.Background(), labActor(t), req)
-				if len(p.actions) != 1 || p.actions[0] != action || p.targets[0] != domain.MachineRef(desktopVMID) || len(p.requests) != 0 {
-					t.Fatalf("wrong dispatch: %+v", p)
-				}
-				if fail {
-					if err == nil || err.Error() != "app: console provider failed" || result.Receipt == nil || result.Receipt.Outcome.Status != domain.OutcomeFailed {
-						t.Fatalf("failed dispatch: %+v, %v", result, err)
-					}
-				} else if err != nil || !result.Response.Success || result.Response.RequestID != req.Request.RequestID || result.Receipt == nil || result.Receipt.Outcome.Status != domain.OutcomeSuccess {
-					t.Fatalf("successful dispatch: %+v, %v", result, err)
-				}
-				assertDesktopRedacted(t, f.root, result, err)
+				testDesktopLifecycleCase(t, action, fail)
 			})
 		}
+	}
+}
+
+func testDesktopLifecycleCase(t *testing.T, action string, fail bool) {
+	t.Helper()
+	f := newConsoleFixture(t)
+	configureLab(f)
+	req := desktopRequest(f, action)
+	req.LabGrantID = issueLab(t, f).GrantID
+	p := desktopProvider(req)
+	p.response.RequestID = "provider-provision-id"
+	if fail {
+		p.err = errors.New(desktopSecret)
+	}
+	result, err := app.NewDesktopService(p, f.service).Action(context.Background(), labActor(t), req)
+	if len(p.actions) != 1 || p.actions[0] != action || p.targets[0] != domain.MachineRef(desktopVMID) || len(p.requests) != 0 {
+		t.Fatalf("wrong dispatch: %+v", p)
+	}
+	assertDesktopLifecycleResult(t, req, result, err, fail)
+	assertDesktopRedacted(t, f.root, result, err)
+}
+
+func assertDesktopLifecycleResult(t *testing.T, req app.DesktopActionRequest, result app.DesktopActionResult, err error, fail bool) {
+	t.Helper()
+	if fail {
+		if err == nil || err.Error() != "app: console provider failed" || result.Receipt == nil || result.Receipt.Outcome.Status != domain.OutcomeFailed {
+			t.Fatalf("failed dispatch: %+v, %v", result, err)
+		}
+	} else if err != nil || !result.Response.Success || result.Response.RequestID != req.Request.RequestID || result.Receipt == nil || result.Receipt.Outcome.Status != domain.OutcomeSuccess {
+		t.Fatalf("successful dispatch: %+v, %v", result, err)
 	}
 }
 
