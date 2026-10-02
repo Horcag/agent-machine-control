@@ -27,7 +27,7 @@ type DesktopObserveResult struct {
 	Cursor            *domain.DesktopCursor  `json:"cursor,omitempty"`
 	HelperAvailable   bool                   `json:"helper_available"`
 	CoordinateSpace   string                 `json:"coordinate_space"`
-	LabGrantID        string                 `json:"lab_grant_id,omitempty" jsonschema:"Optional: automatically selects the current caller active grant for this VM"`
+	LabGrantID        string                 `json:"lab_grant_id,omitempty" jsonschema:"The current caller active grant ID discovered for the captured VM"`
 	LabGrantExpiresAt time.Time              `json:"lab_grant_expires_at,omitzero"`
 }
 
@@ -72,7 +72,7 @@ type DesktopActInput struct {
 	Target         string                 `json:"target,omitempty"`
 	Action         *domain.DesktopRequest `json:"action,omitempty" jsonschema:"Semantic guest action; native guest pixel coordinates"`
 	Input          *domain.ConsoleInput   `json:"input,omitempty" jsonschema:"Hypervisor input in captured frame pixels; keyboard works without guest helper"`
-	LabGrantID     string                 `json:"lab_grant_id,omitempty"`
+	LabGrantID     string                 `json:"lab_grant_id,omitempty" jsonschema:"Optional: automatically selects the current caller active grant for this VM"`
 	Reason         string                 `json:"reason"`
 	IdempotencyKey string                 `json:"idempotency_key"`
 	Deadline       string                 `json:"deadline"`

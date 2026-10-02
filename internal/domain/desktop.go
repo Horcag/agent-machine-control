@@ -5,9 +5,9 @@ package domain
 type DesktopRequest struct {
 	RequestID      string   `json:"request_id,omitempty" jsonschema:"Optional in MCP: generated from the idempotency key; otherwise 32 lowercase hexadecimal characters"`
 	Deadline       string   `json:"deadline,omitempty" jsonschema:"Optional in MCP: copied from the outer deadline; otherwise an RFC3339 future time"`
-	Action         string   `json:"action" jsonschema:"One of status cursor windows uia.tree clipboard.get provision remove window.focus window.move window.resize window.minimize window.maximize window.restore window.close uia.invoke uia.setvalue uia.select uia.toggle uia.expand uia.collapse uia.scroll clipboard.set wheel launch"`
+	Action         string   `json:"action" jsonschema:"One of status cursor windows uia.tree clipboard.get provision remove window.focus window.move window.resize window.minimize window.maximize window.restore window.close uia.invoke uia.setvalue uia.select uia.toggle uia.expand uia.collapse uia.scroll clipboard.set scroll launch"`
 	WindowID       string   `json:"window_id,omitempty" jsonschema:"Decimal HWND copied from desktop_observe; pair with its window identity"`
-	WindowIdentity string   `json:"window_identity,omitempty" jsonschema:"Copy the observed window identity exactly to reject reused HWNDs and changed processes"`
+	WindowIdentity string   `json:"window_identity,omitempty" jsonschema:"Copy the observed identity to bind the HWND to its process lifetime; refresh observation before acting"`
 	ElementID      string   `json:"element_id,omitempty" jsonschema:"Copy the element ID from a fresh UI Automation tree; choose an action advertised in its patterns"`
 	X              int      `json:"x,omitempty" jsonschema:"Native guest screen pixel X; use native_width rather than scaled PNG width"`
 	Y              int      `json:"y,omitempty" jsonschema:"Native guest screen pixel Y; use native_height rather than scaled PNG height"`

@@ -996,7 +996,7 @@
           "description": "Semantic guest action; native guest pixel coordinates",
           "properties": {
             "action": {
-              "description": "One of status cursor windows uia.tree clipboard.get provision remove window.focus window.move window.resize window.minimize window.maximize window.restore window.close uia.invoke uia.setvalue uia.select uia.toggle uia.expand uia.collapse uia.scroll clipboard.set wheel launch",
+              "description": "One of status cursor windows uia.tree clipboard.get provision remove window.focus window.move window.resize window.minimize window.maximize window.restore window.close uia.invoke uia.setvalue uia.select uia.toggle uia.expand uia.collapse uia.scroll clipboard.set scroll launch",
               "type": "string"
             },
             "arguments": {
@@ -1046,7 +1046,7 @@
               "type": "string"
             },
             "window_identity": {
-              "description": "Copy the observed window identity exactly to reject reused HWNDs and changed processes",
+              "description": "Copy the observed identity to bind the HWND to its process lifetime; refresh observation before acting",
               "type": "string"
             },
             "x": {
@@ -1132,6 +1132,7 @@
           ]
         },
         "lab_grant_id": {
+          "description": "Optional: automatically selects the current caller active grant for this VM",
           "type": "string"
         },
         "observe_after": {
@@ -1428,7 +1429,7 @@
               "type": "string"
             },
             "lab_grant_id": {
-              "description": "Optional: automatically selects the current caller active grant for this VM",
+              "description": "The current caller active grant ID discovered for the captured VM",
               "type": "string"
             },
             "schema_version": {
@@ -2063,7 +2064,7 @@
           "type": "string"
         },
         "lab_grant_id": {
-          "description": "Optional: automatically selects the current caller active grant for this VM",
+          "description": "The current caller active grant ID discovered for the captured VM",
           "type": "string"
         },
         "schema_version": {
