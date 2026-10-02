@@ -61,3 +61,6 @@ func WithHostPathDetector(detector HostPathDetector) Option {
 		}
 	}
 }
+
+// NewPrivatePathSecurity shares native ACL and POSIX privacy checks with sensitive local evidence stores.
+func NewPrivatePathSecurity() Security { return newPlatformSecurity() }

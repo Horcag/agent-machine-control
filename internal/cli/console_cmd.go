@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/Horcag/agent-machine-control/internal/app"
 	"github.com/Horcag/agent-machine-control/internal/client"
 	"github.com/Horcag/agent-machine-control/internal/domain"
+	"github.com/Horcag/agent-machine-control/internal/target"
 )
 
 // ConsoleService is the shared application boundary used by direct recovery.
@@ -67,17 +69,17 @@ func (a *App) runConsoleScreenshot(ctx context.Context, direct bool, stateDir st
 		return ExitUsage
 	}
 	// Reserve the path before capture: existing files and symlinks are never overwritten.
-	file, err := os.OpenFile(*output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	file, err := reserveConsoleOutput(ctx, *output)
 	if err != nil {
 		fmt.Fprintln(stderr, "amc console screenshot: output path is unavailable")
 		return ExitConflict
 	}
 	saved := false
 	defer func() {
-		_ = file.Close()
 		if !saved {
-			_ = os.Remove(*output)
+			removeReservedConsoleOutput(file, *output)
 		}
+		_ = file.Close()
 	}()
 	req := app.ConsoleScreenshotRequest{Width: *width, Height: *height}
 	if len(pos) == 1 {
@@ -129,4 +131,36 @@ func consoleError(err error, direct bool, stderr io.Writer, action string) int {
 		return mapMutationError(err, stderr, action)
 	}
 	return mapClientError(err, stderr, action)
+}
+
+func reserveConsoleOutput(ctx context.Context, path string) (*os.File, error) {
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	security := target.NewPrivatePathSecurity()
+	if err := security.ValidateDir(ctx, filepath.Dir(path)); err != nil {
+		return nil, err
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err := security.ProtectNewFile(ctx, path); err != nil {
+		removeReservedConsoleOutput(file, path)
+		_ = file.Close()
+		return nil, err
+	}
+	return file, nil
+}
+
+func removeReservedConsoleOutput(file *os.File, path string) {
+	owned, err := file.Stat()
+	if err != nil {
+		return
+	}
+	current, err := os.Lstat(path)
+	if err == nil && os.SameFile(owned, current) {
+		_ = os.Remove(path)
+	}
 }

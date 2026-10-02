@@ -36,6 +36,7 @@ func (r *DefaultResolver) Resolve() (domain.ActorContext, error) {
 		"machine:read",
 		"machine:write",
 		"target:admin",
+		domain.ScopeEvidenceCapture,
 	)
 
 	return domain.NewActorContext(actorID, actorID, scopes, scopes)

@@ -74,6 +74,10 @@ operations, receipts, audit records, and persistent guest SSH/PTTY sessions. See
 `session open`, `read`, `write`, `control`, `wait`, `list`, `show`, `close`, and operator-only
 `session approve` commands.
 
+Native Hyper-V screenshots and keyboard/pointer actions are available through `amc console`,
+`console_screenshot`, and `console_input`. See [Native VM console](docs/vm-console.md) for private PNG
+output, frame coordinates, exact approvals, and acceptance limits.
+
 Privileged daemon machine/checkpoint mutations use a server-issued reference rather than a caller
 supplied approval object. An authenticated operator can prepare the exact current operation and then
 execute it with the returned ID and deadline:

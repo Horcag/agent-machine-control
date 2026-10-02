@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/actor"
@@ -206,6 +207,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	appInstance := NewApp(
 		discoveryService,
 		WithRecoveryService(recoveryService),
+		WithConsoleService(app.NewConsoleService(adapter, recoveryService, targetService, filepath.Join(sd.Root(), "console-frames"))),
 		WithTargetService(targetService),
 		WithTargetCoordinator(targetCoordinator),
 		WithActor(actCtx),

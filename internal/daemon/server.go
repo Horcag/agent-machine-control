@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -48,6 +49,7 @@ type Server struct {
 	receiptStore      *receipt.Store
 	approvalStore     *approval.Store
 	recoveryService   *app.RecoveryService
+	consoleService    *app.ConsoleService
 	targetService     *app.TargetService
 	targetCoordinator *app.TargetCoordinator
 	eventHub          *events.Hub
@@ -191,6 +193,9 @@ func NewServer(cfg Config) (*Server, error) {
 		identityProvider:  ident,
 	}
 
+	if provider, ok := backend.(app.ConsoleProvider); ok {
+		srv.consoleService = app.NewConsoleService(provider, recoverySvc, targetService, filepath.Join(sd.Root(), "console-frames"))
+	}
 	srv.setupHTTPServer()
 	return srv, nil
 }
@@ -240,6 +245,8 @@ func (s *Server) dispatchV1(w http.ResponseWriter, r *http.Request) {
 	path = strings.TrimPrefix(path, "/")
 
 	switch {
+	case strings.HasPrefix(path, "console/"):
+		s.dispatchConsole(w, r, path)
 	case path == "health" && r.Method == http.MethodGet:
 		s.handleHealth(w, r)
 	case path == "events" && r.Method == http.MethodGet:

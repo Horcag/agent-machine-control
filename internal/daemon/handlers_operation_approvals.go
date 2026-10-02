@@ -69,7 +69,7 @@ func validateOperationApprovalIssueRequest(request OperationApprovalIssueRequest
 		return err
 	}
 	switch request.Kind {
-	case "machine.start", "machine.stop", "checkpoint.create", "checkpoint.restore":
+	case "machine.start", "machine.stop", "checkpoint.create", "checkpoint.restore", "console.input":
 		return domain.MachineRef(request.Target).Validate()
 	default:
 		return domain.ErrInvalidOperationKind
