@@ -5,12 +5,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"image"
 	"image/color/palette"
 	"image/gif"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -25,7 +27,7 @@ type consoleRecordStub struct {
 	recording app.ConsoleRecording
 	err       error
 	req       app.ConsoleRecordRequest
-	actor     domain.ActorContext
+	onRecord  func()
 }
 
 func (s *consoleRecordStub) Screenshot(_ context.Context, _ domain.ActorContext, _ app.ConsoleScreenshotRequest) (domain.ConsoleFrame, error) {
@@ -36,10 +38,12 @@ func (s *consoleRecordStub) Input(_ context.Context, _ domain.ActorContext, _ ap
 	return domain.Receipt{}, errors.New("stub input not implemented")
 }
 
-func (s *consoleRecordStub) Record(_ context.Context, actor domain.ActorContext, req app.ConsoleRecordRequest) (app.ConsoleRecording, error) {
+func (s *consoleRecordStub) Record(_ context.Context, _ domain.ActorContext, req app.ConsoleRecordRequest) (app.ConsoleRecording, error) {
 	s.calls++
-	s.actor = actor
 	s.req = req
+	if s.onRecord != nil {
+		s.onRecord()
+	}
 	return s.recording, s.err
 }
 
@@ -63,6 +67,7 @@ func TestConsoleRecordNewPrivateGIFFileSucceeds(t *testing.T) {
 	gifData := createSyntheticGIFBytes(t, 16, 8)
 	digest := sha256.Sum256(gifData)
 	sha := hex.EncodeToString(digest[:])
+	observed := time.Date(2026, 10, 2, 10, 0, 0, 0, time.UTC)
 
 	svc := &consoleRecordStub{
 		recording: app.ConsoleRecording{
@@ -71,7 +76,7 @@ func TestConsoleRecordNewPrivateGIFFileSucceeds(t *testing.T) {
 			Height:     8,
 			SHA256:     sha,
 			Data:       gifData,
-			ObservedAt: []time.Time{time.Now().UTC(), time.Now().UTC()},
+			ObservedAt: []time.Time{observed, observed.Add(100 * time.Millisecond)},
 		},
 	}
 	a := NewApp(nil, WithConsoleService(svc))
@@ -82,7 +87,7 @@ func TestConsoleRecordNewPrivateGIFFileSucceeds(t *testing.T) {
 		"--output", path,
 		"--width", "16",
 		"--height", "8",
-		"--frames", "3",
+		"--frames", "2",
 		"--interval-ms", "100",
 		"--json",
 	}, &out, &errOut)
@@ -93,7 +98,8 @@ func TestConsoleRecordNewPrivateGIFFileSucceeds(t *testing.T) {
 	if svc.calls != 1 {
 		t.Fatalf("expected 1 record call, got %d", svc.calls)
 	}
-	if svc.req.Target != "test-vm" || svc.req.Width != 16 || svc.req.Height != 8 || svc.req.Frames != 3 || svc.req.IntervalMillis != 100 {
+	wantRequest := app.ConsoleRecordRequest{Target: "test-vm", Width: 16, Height: 8, Frames: 2, IntervalMillis: 100}
+	if svc.req != wantRequest {
 		t.Fatalf("unexpected record request parameters: %+v", svc.req)
 	}
 
@@ -113,8 +119,14 @@ func TestConsoleRecordNewPrivateGIFFileSucceeds(t *testing.T) {
 	if strings.Contains(stdoutStr, `"data"`) {
 		t.Fatalf("metadata JSON must not include raw data field: %s", stdoutStr)
 	}
-	if !strings.Contains(stdoutStr, "image/gif") || !strings.Contains(stdoutStr, sha) {
-		t.Fatalf("metadata JSON missing MIMEType or SHA: %s", stdoutStr)
+	var metadata app.ConsoleRecording
+	if err := json.Unmarshal(out.Bytes(), &metadata); err != nil {
+		t.Fatal(err)
+	}
+	wantMetadata := svc.recording
+	wantMetadata.Data = nil
+	if !reflect.DeepEqual(metadata, wantMetadata) {
+		t.Fatalf("metadata mismatch: %+v", metadata)
 	}
 }
 
@@ -126,12 +138,7 @@ func TestConsoleRecordExistingPathPreservesBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	svc := &consoleRecordStub{
-		recording: app.ConsoleRecording{
-			MIMEType: "image/gif",
-			Data:     []byte("overwritten-gif-data"),
-		},
-	}
+	svc := &consoleRecordStub{}
 	a := NewApp(nil, WithConsoleService(svc))
 	var out, errOut bytes.Buffer
 
@@ -176,27 +183,27 @@ func TestConsoleRecordForeignReplacementNotDeleted(t *testing.T) {
 	dir := privateConsoleTestDir(t)
 	path := filepath.Join(dir, "replaced.gif")
 
-	file, err := reserveConsoleOutput(context.Background(), path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer file.Close()
-
-	if err := os.Rename(path, path+".owned"); err != nil {
-		t.Skipf("platform prevents renaming open file: %v", err)
-	}
-	defer os.Remove(path + ".owned")
-
 	foreignContent := []byte("foreign process content that must not be deleted")
-	if err := os.WriteFile(path, foreignContent, 0600); err != nil {
-		t.Fatal(err)
+	svc := &consoleRecordStub{
+		err: errors.New("synthetic provider failure after replacement"),
+		onRecord: func() {
+			if err := os.Rename(path, path+".owned"); err != nil {
+				t.Skipf("platform prevents renaming open file: %v", err)
+			}
+			if err := os.WriteFile(path, foreignContent, 0600); err != nil {
+				t.Fatal(err)
+			}
+		},
 	}
-
-	removeReservedConsoleOutput(file, path)
+	a := NewApp(nil, WithConsoleService(svc))
+	var out bytes.Buffer
+	if code := a.Run([]string{"--direct", "console", "record", "--output", path}, &out, &out); code == ExitSuccess || svc.calls != 1 {
+		t.Fatalf("code=%d calls=%d", code, svc.calls)
+	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("failed to read foreign file after removeReservedConsoleOutput: %v", err)
+		t.Fatalf("failed to read foreign file after provider failure: %v", err)
 	}
 	if !bytes.Equal(data, foreignContent) {
 		t.Fatalf("foreign replacement file was altered or deleted: got %q, want %q", data, foreignContent)
