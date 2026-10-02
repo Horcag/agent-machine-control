@@ -30,7 +30,7 @@ func (s *ConsoleService) IssueLabGrant(ctx context.Context, actor domain.ActorCo
 	if err != nil {
 		return grant, result, err
 	}
-	if err := s.requireLabSafety(ctx, resolution.Locator.String(), req.AcknowledgeExternalEffects); err != nil {
+	if err := s.requireLabSafety(ctx, resolution, req.AcknowledgeExternalEffects); err != nil {
 		return grant, result, err
 	}
 	existing, err := s.loadLabGrant(ctx, id)
@@ -105,11 +105,7 @@ func (s *ConsoleService) labIdentity(ctx context.Context, reference string) (Tar
 	return resolution, identity, nil
 }
 
-func (s *ConsoleService) requireLabSafety(ctx context.Context, canonical string, acknowledge bool) error {
-	resolution, err := s.target.ResolveTarget(ctx, canonical)
-	if err != nil || resolution.Locator.String() != canonical {
-		return ErrInvalidConsoleLabGrant
-	}
+func (s *ConsoleService) requireLabSafety(ctx context.Context, resolution TargetResolution, acknowledge bool) error {
 	safety, err := s.labSafety.ResolveSafety(ctx, domain.MachineRef(resolution.ProviderVMID))
 	if err != nil || (!safety.Contained && !acknowledge) || !safety.RollbackState.Available || !safety.RollbackState.Verified || safety.RollbackRef == "" {
 		return ErrInvalidConsoleLabGrant
@@ -118,26 +114,37 @@ func (s *ConsoleService) requireLabSafety(ctx context.Context, canonical string,
 }
 
 func (s *ConsoleService) requireActiveLabGrant(ctx context.Context, grant ConsoleLabGrant) error {
-	if err := s.validateLabBinding(ctx, grant); err != nil {
-		return err
-	}
-	return s.labActivation(ctx, grant.GrantID)
+	_, err := s.resolveActiveLabGrant(ctx, grant)
+	return err
 }
 
 func (s *ConsoleService) validateLabBinding(ctx context.Context, grant ConsoleLabGrant) error {
+	_, err := s.resolveLabBinding(ctx, grant)
+	return err
+}
+
+func (s *ConsoleService) resolveActiveLabGrant(ctx context.Context, grant ConsoleLabGrant) (TargetResolution, error) {
+	resolution, err := s.resolveLabBinding(ctx, grant)
+	if err != nil {
+		return TargetResolution{}, err
+	}
+	return resolution, s.labActivation(ctx, grant.GrantID)
+}
+
+func (s *ConsoleService) resolveLabBinding(ctx context.Context, grant ConsoleLabGrant) (TargetResolution, error) {
 	now := s.recovery.now()
 	if now.Before(grant.IssuedAt) || !now.Before(grant.ExpiresAt) {
-		return ErrInvalidConsoleLabGrant
+		return TargetResolution{}, ErrInvalidConsoleLabGrant
 	}
 	revoked, err := s.labRevoked(ctx, grant.GrantID)
 	if err != nil || revoked {
-		return ErrInvalidConsoleLabGrant
+		return TargetResolution{}, ErrInvalidConsoleLabGrant
 	}
 	resolution, identity, err := s.labIdentity(ctx, string(grant.Target))
 	if err != nil || resolution.Locator.String() != string(grant.Target) || identity != grant.EnrollmentIdentity {
-		return ErrInvalidConsoleLabGrant
+		return TargetResolution{}, ErrInvalidConsoleLabGrant
 	}
-	return s.requireLabSafety(ctx, string(grant.Target), grant.AcknowledgeExternalEffects)
+	return resolution, s.requireLabSafety(ctx, resolution, grant.AcknowledgeExternalEffects)
 }
 
 func labGrantOperation(kind domain.OperationKind, actor domain.ActorContext, grant ConsoleLabGrant, reason, key string, deadline time.Time) domain.Operation {

@@ -62,14 +62,14 @@ func (s *ConsoleService) ExecuteLabMutation(ctx context.Context, actor domain.Ac
 	if err != nil || grant.Beneficiary != actor.EffectiveActor || op.Target != grant.Target {
 		return result, ErrInvalidConsoleLabGrant
 	}
-	if err := s.requireActiveLabGrant(ctx, grant); err != nil {
+	resolution, err := s.resolveActiveLabGrant(ctx, grant)
+	if err != nil {
 		return result, err
 	}
 	if !op.Deadline.After(s.recovery.now()) || op.Deadline.After(grant.ExpiresAt) {
 		return result, ErrInvalidConsoleLabGrant
 	}
-	resolution, err := s.target.ResolveTarget(ctx, string(op.Target))
-	if err != nil || resolution.ProviderVMID != providerID {
+	if resolution.ProviderVMID != providerID {
 		return result, ErrInvalidConsoleLabGrant
 	}
 	issued, err := s.deriveLabApproval(ctx, grant, op)
