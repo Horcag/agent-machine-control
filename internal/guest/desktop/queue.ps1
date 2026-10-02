@@ -112,7 +112,15 @@ function Assert-Installed {
         if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $manifest.hashes.$name) { throw 'changed_installation' }
     }
     $task = Get-ScheduledTask -TaskName $taskName -TaskPath '\' -ErrorAction Stop
-    if ($task.Principal.UserId -ne $sid -or $task.Principal.LogonType -ne 'Interactive' -or $task.Principal.RunLevel -ne 'Highest' -or @($task.Actions).Count -ne 1 -or $task.Actions[0].Execute -ne $powerShell -or $task.Actions[0].Arguments -ne $taskArguments) { throw 'foreign_task' }
+    try {
+        $taskIdentity = [string]$task.Principal.UserId
+        if ($taskIdentity -match '^S-1-') {
+            $taskSid = [Security.Principal.SecurityIdentifier]::new($taskIdentity)
+        } else {
+            $taskSid = [Security.Principal.NTAccount]::new($taskIdentity).Translate([Security.Principal.SecurityIdentifier])
+        }
+    } catch { throw 'foreign_task' }
+    if (-not $taskSid.Equals($identity.User) -or $task.Principal.LogonType -ne 'Interactive' -or $task.Principal.RunLevel -ne 'Highest' -or @($task.Actions).Count -ne 1 -or $task.Actions[0].Execute -ne $powerShell -or $task.Actions[0].Arguments -ne $taskArguments) { throw 'foreign_task' }
 }
 
 function Assert-Request($request) {
