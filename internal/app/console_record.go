@@ -1,0 +1,102 @@
+package app
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"image"
+	"image/color/palette"
+	"image/draw"
+	"image/gif"
+	"image/png"
+	"time"
+
+	"github.com/Horcag/agent-machine-control/internal/domain"
+)
+
+type ConsoleRecordRequest struct {
+	Target         string `json:"target,omitempty"`
+	Width          int    `json:"width"`
+	Height         int    `json:"height"`
+	Frames         int    `json:"frames"`
+	IntervalMillis int    `json:"interval_millis"`
+}
+
+type ConsoleRecording struct {
+	MIMEType   string      `json:"mime_type"`
+	SHA256     string      `json:"sha256"`
+	Width      int         `json:"width"`
+	Height     int         `json:"height"`
+	ObservedAt []time.Time `json:"observed_at"`
+	Data       []byte      `json:"data,omitempty"`
+}
+
+// Record produces a bounded animated GIF from VM frames, without a host recorder.
+func (s *ConsoleService) Record(ctx context.Context, actor domain.ActorContext, req ConsoleRecordRequest) (ConsoleRecording, error) {
+	var out ConsoleRecording
+	if req.Frames < 2 || req.Frames > 30 || req.IntervalMillis < 100 || req.IntervalMillis > 2000 || req.Frames*req.IntervalMillis > 30000 || req.Width < 1 || req.Height < 1 || req.Width > 307200/req.Height {
+		return out, errors.New("app: invalid recording bounds")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	animation := gif.GIF{LoopCount: 0}
+	for i := 0; i < req.Frames; i++ {
+		if err := ctx.Err(); err != nil {
+			return out, err
+		}
+		frame, err := s.Screenshot(ctx, actor, ConsoleScreenshotRequest{Target: req.Target, Width: req.Width, Height: req.Height})
+		if err != nil {
+			return out, err
+		}
+		img, err := png.Decode(bytes.NewReader(frame.Data))
+		if err != nil {
+			return out, err
+		}
+		p := image.NewPaletted(img.Bounds(), palette.Plan9)
+		draw.Draw(p, p.Bounds(), img, img.Bounds().Min, draw.Src)
+		animation.Image = append(animation.Image, p)
+		animation.Delay = append(animation.Delay, req.IntervalMillis/10)
+		out.ObservedAt = append(out.ObservedAt, frame.ObservedAt)
+		if i > 0 {
+			delay := int(frame.ObservedAt.Sub(out.ObservedAt[i-1]).Milliseconds() / 10)
+			delay = max(1, delay)
+			if delay > 65535 {
+				return out, errors.New("app: invalid recording frame timing")
+			}
+			animation.Delay[i-1] = delay
+		}
+		if i < req.Frames-1 {
+			if err := waitRecordingFrame(ctx, req.IntervalMillis); err != nil {
+				return out, err
+			}
+		}
+
+	}
+	var buffer bytes.Buffer
+	if err := gif.EncodeAll(&buffer, &animation); err != nil {
+		return out, err
+	}
+	if buffer.Len() > 20*1024*1024 {
+		return out, errors.New("app: recording exceeds artifact limit")
+	}
+	digest := sha256.Sum256(buffer.Bytes())
+	out.Data = buffer.Bytes()
+	out.SHA256 = hex.EncodeToString(digest[:])
+	out.MIMEType = "image/gif"
+	out.Width = req.Width
+	out.Height = req.Height
+	return out, nil
+}
+
+func waitRecordingFrame(ctx context.Context, intervalMillis int) error {
+	timer := time.NewTimer(time.Duration(intervalMillis) * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}

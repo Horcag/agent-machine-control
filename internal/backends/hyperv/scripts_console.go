@@ -56,6 +56,10 @@ const ScriptConsoleInput = scriptConsolePrelude + scriptConsoleRelease + `
 $keyboard=$null; $mouse=$null; $held=@(); $buttonHeld=$false; $button=0; $ok=$false
 try {
     $input = $r.input
+    if ($input.kind -ne 'key' -and @($r.keys).Count -gt 0) {
+        $keyboard = GuestDevice 'Msvm_Keyboard'
+        foreach ($key in $r.keys) { $held += [uint32]$key; RequireSuccess ($keyboard.PressKey([uint32]$key)) }
+    }
     switch ($input.kind) {
         'type' {
             $keyboard = GuestDevice 'Msvm_Keyboard'
@@ -81,7 +85,17 @@ try {
                 $button=$buttons[[string]$input.button]
                 $buttonHeld=$true
                 RequireSuccess ($mouse.SetButtonState([uint32]$button,$true))
-                if ($input.kind -eq 'drag') { RequireSuccess ($mouse.SetAbsolutePosition([int]$input.to_x,[int]$input.to_y)) }
+                if ($input.kind -eq 'drag') {
+                    for ($step=1; $step -le 20; $step++) {
+                        RequireSuccess ($mouse.SetAbsolutePosition([int]($x+([int]$input.to_x-$x)*$step/20),[int]($y+([int]$input.to_y-$y)*$step/20)))
+                        Start-Sleep -Milliseconds 20
+                    }
+                }
+                if ($input.kind -eq 'click' -and [int]$input.count -eq 2) {
+                    RequireSuccess ($mouse.SetButtonState([uint32]$button,$false)); $buttonHeld=$false
+                    Start-Sleep -Milliseconds 100
+                    $buttonHeld=$true; RequireSuccess ($mouse.SetButtonState([uint32]$button,$true))
+                }
             }
         }
         default { throw 'Unsupported guest action' }
@@ -96,7 +110,7 @@ try {
 // A separate bounded release attempt covers process termination before finally.
 const ScriptConsoleCleanup = scriptConsolePrelude + scriptConsoleRelease + `
 $keyboard=$null; $mouse=$null; $held=@(); $buttonHeld=$false; $button=0
-if ($r.input.kind -eq 'key') { $keyboard=GuestDevice 'Msvm_Keyboard'; $held=@($r.keys) }
+if (@($r.keys).Count -gt 0) { $keyboard=GuestDevice 'Msvm_Keyboard'; $held=@($r.keys) }
 if ($r.input.kind -in @('click','drag')) {
     $mouse=GuestDevice 'Msvm_SyntheticMouse'
     $buttons=@{left=1;right=2;middle=3}; $button=$buttons[[string]$r.input.button]; $buttonHeld=$true

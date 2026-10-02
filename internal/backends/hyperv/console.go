@@ -11,6 +11,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"strings"
 	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/domain"
@@ -121,6 +122,12 @@ func (a *Adapter) SendConsoleInput(ctx context.Context, id string, input domain.
 	if input.Kind == "key" {
 		request.Keys, _ = domain.ConsoleKeyCodes(input.Key)
 	}
+	if input.Modifiers != "" {
+		for modifier := range strings.SplitSeq(input.Modifiers, "+") {
+			codes, _ := domain.ConsoleKeyCodes(modifier)
+			request.Keys = append(request.Keys, codes...)
+		}
+	}
 	output, err := a.executeScript(ctx, ScriptConsoleInput, consoleEnvironment(request))
 	if err == nil {
 		var result consoleResponse
@@ -139,7 +146,7 @@ func (a *Adapter) SendConsoleInput(ctx context.Context, id string, input domain.
 
 func (a *Adapter) releaseConsoleInput(ctx context.Context, request consoleRequest) {
 	kind := request.Input.Kind
-	if kind != "key" && kind != "click" && kind != "drag" {
+	if kind != "key" && kind != "click" && kind != "drag" && len(request.Keys) == 0 {
 		return
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)

@@ -25,14 +25,16 @@ type ConsoleFrame struct {
 // ConsoleInput describes one bounded action in a VM's console coordinates.
 // Pointer actions use a frame ID and coordinates in that captured image.
 type ConsoleInput struct {
-	Kind    string `json:"kind"`
-	FrameID string `json:"frame_id,omitempty"`
-	X       int    `json:"x,omitempty"`
-	Y       int    `json:"y,omitempty"`
-	ToX     int    `json:"to_x,omitempty"`
-	ToY     int    `json:"to_y,omitempty"`
-	Button  string `json:"button,omitempty"`
-	Key     string `json:"key,omitempty"`
-	Text    string `json:"text,omitempty"`
-	Delta   int    `json:"delta,omitempty"`
+	Kind      string `json:"kind"`
+	FrameID   string `json:"frame_id,omitempty"`
+	X         int    `json:"x,omitempty"`
+	Y         int    `json:"y,omitempty"`
+	ToX       int    `json:"to_x,omitempty"`
+	ToY       int    `json:"to_y,omitempty"`
+	Button    string `json:"button,omitempty"`
+	Key       string `json:"key,omitempty"`
+	Text      string `json:"text,omitempty"`
+	Delta     int    `json:"delta,omitempty"`
+	Count     int    `json:"count,omitempty"`
+	Modifiers string `json:"modifiers,omitempty"`
 }

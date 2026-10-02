@@ -41,6 +41,7 @@ type ConsoleInputInput struct {
 	IdempotencyKey string              `json:"idempotency_key"`
 	Deadline       string              `json:"deadline" jsonschema:"Exact canonical UTC operation deadline"`
 	ApprovalID     string              `json:"approval_id,omitempty"`
+	LabGrantID     string              `json:"lab_grant_id,omitempty"`
 }
 
 type ConsoleInputResult struct {
@@ -71,7 +72,7 @@ func (a *Adapter) ConsoleInput(ctx context.Context, _ *mcp.CallToolRequest, in C
 	if err != nil {
 		return mcpToolError(err), ConsoleInputResult{}, nil
 	}
-	rcpt, err := cl.ConsoleInput(ctx, app.ConsoleInputRequest{Target: in.Target, Input: in.Input, Reason: in.Reason, IdempotencyKey: in.IdempotencyKey, Deadline: in.Deadline, ApprovalID: in.ApprovalID})
+	rcpt, err := cl.ConsoleInput(ctx, app.ConsoleInputRequest{Target: in.Target, Input: in.Input, Reason: in.Reason, IdempotencyKey: in.IdempotencyKey, Deadline: in.Deadline, ApprovalID: in.ApprovalID, LabGrantID: in.LabGrantID})
 	if err != nil {
 		return mcpToolError(err), ConsoleInputResult{}, nil
 	}

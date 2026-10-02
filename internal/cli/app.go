@@ -322,6 +322,8 @@ func (a *App) RunWithContext(ctx context.Context, args []string, stdout, stderr 
 
 	case "console":
 		return a.runConsole(ctx, directMode, stateDir, cmdArgs, stdout, stderr)
+	case "desktop":
+		return a.runDesktop(ctx, directMode, stateDir, cmdArgs, stdout, stderr)
 
 	case "operation":
 		return runOperation(
@@ -364,6 +366,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Commands:")
 	fmt.Fprintln(w, "  console screenshot|key|type|move|click|drag|scroll  Capture or control the enrolled VM console")
+	fmt.Fprintln(w, "  desktop observe|action|enable|status|disable     Guest windows/UIA and bounded autonomous control")
 	fmt.Fprintln(w, "  doctor                                   Check Hyper-V and host readiness")
 	fmt.Fprintln(w, "  machine list                             List discovered virtual machines")
 	fmt.Fprintln(w, "  machine inspect <guid>                   Inspect virtual machine configuration and state")

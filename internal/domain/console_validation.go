@@ -24,6 +24,10 @@ func (in ConsoleInput) Validate() error {
 	if in.Delta != 0 {
 		return ErrInvalidConsoleInput
 	}
+	if err := in.validatePointerOptions(); err != nil {
+		return err
+	}
+
 	switch in.Kind {
 	case "move", "click", "drag":
 		return in.validatePointer()
@@ -32,6 +36,27 @@ func (in ConsoleInput) Validate() error {
 	default:
 		return ErrInvalidConsoleInput
 	}
+}
+
+func (in ConsoleInput) validatePointerOptions() error {
+	if in.Count < 0 || in.Count > 2 || (in.Kind != "click" && in.Count != 0) || len(in.Modifiers) > 24 {
+		return ErrInvalidConsoleInput
+	}
+	seen := map[string]bool{}
+	modifiers := []string{}
+	if in.Modifiers != "" {
+		modifiers = strings.Split(in.Modifiers, "+")
+	}
+	for _, modifier := range modifiers {
+		if (modifier != "ctrl" && modifier != "alt" && modifier != "shift" && modifier != "win") || seen[modifier] {
+			return ErrInvalidConsoleInput
+		}
+		seen[modifier] = true
+	}
+	if len(in.Modifiers) > 0 && in.Kind != "move" && in.Kind != "click" && in.Kind != "drag" {
+		return ErrInvalidConsoleInput
+	}
+	return nil
 }
 
 func consolePositionValid(x, y int) bool { return x >= 0 && y >= 0 && x <= 65535 && y <= 65535 }

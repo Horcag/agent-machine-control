@@ -651,6 +651,9 @@
             "button": {
               "type": "string"
             },
+            "count": {
+              "type": "integer"
+            },
             "delta": {
               "type": "integer"
             },
@@ -661,6 +664,9 @@
               "type": "string"
             },
             "kind": {
+              "type": "string"
+            },
+            "modifiers": {
               "type": "string"
             },
             "text": {
@@ -683,6 +689,9 @@
             "kind"
           ],
           "type": "object"
+        },
+        "lab_grant_id": {
+          "type": "string"
         },
         "reason": {
           "type": "string"
@@ -809,6 +818,82 @@
     }
   },
   {
+    "description": "Record 2-30 VM screenshots as a bounded animated GIF (at most 30 seconds); no host desktop recording",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "frames": {
+          "type": "integer"
+        },
+        "height": {
+          "type": "integer"
+        },
+        "interval_millis": {
+          "type": "integer"
+        },
+        "target": {
+          "type": "string"
+        },
+        "width": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "width",
+        "height",
+        "frames",
+        "interval_millis"
+      ],
+      "type": "object"
+    },
+    "name": "console_record",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "items": {
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "height": {
+          "type": "integer"
+        },
+        "mime_type": {
+          "type": "string"
+        },
+        "observed_at": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "width": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mime_type",
+        "sha256",
+        "width",
+        "height",
+        "observed_at"
+      ],
+      "type": "object"
+    }
+  },
+  {
     "description": "Capture the enrolled VM console as a PNG image",
     "inputSchema": {
       "additionalProperties": false,
@@ -887,6 +972,1077 @@
       "required": [
         "schema_version",
         "frame"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Apply a guest window/UIA/clipboard/wheel/launch action or native console input under an operator-issued VM lab grant; optionally return a fresh PNG",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "additionalProperties": false,
+          "description": "Semantic guest action; native guest pixel coordinates",
+          "properties": {
+            "action": {
+              "type": "string"
+            },
+            "arguments": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "axis": {
+              "type": "string"
+            },
+            "deadline": {
+              "type": "string"
+            },
+            "delta": {
+              "type": "integer"
+            },
+            "element_id": {
+              "type": "string"
+            },
+            "executable": {
+              "type": "string"
+            },
+            "height": {
+              "type": "integer"
+            },
+            "request_id": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "width": {
+              "type": "integer"
+            },
+            "window_id": {
+              "type": "string"
+            },
+            "window_identity": {
+              "type": "string"
+            },
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "request_id",
+            "deadline",
+            "action"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "deadline": {
+          "type": "string"
+        },
+        "idempotency_key": {
+          "type": "string"
+        },
+        "input": {
+          "additionalProperties": false,
+          "description": "Hypervisor input in captured frame pixels; keyboard works without guest helper",
+          "properties": {
+            "button": {
+              "type": "string"
+            },
+            "count": {
+              "type": "integer"
+            },
+            "delta": {
+              "type": "integer"
+            },
+            "frame_id": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "modifiers": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "to_x": {
+              "type": "integer"
+            },
+            "to_y": {
+              "type": "integer"
+            },
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "lab_grant_id": {
+          "type": "string"
+        },
+        "observe_after": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason",
+        "idempotency_key",
+        "deadline"
+      ],
+      "type": "object"
+    },
+    "name": "desktop_act",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "observation": {
+          "additionalProperties": false,
+          "properties": {
+            "coordinate_space": {
+              "type": "string"
+            },
+            "cursor": {
+              "additionalProperties": false,
+              "properties": {
+                "visible": {
+                  "type": "boolean"
+                },
+                "x": {
+                  "type": "integer"
+                },
+                "y": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "visible"
+              ],
+              "type": [
+                "null",
+                "object"
+              ]
+            },
+            "desktop": {
+              "additionalProperties": false,
+              "properties": {
+                "cursor": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "visible": {
+                      "type": "boolean"
+                    },
+                    "x": {
+                      "type": "integer"
+                    },
+                    "y": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "visible"
+                  ],
+                  "type": [
+                    "null",
+                    "object"
+                  ]
+                },
+                "elements": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "automation_id": {
+                        "type": "string"
+                      },
+                      "bounds": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "height": {
+                            "type": "integer"
+                          },
+                          "left": {
+                            "type": "integer"
+                          },
+                          "top": {
+                            "type": "integer"
+                          },
+                          "width": {
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "left",
+                          "top",
+                          "width",
+                          "height"
+                        ],
+                        "type": "object"
+                      },
+                      "control_type": {
+                        "type": "string"
+                      },
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "offscreen": {
+                        "type": "boolean"
+                      },
+                      "patterns": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": [
+                          "null",
+                          "array"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "automation_id",
+                      "control_type",
+                      "bounds",
+                      "enabled",
+                      "offscreen",
+                      "patterns"
+                    ],
+                    "type": "object"
+                  },
+                  "type": [
+                    "null",
+                    "array"
+                  ]
+                },
+                "elevated": {
+                  "type": "boolean"
+                },
+                "error": {
+                  "type": "string"
+                },
+                "process_id": {
+                  "type": "integer"
+                },
+                "request_id": {
+                  "type": "string"
+                },
+                "session_id": {
+                  "type": "integer"
+                },
+                "success": {
+                  "type": "boolean"
+                },
+                "text": {
+                  "type": "string"
+                },
+                "windows": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "bounds": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "height": {
+                            "type": "integer"
+                          },
+                          "left": {
+                            "type": "integer"
+                          },
+                          "top": {
+                            "type": "integer"
+                          },
+                          "width": {
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "left",
+                          "top",
+                          "width",
+                          "height"
+                        ],
+                        "type": "object"
+                      },
+                      "class_name": {
+                        "type": "string"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "identity": {
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "type": "integer"
+                      },
+                      "state": {
+                        "type": "string"
+                      },
+                      "title": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "identity",
+                      "title",
+                      "class_name",
+                      "process_id",
+                      "bounds",
+                      "state"
+                    ],
+                    "type": "object"
+                  },
+                  "type": [
+                    "null",
+                    "array"
+                  ]
+                }
+              },
+              "required": [
+                "request_id",
+                "success",
+                "session_id",
+                "elevated"
+              ],
+              "type": "object"
+            },
+            "frame": {
+              "additionalProperties": false,
+              "properties": {
+                "frame_id": {
+                  "type": "string"
+                },
+                "height": {
+                  "type": "integer"
+                },
+                "mime_type": {
+                  "type": "string"
+                },
+                "native_height": {
+                  "type": "integer"
+                },
+                "native_width": {
+                  "type": "integer"
+                },
+                "observed_at": {
+                  "type": "string"
+                },
+                "sha256": {
+                  "type": "string"
+                },
+                "vm_id": {
+                  "type": "string"
+                },
+                "width": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "vm_id",
+                "frame_id",
+                "width",
+                "height",
+                "native_width",
+                "native_height",
+                "mime_type",
+                "sha256",
+                "observed_at"
+              ],
+              "type": "object"
+            },
+            "helper_available": {
+              "type": "boolean"
+            },
+            "lab_grant_expires_at": {
+              "type": "string"
+            },
+            "lab_grant_id": {
+              "type": "string"
+            },
+            "schema_version": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "schema_version",
+            "frame",
+            "desktop",
+            "helper_available",
+            "coordinate_space"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "result": {
+          "additionalProperties": false,
+          "properties": {
+            "cached_receipt": {
+              "type": "boolean"
+            },
+            "receipt": {
+              "additionalProperties": false,
+              "properties": {
+                "Actor": {
+                  "type": "string"
+                },
+                "Class": {
+                  "type": "string"
+                },
+                "CompletedAt": {
+                  "type": "string"
+                },
+                "EffectiveBackend": {
+                  "type": "string"
+                },
+                "EvidenceRefs": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": [
+                    "null",
+                    "array"
+                  ]
+                },
+                "Fingerprint": {
+                  "type": "string"
+                },
+                "IdempotencyFingerprint": {
+                  "type": "string"
+                },
+                "IdempotencyKey": {
+                  "type": "string"
+                },
+                "ObservationType": {
+                  "type": "string"
+                },
+                "OperationKind": {
+                  "type": "string"
+                },
+                "Outcome": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "ErrorCategory": {
+                      "type": "string"
+                    },
+                    "ErrorMessage": {
+                      "type": "string"
+                    },
+                    "ExitCode": {
+                      "type": "integer"
+                    },
+                    "Status": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "Status",
+                    "ExitCode",
+                    "ErrorCategory",
+                    "ErrorMessage"
+                  ],
+                  "type": "object"
+                },
+                "ReceiptID": {
+                  "type": "string"
+                },
+                "RedactionStatus": {
+                  "type": "string"
+                },
+                "RollbackRef": {
+                  "type": "string"
+                },
+                "StartedAt": {
+                  "type": "string"
+                },
+                "Target": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "ReceiptID",
+                "OperationKind",
+                "Fingerprint",
+                "IdempotencyFingerprint",
+                "IdempotencyKey",
+                "Actor",
+                "Target",
+                "Class",
+                "EffectiveBackend",
+                "StartedAt",
+                "CompletedAt",
+                "Outcome",
+                "ObservationType",
+                "EvidenceRefs",
+                "RollbackRef",
+                "RedactionStatus"
+              ],
+              "type": [
+                "null",
+                "object"
+              ]
+            },
+            "response": {
+              "additionalProperties": false,
+              "properties": {
+                "cursor": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "visible": {
+                      "type": "boolean"
+                    },
+                    "x": {
+                      "type": "integer"
+                    },
+                    "y": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "visible"
+                  ],
+                  "type": [
+                    "null",
+                    "object"
+                  ]
+                },
+                "elements": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "automation_id": {
+                        "type": "string"
+                      },
+                      "bounds": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "height": {
+                            "type": "integer"
+                          },
+                          "left": {
+                            "type": "integer"
+                          },
+                          "top": {
+                            "type": "integer"
+                          },
+                          "width": {
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "left",
+                          "top",
+                          "width",
+                          "height"
+                        ],
+                        "type": "object"
+                      },
+                      "control_type": {
+                        "type": "string"
+                      },
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "offscreen": {
+                        "type": "boolean"
+                      },
+                      "patterns": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": [
+                          "null",
+                          "array"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "automation_id",
+                      "control_type",
+                      "bounds",
+                      "enabled",
+                      "offscreen",
+                      "patterns"
+                    ],
+                    "type": "object"
+                  },
+                  "type": [
+                    "null",
+                    "array"
+                  ]
+                },
+                "elevated": {
+                  "type": "boolean"
+                },
+                "error": {
+                  "type": "string"
+                },
+                "process_id": {
+                  "type": "integer"
+                },
+                "request_id": {
+                  "type": "string"
+                },
+                "session_id": {
+                  "type": "integer"
+                },
+                "success": {
+                  "type": "boolean"
+                },
+                "text": {
+                  "type": "string"
+                },
+                "windows": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "bounds": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "height": {
+                            "type": "integer"
+                          },
+                          "left": {
+                            "type": "integer"
+                          },
+                          "top": {
+                            "type": "integer"
+                          },
+                          "width": {
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "left",
+                          "top",
+                          "width",
+                          "height"
+                        ],
+                        "type": "object"
+                      },
+                      "class_name": {
+                        "type": "string"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "identity": {
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "type": "integer"
+                      },
+                      "state": {
+                        "type": "string"
+                      },
+                      "title": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "identity",
+                      "title",
+                      "class_name",
+                      "process_id",
+                      "bounds",
+                      "state"
+                    ],
+                    "type": "object"
+                  },
+                  "type": [
+                    "null",
+                    "array"
+                  ]
+                }
+              },
+              "required": [
+                "request_id",
+                "success",
+                "session_id",
+                "elevated"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "response",
+            "cached_receipt"
+          ],
+          "type": "object"
+        },
+        "schema_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "result"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Observe the VM PNG and guest windows or bounded UI Automation tree without host focus; native console survives helper disconnection",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "height": {
+          "type": "integer"
+        },
+        "target": {
+          "type": "string"
+        },
+        "width": {
+          "type": "integer"
+        },
+        "window_id": {
+          "description": "Optional native HWND for UI Automation tree",
+          "type": "string"
+        },
+        "window_identity": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "desktop_observe",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "coordinate_space": {
+          "type": "string"
+        },
+        "cursor": {
+          "additionalProperties": false,
+          "properties": {
+            "visible": {
+              "type": "boolean"
+            },
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "x",
+            "y",
+            "visible"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "desktop": {
+          "additionalProperties": false,
+          "properties": {
+            "cursor": {
+              "additionalProperties": false,
+              "properties": {
+                "visible": {
+                  "type": "boolean"
+                },
+                "x": {
+                  "type": "integer"
+                },
+                "y": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "visible"
+              ],
+              "type": [
+                "null",
+                "object"
+              ]
+            },
+            "elements": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "automation_id": {
+                    "type": "string"
+                  },
+                  "bounds": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "height": {
+                        "type": "integer"
+                      },
+                      "left": {
+                        "type": "integer"
+                      },
+                      "top": {
+                        "type": "integer"
+                      },
+                      "width": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "left",
+                      "top",
+                      "width",
+                      "height"
+                    ],
+                    "type": "object"
+                  },
+                  "control_type": {
+                    "type": "string"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "offscreen": {
+                    "type": "boolean"
+                  },
+                  "patterns": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": [
+                      "null",
+                      "array"
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "automation_id",
+                  "control_type",
+                  "bounds",
+                  "enabled",
+                  "offscreen",
+                  "patterns"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "elevated": {
+              "type": "boolean"
+            },
+            "error": {
+              "type": "string"
+            },
+            "process_id": {
+              "type": "integer"
+            },
+            "request_id": {
+              "type": "string"
+            },
+            "session_id": {
+              "type": "integer"
+            },
+            "success": {
+              "type": "boolean"
+            },
+            "text": {
+              "type": "string"
+            },
+            "windows": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "bounds": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "height": {
+                        "type": "integer"
+                      },
+                      "left": {
+                        "type": "integer"
+                      },
+                      "top": {
+                        "type": "integer"
+                      },
+                      "width": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "left",
+                      "top",
+                      "width",
+                      "height"
+                    ],
+                    "type": "object"
+                  },
+                  "class_name": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "identity": {
+                    "type": "string"
+                  },
+                  "process_id": {
+                    "type": "integer"
+                  },
+                  "state": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "identity",
+                  "title",
+                  "class_name",
+                  "process_id",
+                  "bounds",
+                  "state"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            }
+          },
+          "required": [
+            "request_id",
+            "success",
+            "session_id",
+            "elevated"
+          ],
+          "type": "object"
+        },
+        "frame": {
+          "additionalProperties": false,
+          "properties": {
+            "frame_id": {
+              "type": "string"
+            },
+            "height": {
+              "type": "integer"
+            },
+            "mime_type": {
+              "type": "string"
+            },
+            "native_height": {
+              "type": "integer"
+            },
+            "native_width": {
+              "type": "integer"
+            },
+            "observed_at": {
+              "type": "string"
+            },
+            "sha256": {
+              "type": "string"
+            },
+            "vm_id": {
+              "type": "string"
+            },
+            "width": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "vm_id",
+            "frame_id",
+            "width",
+            "height",
+            "native_width",
+            "native_height",
+            "mime_type",
+            "sha256",
+            "observed_at"
+          ],
+          "type": "object"
+        },
+        "helper_available": {
+          "type": "boolean"
+        },
+        "lab_grant_expires_at": {
+          "type": "string"
+        },
+        "lab_grant_id": {
+          "type": "string"
+        },
+        "schema_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "frame",
+        "desktop",
+        "helper_available",
+        "coordinate_space"
       ],
       "type": "object"
     }

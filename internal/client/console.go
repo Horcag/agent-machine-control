@@ -8,6 +8,12 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/domain"
 )
 
+func (c *Client) ConsoleRecord(ctx context.Context, req app.ConsoleRecordRequest) (app.ConsoleRecording, error) {
+	var out app.ConsoleRecording
+	err := c.doRequest(ctx, http.MethodPost, "/v1/console/record", req, &out)
+	return out, err
+}
+
 // ConsoleScreenshot captures the enrolled VM through the authenticated daemon.
 func (c *Client) ConsoleScreenshot(ctx context.Context, req app.ConsoleScreenshotRequest) (domain.ConsoleFrame, error) {
 	var out domain.ConsoleFrame
