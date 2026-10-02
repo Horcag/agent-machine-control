@@ -77,7 +77,11 @@ func desktopObserveHandler(t *testing.T, pngBytes []byte, helperAvailable bool, 
 		case "/v1/console/screenshot":
 			var req app.ConsoleScreenshotRequest
 			decodeDesktopMCPRequest(t, r, &req)
-			if req.Target != "default" || req.Width != 8 || req.Height != 4 {
+			wantTarget := "default"
+			if len(*routes) > 1 {
+				wantTarget = desktopVMA
+			}
+			if req.Target != wantTarget || req.Width != 8 || req.Height != 4 {
 				t.Errorf("capture request=%+v", req)
 			}
 			response = domain.ConsoleFrame{VMID: "local:c4a523d4-6b99-4d62-a5e2-4752c0f20001", Data: pngBytes, MIMEType: "image/png", FrameID: "synthetic-frame", Width: 8, Height: 4}
@@ -152,7 +156,7 @@ func TestDesktopObserveMCPTransportAndHelperRecovery(t *testing.T) {
 			result := callDesktopMCPTool(t, a, "desktop_observe", map[string]any{"target": "default", "width": 8, "height": 4, "window_id": "42", "window_identity": "synthetic-window"})
 			assertDesktopMCPImage(t, result, "image/png", pngBytes.Bytes())
 			assertDesktopObserveMetadata(t, result, helperAvailable, expiry)
-			if !reflect.DeepEqual(routes, []string{"/v1/console/screenshot", "/v1/desktop/action", "/v1/desktop/lab/active"}) {
+			if !reflect.DeepEqual(routes, []string{"/v1/console/screenshot", "/v1/desktop/action", "/v1/desktop/lab/active", "/v1/console/screenshot"}) {
 				t.Fatalf("routes=%v", routes)
 			}
 		})

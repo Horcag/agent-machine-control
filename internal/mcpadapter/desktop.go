@@ -40,7 +40,7 @@ func (a *Adapter) DesktopObserve(ctx context.Context, call *mcp.CallToolRequest,
 		return image, DesktopObserveResult{}, err
 	}
 	in.Target = frame.Frame.VMID // Bind semantic evidence and authority to the captured VM.
-	out := DesktopObserveResult{SchemaVersion: SchemaVersion, Frame: frame.Frame, CoordinateSpace: "console input uses frame pixels; guest desktop actions use native screen pixels"}
+	out := DesktopObserveResult{SchemaVersion: SchemaVersion, CoordinateSpace: "console input uses frame pixels; guest desktop actions use native screen pixels"}
 	cl, err := a.getClient()
 	if err != nil {
 		return mcpToolError(err), out, nil
@@ -65,7 +65,20 @@ func (a *Adapter) DesktopObserve(ctx context.Context, call *mcp.CallToolRequest,
 		out.LabGrantID = grant.Grant.GrantID
 		out.LabGrantExpiresAt = grant.Grant.ExpiresAt
 	}
-	return image, out, nil
+	// Refresh after potentially slow metadata lookups, keeping the original VM pin.
+	image, out.Frame, err = a.finalDesktopFrame(ctx, call, in)
+	return image, out, err
+}
+
+func (a *Adapter) finalDesktopFrame(ctx context.Context, call *mcp.CallToolRequest, in DesktopObserveInput) (*mcp.CallToolResult, ConsoleFrameMetadata, error) {
+	image, finalFrame, err := a.ConsoleScreenshot(ctx, call, ConsoleScreenshotInput{Target: in.Target, Width: in.Width, Height: in.Height})
+	if err != nil || image == nil || image.IsError {
+		return image, ConsoleFrameMetadata{}, err
+	}
+	if finalFrame.Frame.VMID != in.Target {
+		return mcpToolError(NewInputError("final desktop frame does not match captured VM")), ConsoleFrameMetadata{}, nil
+	}
+	return image, finalFrame.Frame, nil
 }
 
 type DesktopActInput struct {

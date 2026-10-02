@@ -123,6 +123,7 @@ func TestDesktopActObserveAfterPinsMutationReceiptTarget(t *testing.T) {
 				{"/v1/console/screenshot", desktopVMA, desktopVMA},
 				{"/v1/desktop/action", desktopVMA, desktopVMA},
 				{"/v1/desktop/lab/active", desktopVMA, desktopVMA},
+				{"/v1/console/screenshot", desktopVMA, desktopVMA},
 			}, "windows")
 		})
 	}
@@ -146,6 +147,7 @@ func TestDesktopObservePinsCapturedVMForWindowsAndTree(t *testing.T) {
 				{"/v1/console/screenshot", "default", desktopVMA},
 				{"/v1/desktop/action", desktopVMA, desktopVMA},
 				{"/v1/desktop/lab/active", desktopVMA, desktopVMA},
+				{"/v1/console/screenshot", desktopVMA, desktopVMA},
 			}, action)
 			d.mu.Lock()
 			defer d.mu.Unlock()
