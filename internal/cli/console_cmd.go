@@ -156,6 +156,7 @@ func reserveConsoleOutput(ctx context.Context, path string) (*os.File, error) {
 
 func removeReservedConsoleOutput(file *os.File, path string) {
 	owned, err := file.Stat()
+	_ = file.Close()
 	if err != nil {
 		return
 	}

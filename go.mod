@@ -1,6 +1,6 @@
 module github.com/Horcag/agent-machine-control
 
-go 1.26.0
+go 1.26.6
 
 require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0

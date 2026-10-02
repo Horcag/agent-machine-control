@@ -60,7 +60,7 @@ type consoleFixture struct {
 
 func newConsoleFixture(t *testing.T) consoleFixture {
 	t.Helper()
-	state, err := statedir.Resolve(t.TempDir())
+	state, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}
