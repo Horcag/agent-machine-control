@@ -44,7 +44,7 @@ func consoleArgs(args []string) ([]string, []string) {
 
 func (a *App) runConsole(ctx context.Context, direct bool, stateDir string, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "amc console: requires screenshot, record, key, type, move, click, drag, or scroll")
+		fmt.Fprintln(stderr, "amc console: requires screenshot, record, key, type, move, click, or drag")
 		return ExitUsage
 	}
 	if args[0] == "screenshot" {

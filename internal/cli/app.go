@@ -365,7 +365,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage: amc [--direct] [--state-dir <dir>] [--json] <command> [subcommand] [flags] [args]")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Commands:")
-	fmt.Fprintln(w, "  console screenshot|key|type|move|click|drag|scroll  Capture or control the enrolled VM console")
+	fmt.Fprintln(w, "  console screenshot|key|type|move|click|drag  Capture or control the enrolled VM console")
 	fmt.Fprintln(w, "  desktop observe|action|enable|status|disable     Guest windows/UIA and bounded autonomous control")
 	fmt.Fprintln(w, "  doctor                                   Check Hyper-V and host readiness")
 	fmt.Fprintln(w, "  machine list                             List discovered virtual machines")
