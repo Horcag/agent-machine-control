@@ -102,6 +102,16 @@ hex `request_id` and future RFC3339 `deadline`. Unknown fields and extra JSON va
 rejected. Native console and recording also work through `--direct` without the daemon,
 SSH or guest helper.
 
+Guest exchanges use the earliest caller deadline or a 25-second transport budget.
+The guest's unchanged 35-second admission limit provides nominal ten-second clock
+headroom; it does not synchronize clocks. Host and guest UTC must remain reasonably
+aligned. Greater or changing skew can still cause refusal or leave guest work valid
+after host expiry. The bootstrap validates identity and expiry before loading its
+program, and the helper checks expiry before later mutations. These checks prevent
+starting the next guarded mutation after expiry; an operation already in progress
+may finish. Cancelling SSH does not prove remote exit or roll back an effect already
+completed.
+
 `console_record` returns an animated GIF and metadata. Capture is bounded to 2–30 frames,
 100–2000 ms intervals, 30 seconds of requested intervals and 307200 pixels per frame.
 Frame capture times determine playback delays. This is a screenshot sequence, not a
