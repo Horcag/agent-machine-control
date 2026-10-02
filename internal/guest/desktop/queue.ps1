@@ -140,7 +140,7 @@ function Write-Response($response) {
 }
 
 function Get-WorkerArguments([string]$id, [string]$action = 'status') {
-    if ($id -cnotmatch '^[0-9a-f]{32}$') { throw 'invalid_request' }
+    if ($id -cnotmatch '\A[0-9a-f]{32}\z') { throw 'invalid_request' }
     # UIA clients use a windowless MTA; clipboard and other actions retain STA.
     $uia = @('uia.tree', 'uia.invoke', 'uia.setvalue', 'uia.select', 'uia.toggle', 'uia.expand', 'uia.collapse', 'uia.scroll')
     $sta = @('status', 'cursor', 'windows', 'clipboard.get', 'clipboard.set', 'launch', 'scroll', 'window.focus', 'window.move', 'window.resize', 'window.close', 'window.minimize', 'window.maximize', 'window.restore')

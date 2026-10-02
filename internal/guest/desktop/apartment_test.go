@@ -46,8 +46,10 @@ try{
   $failed=$false;try{Get-WorkerArguments $id $action|Out-Null}catch{$failed=$true}
   Require $failed 'unknown action accepted'
  }
- $failed=$false;try{Get-WorkerArguments ($id+' -MTA') 'status'|Out-Null}catch{$failed=$true}
- Require $failed 'request ID accepted arguments'
+ foreach($invalidID in @(($id+' -MTA'),($id+[char]10),($id+[char]13+[char]10),('A'*32),('a'*31),('a'*33))){
+  $failed=$false;try{Get-WorkerArguments $invalidID 'status'|Out-Null}catch{$failed=$true}
+  Require $failed 'invalid request ID accepted'
+ }
  $script:Processes=@(
   @{ExecutablePath=$powerShell;CommandLine=('"'+$powerShell+'" '+(Get-WorkerArguments $id 'clipboard.get'));OwnerSID=$sid},
   @{ExecutablePath=$powerShell;CommandLine=('"'+$powerShell+'" '+(Get-WorkerArguments $other 'uia.tree'));OwnerSID=$sid})
