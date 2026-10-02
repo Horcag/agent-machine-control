@@ -203,6 +203,8 @@ func ValidateOperationParameters(kind OperationKind, params map[string]any) erro
 
 func specialOperationParameterValidator(kind OperationKind) func(map[string]any) error {
 	switch kind {
+	case "console.input":
+		return validateConsoleInputParams
 	case "session.approval.issue", "operation.approval.issue":
 		return func(params map[string]any) error {
 			return validateApprovalIssueParams(kind, params)

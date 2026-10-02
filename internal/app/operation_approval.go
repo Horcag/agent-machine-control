@@ -123,7 +123,7 @@ func validateOperationApprovalIssue(params OperationApprovalIssueParams) (domain
 		return "", err
 	}
 	switch params.Kind {
-	case "machine.start", "machine.stop", "checkpoint.create", "checkpoint.restore":
+	case "machine.start", "machine.stop", "checkpoint.create", "checkpoint.restore", "console.input":
 	default:
 		return "", domain.ErrInvalidOperationKind
 	}
@@ -212,6 +212,8 @@ func operationApprovalBeneficiaryActor(caller domain.ActorContext, beneficiary d
 
 func operationApprovalContract(kind domain.OperationKind, params map[string]any) (domain.OperationClass, domain.Capability, error) {
 	switch kind {
+	case "console.input":
+		return domain.ClassDestructivePrivileged, domain.CapabilityConsoleInput, nil
 	case "machine.start":
 		return domain.ClassReversibleMutation, domain.CapabilityMachineStart, nil
 	case "machine.stop":

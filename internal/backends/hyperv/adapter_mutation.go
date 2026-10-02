@@ -17,7 +17,10 @@ func (a *Adapter) Capabilities(_ context.Context, _ string) (domain.CapabilitySe
 	if route.Remote {
 		return domain.ReadOnlyMachineCapabilities(), nil
 	}
-	return domain.DirectMachineCapabilities(), nil
+	caps := domain.DirectMachineCapabilities().Clone()
+	caps[domain.CapabilityConsoleScreenshot] = struct{}{}
+	caps[domain.CapabilityConsoleInput] = struct{}{}
+	return caps, nil
 }
 
 func (a *Adapter) rejectRemotePrivilegedRoute() error {

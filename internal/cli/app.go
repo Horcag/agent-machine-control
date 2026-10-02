@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/actor"
@@ -26,6 +27,7 @@ type App struct {
 	recoveryService   *app.RecoveryService
 	targetService     *app.TargetService
 	targetCoordinator *app.TargetCoordinator
+	consoleService    ConsoleService
 	actor             domain.ActorContext
 	prompter          Prompter
 	directDefault     bool
@@ -205,6 +207,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	appInstance := NewApp(
 		discoveryService,
 		WithRecoveryService(recoveryService),
+		WithConsoleService(app.NewConsoleService(adapter, recoveryService, targetService, filepath.Join(sd.Root(), "console-frames"))),
 		WithTargetService(targetService),
 		WithTargetCoordinator(targetCoordinator),
 		WithActor(actCtx),
@@ -221,7 +224,7 @@ func requiresTargetRuntime(norm NormalizedCLI) bool {
 		return false
 	}
 	switch norm.CommandArgs[0] {
-	case "machine", "checkpoint", "target":
+	case "machine", "checkpoint", "target", "console":
 		return true
 	default:
 		return false
@@ -317,6 +320,9 @@ func (a *App) RunWithContext(ctx context.Context, args []string, stdout, stderr 
 	case "target":
 		return runTarget(ctx, a.targetService, a.targetCoordinator, a.actor, a.prompter, directMode, stateDir, cmdArgs, stdout, stderr)
 
+	case "console":
+		return a.runConsole(ctx, directMode, stateDir, cmdArgs, stdout, stderr)
+
 	case "operation":
 		return runOperation(
 			ctx,
@@ -357,6 +363,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage: amc [--direct] [--state-dir <dir>] [--json] <command> [subcommand] [flags] [args]")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Commands:")
+	fmt.Fprintln(w, "  console screenshot|key|type|move|click|drag|scroll  Capture or control the enrolled VM console")
 	fmt.Fprintln(w, "  doctor                                   Check Hyper-V and host readiness")
 	fmt.Fprintln(w, "  machine list                             List discovered virtual machines")
 	fmt.Fprintln(w, "  machine inspect <guid>                   Inspect virtual machine configuration and state")

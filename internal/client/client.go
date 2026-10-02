@@ -13,6 +13,7 @@ import (
 
 	"github.com/Horcag/agent-machine-control/internal/auth"
 	"github.com/Horcag/agent-machine-control/internal/daemon"
+	"github.com/Horcag/agent-machine-control/internal/domain"
 	"github.com/Horcag/agent-machine-control/internal/statedir"
 )
 
@@ -136,7 +137,12 @@ func decodeHTTPResponse(ctx context.Context, body io.Reader, out any) error {
 	if out == nil {
 		return nil
 	}
-	dec := json.NewDecoder(io.LimitReader(body, 1<<20))
+	responseLimit := int64(1 << 20)
+	if _, consoleFrame := out.(*domain.ConsoleFrame); consoleFrame {
+		// One million RGBA pixels plus PNG/base64 framing fit within this bound.
+		responseLimit = 8 << 20
+	}
+	dec := json.NewDecoder(io.LimitReader(body, responseLimit))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(out); err != nil {
 		if ctx.Err() != nil {

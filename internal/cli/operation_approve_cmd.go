@@ -10,6 +10,8 @@ import (
 
 	"github.com/Horcag/agent-machine-control/internal/client"
 	"github.com/Horcag/agent-machine-control/internal/daemon"
+	"github.com/Horcag/agent-machine-control/internal/domain"
+	"os"
 )
 
 func runOperationApprove(ctx context.Context, stateDir string, prompter Prompter, args []string, stdout, stderr io.Writer) int {
@@ -19,6 +21,7 @@ func runOperationApprove(ctx context.Context, stateDir string, prompter Prompter
 	reason := flags.String("reason", "", "exact operation reason (required)")
 	key := flags.String("idempotency-key", "", "exact operation idempotency key (required)")
 	validityText := flags.String("valid-for", "", "approval validity and exact deadline window (1s-5m, required)")
+	inputFile := flags.String("input-file", "", "console.input JSON action file (typed data is hashed)")
 	mode := flags.String("mode", "shutdown", "machine.stop mode")
 	name := flags.String("name", "checkpoint", "checkpoint.create name")
 	forMCP := flags.Bool("for-mcp", false, "authorize exact agent:mcp-local execution")
@@ -43,7 +46,7 @@ func runOperationApprove(ctx context.Context, stateDir string, prompter Prompter
 	if *forMCP {
 		request.Beneficiary = "agent:mcp-local"
 	}
-	if err := populateOperationApprovalParameters(&request, positionals, *mode, *name); err != nil {
+	if err := populateApprovalRequest(&request, positionals, *mode, *name, *inputFile); err != nil {
 		return operationApproveUsageError(stderr, err.Error())
 	}
 	beneficiary := request.Beneficiary
@@ -104,4 +107,29 @@ func operationApproveUsageError(stderr io.Writer, message string) int {
 
 func printOperationApproveUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage: amc operation approve <kind> <target> [checkpoint-guid] --reason <text> --idempotency-key <key> --valid-for <1s-5m> [--for-mcp] [--json]")
+}
+
+func populateApprovalRequest(request *daemon.OperationApprovalIssueRequest, pos []string, mode, name, inputFile string) error {
+	if request.Kind != "console.input" {
+		if inputFile != "" {
+			return fmt.Errorf("--input-file requires console.input")
+		}
+		return populateOperationApprovalParameters(request, pos, mode, name)
+	}
+	if len(pos) != 2 || inputFile == "" {
+		return fmt.Errorf("console.input requires one target and --input-file")
+	}
+	file, err := os.Open(inputFile)
+	if err != nil {
+		return fmt.Errorf("console input file unavailable")
+	}
+	defer file.Close()
+	decoder := json.NewDecoder(io.LimitReader(file, 4097))
+	decoder.DisallowUnknownFields()
+	var input domain.ConsoleInput
+	if decoder.Decode(&input) != nil || decoder.Decode(new(any)) != io.EOF || input.Validate() != nil {
+		return fmt.Errorf("invalid console input file")
+	}
+	request.Parameters = domain.ConsoleInputParameters(input)
+	return nil
 }
