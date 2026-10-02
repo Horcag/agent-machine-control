@@ -192,9 +192,9 @@ try {
     $owned = $spec.PSObject.Copy()
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $owned.account = $identity.Name; $owned.user_sid = $identity.User.Value
-    $owned.wrapper_sha256 = 'sha256:' + (Get-FileHash $owned.wrapper_path).Hash.ToLowerInvariant()
-    $owned.metadata_sha256 = 'sha256:' + (Get-FileHash $owned.metadata_path).Hash.ToLowerInvariant()
-    $owned.launcher_sha256 = 'sha256:' + (Get-FileHash $owned.launcher_path).Hash.ToLowerInvariant()
+    $owned.wrapper_sha256 = 'sha256:039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81'
+    $owned.metadata_sha256 = 'sha256:039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81'
+    $owned.launcher_sha256 = 'sha256:039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81'
     $script:useRealHash = $true
     function Get-ScheduledTask { if ($script:registered) { return [pscustomobject]@{ State = 'Ready' } }; return $null }
     function Export-ScheduledTask { return '<synthetic />' }

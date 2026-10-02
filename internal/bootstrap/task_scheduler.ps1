@@ -57,7 +57,18 @@ function Test-Hash([string] $LiteralPath, [string] $Expected) {
     if (-not (Test-Path -LiteralPath $LiteralPath -PathType Leaf)) {
         return $false
     }
-    $actual = 'sha256:' + (Get-FileHash -LiteralPath $LiteralPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $stream = $null
+    $sha256 = $null
+    try {
+        $sha256 = [Security.Cryptography.SHA256]::Create()
+        $stream = [IO.File]::OpenRead($LiteralPath)
+        $digest = $sha256.ComputeHash($stream)
+        $actual = 'sha256:' + [BitConverter]::ToString($digest).Replace('-', '').ToLowerInvariant()
+    }
+    finally {
+        if ($null -ne $sha256) { $sha256.Dispose() }
+        if ($null -ne $stream) { $stream.Dispose() }
+    }
     return $actual -ceq $Expected
 }
 
