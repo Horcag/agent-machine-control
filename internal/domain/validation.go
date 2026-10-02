@@ -205,6 +205,12 @@ func specialOperationParameterValidator(kind OperationKind) func(map[string]any)
 	switch kind {
 	case "console.input":
 		return validateConsoleInputParams
+	case "console.lab.grant.issue":
+		return validateConsoleLabIssueParams
+	case "console.lab.grant.revoke":
+		return validateConsoleLabRevokeParams
+	case "desktop.action":
+		return validateDesktopActionParams
 	case "session.approval.issue", "operation.approval.issue":
 		return func(params map[string]any) error {
 			return validateApprovalIssueParams(kind, params)
