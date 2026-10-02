@@ -33,7 +33,17 @@ func TestSSHCommandUsesPinnedCredentialsAndStdin(t *testing.T) {
 }
 
 func TestSSHCommandRejectsFailureAndBoundsOutput(t *testing.T) {
-	for _, mode := range []fakeserver.Mode{fakeserver.ModeFlood, fakeserver.ModeExitEarly, fakeserver.ModeStallInput} {
+	cases := []struct {
+		mode    fakeserver.Mode
+		timeout time.Duration
+	}{
+		{fakeserver.ModeFlood, 2 * time.Second},
+		{fakeserver.ModeExitEarly, 2 * time.Second},
+		// Cancel well before the fixture can finish its two-second stall normally.
+		{fakeserver.ModeStallInput, 500 * time.Millisecond},
+	}
+	for _, test := range cases {
+		mode := test.mode
 		t.Run(string(mode), func(t *testing.T) {
 			signer, key := generateClientKey(t)
 			server, err := fakeserver.New(mode, key)
@@ -45,7 +55,7 @@ func TestSSHCommandRejectsFailureAndBoundsOutput(t *testing.T) {
 			if mode == fakeserver.ModeExitEarly {
 				server.SetExitCode(1)
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), test.timeout)
 			defer cancel()
 			output, err := ssh.NewTransport(provider).RunCommand(ctx, "aaaaaaaa-aaaa-4aaa-baaa-aaaaaaaaaaaa", "synthetic-command", nil, 1024)
 			if err == nil || output != nil {
