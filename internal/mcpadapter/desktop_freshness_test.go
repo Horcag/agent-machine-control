@@ -14,15 +14,16 @@ import (
 
 // Synthetic elapsed time makes slow lookups deterministic without wall-clock sleeps.
 type desktopFreshnessDaemon struct {
-	now                   time.Time
-	routes                []string
-	captures              int
-	helperFail, grantFail bool
-	captureFailure        int
-	finalVM               string
-	finalFrame            domain.ConsoleFrame
-	actions               []app.DesktopActionRequest
-	inputs                []app.ConsoleInputRequest
+	now                          time.Time
+	routes                       []string
+	captures                     int
+	helperFail, grantFail        bool
+	captureFailure               int
+	initialEmptyVM, finalEmptyVM bool
+	finalVM                      string
+	finalFrame                   domain.ConsoleFrame
+	actions                      []app.DesktopActionRequest
+	inputs                       []app.ConsoleInputRequest
 }
 
 func (d *desktopFreshnessDaemon) handler(t *testing.T) http.HandlerFunc {
@@ -94,11 +95,17 @@ func (d *desktopFreshnessDaemon) screenshot(t *testing.T, w http.ResponseWriter,
 		return nil
 	}
 	frame := domain.ConsoleFrame{VMID: desktopVMA, FrameID: "initial-frame", Data: []byte("initial-image"), MIMEType: "image/png", Width: req.Width, Height: req.Height, ObservedAt: d.now}
+	if d.captures == 1 && d.initialEmptyVM {
+		frame.VMID = ""
+	}
 	if d.captures%2 == 0 {
 		frame.FrameID, frame.Data, frame.SHA256 = "final-frame", []byte("final-image"), "final-digest"
 		frame.NativeWidth, frame.NativeHeight = 1920, 1080
 		if d.finalVM != "" {
 			frame.VMID = d.finalVM
+		}
+		if d.finalEmptyVM {
+			frame.VMID = ""
 		}
 		d.finalFrame = frame
 	}
@@ -140,17 +147,20 @@ func TestDesktopObserveReturnsFinalFrameAfterSlowLookups(t *testing.T) {
 
 func TestDesktopObserveCaptureFailuresReturnNoStaleFrame(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		failure int
-		finalVM string
-		calls   int
+		name                         string
+		failure                      int
+		finalVM                      string
+		calls                        int
+		initialEmptyVM, finalEmptyVM bool
 	}{
 		{name: "initial-capture-error", failure: 1, calls: 1},
 		{name: "final-capture-error", failure: 2, calls: 4},
 		{name: "final-VM-mismatch", finalVM: desktopVMB, calls: 4},
+		{name: "initial-empty-VMID", initialEmptyVM: true, calls: 1},
+		{name: "final-empty-VMID", finalEmptyVM: true, calls: 4},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			d := &desktopFreshnessDaemon{captureFailure: tc.failure, finalVM: tc.finalVM}
+			d := &desktopFreshnessDaemon{captureFailure: tc.failure, finalVM: tc.finalVM, initialEmptyVM: tc.initialEmptyVM, finalEmptyVM: tc.finalEmptyVM}
 			a := desktopMCPServer(t, d.handler(t))
 			result, out, err := a.DesktopObserve(t.Context(), nil, DesktopObserveInput{Target: "default"})
 			if err != nil || result == nil || !result.IsError || out.Frame != (ConsoleFrameMetadata{}) {
@@ -160,6 +170,9 @@ func TestDesktopObserveCaptureFailuresReturnNoStaleFrame(t *testing.T) {
 				if _, ok := content.(*mcp.ImageContent); ok {
 					t.Fatal("failed capture returned stale image")
 				}
+			}
+			if tc.initialEmptyVM && (out.HelperAvailable || out.LabGrantID != "" || !reflect.DeepEqual(d.routes, []string{"/v1/console/screenshot"})) {
+				t.Fatalf("empty initial identity fell through to metadata or authority: out=%+v routes=%v", out, d.routes)
 			}
 			if len(d.routes) != tc.calls {
 				t.Fatalf("routes=%v", d.routes)

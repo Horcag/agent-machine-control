@@ -39,6 +39,9 @@ func (a *Adapter) DesktopObserve(ctx context.Context, call *mcp.CallToolRequest,
 	if err != nil || image == nil || image.IsError {
 		return image, DesktopObserveResult{}, err
 	}
+	if frame.Frame.VMID == "" {
+		return mcpToolError(NewInputError("initial desktop frame has no VM identity")), DesktopObserveResult{}, nil
+	}
 	in.Target = frame.Frame.VMID // Bind semantic evidence and authority to the captured VM.
 	out := DesktopObserveResult{SchemaVersion: SchemaVersion, CoordinateSpace: "console input uses frame pixels; guest desktop actions use native screen pixels"}
 	cl, err := a.getClient()
@@ -75,7 +78,7 @@ func (a *Adapter) finalDesktopFrame(ctx context.Context, call *mcp.CallToolReque
 	if err != nil || image == nil || image.IsError {
 		return image, ConsoleFrameMetadata{}, err
 	}
-	if finalFrame.Frame.VMID != in.Target {
+	if finalFrame.Frame.VMID == "" || finalFrame.Frame.VMID != in.Target {
 		return mcpToolError(NewInputError("final desktop frame does not match captured VM")), ConsoleFrameMetadata{}, nil
 	}
 	return image, finalFrame.Frame, nil
