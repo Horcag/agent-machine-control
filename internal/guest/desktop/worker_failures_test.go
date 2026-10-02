@@ -118,9 +118,9 @@ foreach($name in @('Get-Bounds','Get-Elements')){
  $function=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name-eq $name},$false)
  . ([ScriptBlock]::Create($function.Extent.Text))
 }
-Add-Type -TypeDefinition 'namespace Windows.Automation { public static class AutomationElement { public static object Root; public static object FromHandle(System.IntPtr handle){return Root;} } public static class TreeWalker { public static object ControlViewWalker; } }'
+Add-Type -TypeDefinition 'public static class AMCDesktop { public static bool IsPasswordControl(bool password, System.IntPtr handle){return password;} } namespace Windows.Automation { public static class AutomationElement { public static object Root; public static object FromHandle(System.IntPtr handle){return Root;} } public static class TreeWalker { public static object ControlViewWalker; } }'
 function New-Element($id,$name,$automationID,$password){
- $element=[pscustomobject]@{ID=$id;Child=$null;Sibling=$null;Current=[pscustomobject]@{Name=$name;AutomationId=$automationID;IsPassword=$password;IsEnabled=$true;IsOffscreen=$false;ControlType=[pscustomobject]@{ProgrammaticName='synthetic.control'};BoundingRectangle=[pscustomobject]@{IsEmpty=$true}}}
+ $element=[pscustomobject]@{ID=$id;Child=$null;Sibling=$null;Current=[pscustomobject]@{Name=$name;AutomationId=$automationID;IsPassword=$password;NativeWindowHandle=0;IsEnabled=$true;IsOffscreen=$false;ControlType=[pscustomobject]@{ProgrammaticName='synthetic.control'};BoundingRectangle=[pscustomobject]@{IsEmpty=$true}}}
  $element|Add-Member ScriptMethod GetRuntimeId {return @($this.ID)}
  $element|Add-Member ScriptMethod GetSupportedPatterns {return @()}
  return $element

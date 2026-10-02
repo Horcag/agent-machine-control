@@ -53,7 +53,7 @@ function Get-Elements($hwnd) {
         $name = [string]$properties.Name
         $automationID = [string]$properties.AutomationId
         if ($automationID.Length -gt 256) { $automationID = $automationID.Substring(0, 256) }
-        if ($properties.IsPassword) { $name = '' }
+        if ([AMCDesktop]::IsPasswordControl($properties.IsPassword, [IntPtr]::new($properties.NativeWindowHandle))) { $name = '' }
         if ($name.Length -gt 256) { $name = $name.Substring(0, 256) }
         $patterns = @($element.GetSupportedPatterns() | ForEach-Object { $_.ProgrammaticName.Replace('PatternIdentifiers.Pattern', '') })
         $elements.Add(@{id = ($element.GetRuntimeId() -join ':'); name = $name; automation_id = $automationID; control_type = $properties.ControlType.ProgrammaticName; bounds = (Get-Bounds $properties.BoundingRectangle); enabled = $properties.IsEnabled; offscreen = $properties.IsOffscreen; patterns = $patterns; reference = $element})
@@ -146,7 +146,7 @@ function Invoke-DesktopAction($request) {
                 $matches = @($elements | Where-Object { $_.id -eq $request.element_id })
                 if ($matches.Count -ne 1) { throw 'stale_element' }
                 $element = $matches[0].reference
-                if (-not $element.Current.IsEnabled -or $element.Current.IsPassword) { throw 'element_unavailable' }
+                if (-not $element.Current.IsEnabled -or [AMCDesktop]::IsPasswordControl($element.Current.IsPassword, [IntPtr]::new($element.Current.NativeWindowHandle))) { throw 'element_unavailable' }
                 Invoke-ElementPattern $element $request
             }
         }

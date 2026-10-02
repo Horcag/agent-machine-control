@@ -21,6 +21,8 @@ public static class AMCDesktop {
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetWindowText(IntPtr hwnd, StringBuilder text, int count);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetClassName(IntPtr hwnd, StringBuilder text, int count);
+    [DllImport("user32.dll", EntryPoint="GetWindowLongW", SetLastError=true)] private static extern int GetWindowStyle(IntPtr hwnd, int index);
+    [DllImport("kernel32.dll", EntryPoint="SetLastError")] private static extern void ClearNativeError(uint error);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hwnd, int command);
@@ -48,6 +50,22 @@ public static class AMCDesktop {
     }
     public static string Title(IntPtr hwnd) { var text = new StringBuilder(513); GetWindowText(hwnd, text, text.Capacity); return text.ToString(); }
     public static string ClassName(IntPtr hwnd) { var text = new StringBuilder(257); GetClassName(hwnd, text, text.Capacity); return text.ToString(); }
+    // Legacy UIA providers can expose a password edit as a non-password Pane.
+    // Native styles are meaningful only for real Edit controls, not arbitrary panes.
+    public static bool IsPasswordControl(bool uiaPassword, IntPtr hwnd) {
+        if (uiaPassword) return true;
+        if (hwnd == IntPtr.Zero) return false;
+        if (!IsWindow(hwnd)) throw new InvalidOperationException("element_unavailable");
+        string name = ClassName(hwnd);
+        if (name.Length == 0) throw new InvalidOperationException("element_unavailable");
+        if (!name.Equals("Edit", StringComparison.OrdinalIgnoreCase) &&
+            !name.StartsWith("WindowsForms10.EDIT.", StringComparison.OrdinalIgnoreCase)) return false;
+        ClearNativeError(0);
+        int style = GetWindowStyle(hwnd, -16); // GWL_STYLE; zero can be valid
+        if (style == 0 && Marshal.GetLastWin32Error() != 0) throw new InvalidOperationException("element_unavailable");
+        if (!IsWindow(hwnd)) throw new InvalidOperationException("element_unavailable");
+        return (style & 0x0020) != 0; // ES_PASSWORD
+    }
     public static bool Wheel(int delta, bool horizontal) {
         var input = new Input { Type = 0, Union = new InputUnion { Mouse = new MouseInput { Data = unchecked((uint)delta), Flags = horizontal ? 0x1000u : 0x0800u } } };
         return SendInput(1, new Input[] { input }, Marshal.SizeOf(typeof(Input))) == 1;
