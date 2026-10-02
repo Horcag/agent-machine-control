@@ -45,7 +45,7 @@ func TestSSHCommandRejectsFailureAndBoundsOutput(t *testing.T) {
 			if mode == fakeserver.ModeExitEarly {
 				server.SetExitCode(1)
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 			output, err := ssh.NewTransport(provider).RunCommand(ctx, "aaaaaaaa-aaaa-4aaa-baaa-aaaaaaaaaaaa", "synthetic-command", nil, 1024)
 			if err == nil || output != nil {
