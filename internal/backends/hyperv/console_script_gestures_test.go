@@ -1,10 +1,13 @@
 package hyperv
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"io"
 	"os/exec"
 	"strings"
 	"testing"
@@ -51,25 +54,13 @@ func runSyntheticConsoleGesture(t *testing.T, path string, test consoleGestureCa
    $ProgressPreference='SilentlyContinue';$r=([Console]::In.ReadToEnd()|ConvertFrom-Json);$id=$r.vm_id;[SyntheticDevice]::FailAt=$r.fail_at
    function GuestDevice($kind) { if($kind -eq 'Msvm_VideoHead'){return @{CurrentHorizontalResolution=200;CurrentVerticalResolution=200}};return [SyntheticDevice]::new() }
    function RequireSuccess($result){if($result.ReturnValue -ne 0){throw 'synthetic failure'}}
+   [Console]::Out.WriteLine('amc-gesture-ready')
    $result=& {
    ` + strings.TrimPrefix(ScriptConsoleInput, scriptConsolePrelude) + `
    }
    @{result=($result|ConvertFrom-Json);events=@([SyntheticDevice]::Events)}|ConvertTo-Json -Compress -Depth 5`
 	data, _ := json.Marshal(map[string]any{"vm_id": consoleTestID, "keys": []int{17, 16}, "fail_at": test.failAt, "input": map[string]any{"kind": test.kind, "x": 10, "y": 20, "to_x": 110, "to_y": 120, "button": "left", "count": test.count}})
-	codes := utf16.Encode([]rune(fixture))
-	encoded := make([]byte, 2*len(codes))
-	for i, c := range codes {
-		binary.LittleEndian.PutUint16(encoded[2*i:], c)
-	}
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
-	defer cancel()
-	// #nosec G204 -- fixed local synthetic device program, never invokes host UI APIs.
-	command := exec.CommandContext(ctx, path, "-NoProfile", "-NonInteractive", "-EncodedCommand", base64.StdEncoding.EncodeToString(encoded))
-	command.Stdin = strings.NewReader(string(data))
-	output, err := command.Output()
-	if err != nil {
-		t.Fatalf("synthetic script: %v %s", err, output)
-	}
+	output := runReadyConsoleGesture(t, path, fixture, data)
 	var result struct {
 		Result struct {
 			Success bool `json:"success"`
@@ -98,4 +89,48 @@ func runSyntheticConsoleGesture(t *testing.T, path string, test consoleGestureCa
 	if test.name == "drag" && result.Events[len(result.Events)-4] != "move:110,120" {
 		t.Fatal("drag missed destination")
 	}
+}
+
+// runReadyConsoleGesture bounds cold startup separately from synthetic execution.
+func runReadyConsoleGesture(t *testing.T, path, fixture string, data []byte) []byte {
+	t.Helper()
+	codes := utf16.Encode([]rune(fixture))
+	encoded := make([]byte, 2*len(codes))
+	for i, c := range codes {
+		binary.LittleEndian.PutUint16(encoded[2*i:], c)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	// Cold PowerShell startup/module loading has its own budget; the gesture
+	// still has only 20 seconds after the fixture has consumed its input.
+	timer := time.AfterFunc(60*time.Second, cancel)
+	defer timer.Stop()
+	// #nosec G204 -- fixed local synthetic device program, never invokes host UI APIs.
+	command := exec.CommandContext(ctx, path, "-NoProfile", "-NonInteractive", "-EncodedCommand", base64.StdEncoding.EncodeToString(encoded))
+	command.Stdin = strings.NewReader(string(data))
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(stdout)
+	ready, readyErr := reader.ReadString('\n')
+	startup := time.Since(started)
+	if readyErr != nil || strings.TrimSpace(ready) != "amc-gesture-ready" {
+		cancel()
+		waitErr := command.Wait()
+		t.Fatalf("synthetic readiness: %v; process: %v; stdout: %q; stderr: %s", readyErr, waitErr, ready, &stderr)
+	}
+	timer.Reset(20 * time.Second)
+	output, readErr := io.ReadAll(reader)
+	if err := command.Wait(); err != nil || readErr != nil {
+		t.Fatalf("synthetic script: %v; read: %v; context: %v; stdout: %s; stderr: %s", err, readErr, ctx.Err(), output, &stderr)
+	}
+	t.Logf("PowerShell fixture ready after %s; gesture completed in %s", startup, time.Since(started)-startup)
+	return output
 }

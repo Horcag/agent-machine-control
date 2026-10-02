@@ -19,6 +19,8 @@ func TestGuestSecurityFixtures(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if output, err := runParserCheck(path, fixture, queue); err != nil {
 				t.Fatalf("security fixture: %v %s", err, output)
+			} else {
+				t.Logf("security fixture: %s", output)
 			}
 		})
 	}

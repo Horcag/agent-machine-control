@@ -58,6 +58,9 @@ func TestGuestScriptsParseAndNativeDeclarationsCompile(t *testing.T) {
 func runParserCheck(path, check string, data []byte) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	// A pwsh-launched Go test can inherit Core modules incompatible with Windows
+	// PowerShell. Restrict only this synthetic child to its own built-in modules.
+	check = `$env:PSModulePath=Join-Path $PSHOME 'Modules';` + check
 	// #nosec G204 -- fixed parser/compiler programs; executable resolved from local PATH, no guest input executed.
 	command := exec.CommandContext(ctx, path, "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(check))
 	command.Stdin = strings.NewReader(base64.StdEncoding.EncodeToString(data))
