@@ -34,7 +34,7 @@ func validateDesktopActionParams(params map[string]any) error {
 		return ErrNonCanonicalParameter
 	}
 	switch params["action"] {
-	case "provision", "remove", "window.focus", "window.move", "window.resize", "window.close", "window.minimize", "window.maximize", "window.restore", "uia.invoke", "uia.setvalue", "scroll", "clipboard.set", "launch":
+	case "provision", "remove", "window.focus", "window.move", "window.resize", "window.close", "window.minimize", "window.maximize", "window.restore", "uia.invoke", "uia.setvalue", "uia.select", "uia.toggle", "uia.expand", "uia.collapse", "uia.scroll", "scroll", "clipboard.set", "launch":
 		return nil
 	default:
 		return ErrNonCanonicalParameter

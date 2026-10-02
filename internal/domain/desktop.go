@@ -13,6 +13,7 @@ type DesktopRequest struct {
 	Width      int      `json:"width,omitempty"`
 	Height     int      `json:"height,omitempty"`
 	Delta      int      `json:"delta,omitempty"`
+	Axis       string   `json:"axis,omitempty"`
 	Text       string   `json:"text,omitempty"`
 	Executable string   `json:"executable,omitempty"`
 	Arguments  []string `json:"arguments,omitempty"`
