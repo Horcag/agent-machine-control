@@ -78,7 +78,7 @@ func (r *DefaultSafetyResolver) ResolveSafety(ctx context.Context, target domain
 		return destructive, nil
 	}
 
-	if !cfg.ExternalEffectsContained || cfg.RollbackCheckpointID == "" {
+	if cfg.RollbackCheckpointID == "" {
 		return destructive, nil
 	}
 
@@ -96,15 +96,19 @@ func (r *DefaultSafetyResolver) ResolveSafety(ctx context.Context, target domain
 		return destructive, nil
 	}
 
+	classification := domain.ClassDestructivePrivileged
+	if cfg.ExternalEffectsContained {
+		classification = domain.ClassReversibleMutation
+	}
 	return SafetyResolution{
-		Classification: domain.ClassReversibleMutation,
+		Classification: classification,
 		RollbackState: policy.RollbackState{
 			Available:    true,
 			Verified:     true,
 			CheckpointID: cfg.RollbackCheckpointID,
 		},
 		RollbackRef: cfg.RollbackCheckpointID,
-		Contained:   true,
+		Contained:   cfg.ExternalEffectsContained,
 	}, nil
 }
 

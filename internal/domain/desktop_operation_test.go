@@ -22,7 +22,7 @@ func TestDesktopOperationRejectsPlaintextAndUnknownActions(t *testing.T) {
 }
 
 func TestConsoleLabParameterSchemas(t *testing.T) {
-	p := map[string]any{"grant_id": strings.Repeat("a", 32), "beneficiary": "agent:mcp-local", "enrollment_identity": strings.Repeat("b", 64), "expires_at": "2026-10-02T12:00:00Z"}
+	p := map[string]any{"grant_id": strings.Repeat("a", 32), "beneficiary": "agent:mcp-local", "enrollment_identity": strings.Repeat("b", 64), "expires_at": "2026-10-02T12:00:00Z", "acknowledge_external_effects": false}
 	if err := ValidateOperationParameters("console.lab.grant.issue", p); err != nil {
 		t.Fatal(err)
 	}

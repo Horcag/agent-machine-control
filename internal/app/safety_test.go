@@ -97,8 +97,8 @@ func TestSafetyResolver_DestructiveWhenNotContained(t *testing.T) {
 	if res.Classification != domain.ClassDestructivePrivileged {
 		t.Errorf("expected ClassDestructivePrivileged, got: %s", res.Classification)
 	}
-	if res.RollbackRef != "" {
-		t.Errorf("expected empty RollbackRef, got: %s", res.RollbackRef)
+	if res.Contained || !res.RollbackState.Verified || res.RollbackRef != loader.cfg.RollbackCheckpointID {
+		t.Errorf("expected verified rollback without containment, got: %+v", res)
 	}
 }
 

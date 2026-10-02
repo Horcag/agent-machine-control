@@ -42,7 +42,10 @@ func validateDesktopActionParams(params map[string]any) error {
 }
 
 func validateConsoleLabIssueParams(params map[string]any) error {
-	if len(params) != 4 || !canonicalHex(params["grant_id"], 32) || !canonicalHex(params["enrollment_identity"], 64) {
+	if len(params) != 5 || !canonicalHex(params["grant_id"], 32) || !canonicalHex(params["enrollment_identity"], 64) {
+		return ErrNonCanonicalParameter
+	}
+	if _, ok := params["acknowledge_external_effects"].(bool); !ok {
 		return ErrNonCanonicalParameter
 	}
 	beneficiary, ok := params["beneficiary"].(string)
