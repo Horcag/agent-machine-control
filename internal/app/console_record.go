@@ -41,36 +41,12 @@ func (s *ConsoleService) Record(ctx context.Context, actor domain.ActorContext, 
 	}
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	animation := gif.GIF{LoopCount: 0}
-	for i := 0; i < req.Frames; i++ {
-		if err := ctx.Err(); err != nil {
-			return out, err
-		}
-		frame, err := s.Screenshot(ctx, actor, ConsoleScreenshotRequest{Target: req.Target, Width: req.Width, Height: req.Height})
-		if err != nil {
-			return out, err
-		}
-		p, err := recordingPalettedFrame(frame.Data)
-		if err != nil {
-			return out, err
-		}
-
-		animation.Image = append(animation.Image, p)
-		animation.Delay = append(animation.Delay, req.IntervalMillis/10)
-		out.ObservedAt = append(out.ObservedAt, frame.ObservedAt)
-		if i > 0 {
-			if err := setRecordingDelay(&animation, out.ObservedAt, i); err != nil {
-				return out, err
-			}
-		}
-
-		if i < req.Frames-1 {
-			if err := waitRecordingFrame(ctx, req.IntervalMillis); err != nil {
-				return out, err
-			}
-		}
-
+	animation, observed, err := s.collectRecordingFrames(ctx, actor, req)
+	if err != nil {
+		return out, err
 	}
+	out.ObservedAt = observed
+
 	var buffer bytes.Buffer
 	if err := gif.EncodeAll(&buffer, &animation); err != nil {
 		return out, err
@@ -115,4 +91,39 @@ func recordingPalettedFrame(data []byte) (*image.Paletted, error) {
 	p := image.NewPaletted(img.Bounds(), palette.Plan9)
 	draw.Draw(p, p.Bounds(), img, img.Bounds().Min, draw.Src)
 	return p, nil
+}
+
+func (s *ConsoleService) collectRecordingFrames(ctx context.Context, actor domain.ActorContext, req ConsoleRecordRequest) (gif.GIF, []time.Time, error) {
+	animation := gif.GIF{LoopCount: 0}
+	observed := make([]time.Time, 0, req.Frames)
+	for i := 0; i < req.Frames; i++ {
+		if err := ctx.Err(); err != nil {
+			return animation, observed, err
+		}
+		frame, err := s.Screenshot(ctx, actor, ConsoleScreenshotRequest{Target: req.Target, Width: req.Width, Height: req.Height})
+		if err != nil {
+			return animation, observed, err
+		}
+		p, err := recordingPalettedFrame(frame.Data)
+		if err != nil {
+			return animation, observed, err
+		}
+
+		animation.Image = append(animation.Image, p)
+		animation.Delay = append(animation.Delay, req.IntervalMillis/10)
+		observed = append(observed, frame.ObservedAt)
+		if i > 0 {
+			if err := setRecordingDelay(&animation, observed, i); err != nil {
+				return animation, observed, err
+			}
+		}
+
+		if i < req.Frames-1 {
+			if err := waitRecordingFrame(ctx, req.IntervalMillis); err != nil {
+				return animation, observed, err
+			}
+		}
+
+	}
+	return animation, observed, nil
 }

@@ -25,46 +25,12 @@ func (a *App) runDesktop(ctx context.Context, direct bool, stateDir string, args
 	if !ok {
 		return ExitUsage
 	}
-	pos := options.pos
-	target, reason, key, grant := &options.target, &options.reason, &options.key, &options.grant
-	forMCP, ack, validFor, deadline := &options.forMCP, &options.ack, &options.validFor, &options.deadline
 	cl, err := client.Discover(stateDir, client.TokenTypeOperator)
 	if err != nil {
 		return mapClientError(err, stderr, "desktop")
 	}
-	var out any
-	switch args[0] {
-	case "enable":
-		if len(pos) != 0 {
-			return ExitUsage
-		}
-		beneficiary := "self"
-		if *forMCP {
-			beneficiary = "agent:mcp-local"
-		}
-		out, err = cl.IssueConsoleLabGrant(ctx, app.ConsoleLabGrantIssueRequest{Target: *target, Reason: *reason, IdempotencyKey: *key, Beneficiary: beneficiary, ValidForMillis: validFor.Milliseconds(), AcknowledgeExternalEffects: *ack})
-	case "status":
-		if len(pos) == 1 {
-			*grant = pos[0]
-		}
-		out, err = cl.ConsoleLabGrantStatus(ctx, *grant)
-	case "disable":
-		if len(pos) == 1 {
-			*grant = pos[0]
-		}
-		if *deadline == "" {
-			*deadline = a.now().Add(30 * time.Second).Format(time.RFC3339Nano)
-		}
-		out, err = cl.RevokeConsoleLabGrant(ctx, app.ConsoleLabGrantRevokeRequest{GrantID: *grant, Reason: *reason, IdempotencyKey: *key, Deadline: *deadline})
-	case "observe":
-		out, err = a.observeDesktop(ctx, cl, *target, pos)
+	out, err := a.dispatchDesktopCommand(ctx, cl, args[0], options)
 
-	case "action":
-		out, err = executeDesktopRequestFile(ctx, cl, options)
-
-	default:
-		return ExitUsage
-	}
 	if err != nil {
 		return mapClientError(err, stderr, "desktop")
 	}
@@ -140,4 +106,45 @@ func executeDesktopRequestFile(ctx context.Context, cl *client.Client, options d
 		return app.DesktopActionResult{}, client.ErrInvalidArgument
 	}
 	return cl.DesktopAction(ctx, app.DesktopActionRequest{Target: options.target, Request: request, Reason: options.reason, IdempotencyKey: options.key, LabGrantID: options.grant})
+}
+
+func (a *App) dispatchDesktopCommand(ctx context.Context, cl *client.Client, command string, options desktopFlags) (any, error) {
+	pos := options.pos
+	target, reason, key, grant := &options.target, &options.reason, &options.key, &options.grant
+	forMCP, ack, validFor, deadline := &options.forMCP, &options.ack, &options.validFor, &options.deadline
+	var out any
+	var err error
+	switch command {
+	case "enable":
+		if len(pos) != 0 {
+			return nil, client.ErrInvalidArgument
+		}
+		beneficiary := "self"
+		if *forMCP {
+			beneficiary = "agent:mcp-local"
+		}
+		out, err = cl.IssueConsoleLabGrant(ctx, app.ConsoleLabGrantIssueRequest{Target: *target, Reason: *reason, IdempotencyKey: *key, Beneficiary: beneficiary, ValidForMillis: validFor.Milliseconds(), AcknowledgeExternalEffects: *ack})
+	case "status":
+		if len(pos) == 1 {
+			*grant = pos[0]
+		}
+		out, err = cl.ConsoleLabGrantStatus(ctx, *grant)
+	case "disable":
+		if len(pos) == 1 {
+			*grant = pos[0]
+		}
+		if *deadline == "" {
+			*deadline = a.now().Add(30 * time.Second).Format(time.RFC3339Nano)
+		}
+		out, err = cl.RevokeConsoleLabGrant(ctx, app.ConsoleLabGrantRevokeRequest{GrantID: *grant, Reason: *reason, IdempotencyKey: *key, Deadline: *deadline})
+	case "observe":
+		out, err = a.observeDesktop(ctx, cl, *target, pos)
+
+	case "action":
+		out, err = executeDesktopRequestFile(ctx, cl, options)
+
+	default:
+		return nil, client.ErrInvalidArgument
+	}
+	return out, err
 }
