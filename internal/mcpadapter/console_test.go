@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/Horcag/agent-machine-control/internal/client"
@@ -18,7 +19,7 @@ import (
 )
 
 func TestConsoleScreenshotImageBytesAndMetadata(t *testing.T) {
-	stateDir := t.TempDir()
+	stateDir := filepath.Join(t.TempDir(), "state")
 	token := createTestAgentToken(t, stateDir)
 	var pngBytes bytes.Buffer
 	if err := png.Encode(&pngBytes, image.NewRGBA(image.Rect(0, 0, 8, 4))); err != nil {
