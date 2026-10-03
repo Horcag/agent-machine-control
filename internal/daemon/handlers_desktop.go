@@ -1,10 +1,95 @@
 package daemon
 
 import (
+	"bytes"
+	"errors"
 	"net/http"
+	"slices"
 
 	"github.com/Horcag/agent-machine-control/internal/app"
+	"github.com/Horcag/agent-machine-control/internal/domain"
 )
+
+// DesktopErrorEnvelope carries terminal evidence only, never a partial guest response.
+type DesktopErrorEnvelope struct {
+	ErrorEnvelope
+	Receipt        *domain.Receipt `json:"receipt,omitempty"`
+	CachedReceipt  bool            `json:"cached_receipt"`
+	ReceiptInvalid bool            `json:"receipt_invalid,omitempty"`
+}
+
+func (e *DesktopErrorEnvelope) UnmarshalJSON(data []byte) error {
+	if err := rejectDuplicateJSONKeys(data); err != nil {
+		return err
+	}
+	type wire DesktopErrorEnvelope
+	var decoded wire
+	if err := decodeStrictJSONObject(bytes.NewReader(data), &decoded); err != nil {
+		return err
+	}
+	*e = DesktopErrorEnvelope(decoded)
+	return nil
+}
+
+// ValidateReceipt rejects unsafe or contradictory evidence at both transport ends.
+func (e DesktopErrorEnvelope) ValidateReceipt(status int) error {
+	return e.ValidateReceiptForOperation(status, "desktop.action")
+}
+
+func (e DesktopErrorEnvelope) ValidateReceiptForOperation(status int, kind domain.OperationKind) error {
+	invalid := errors.New("invalid desktop failure receipt")
+	if e.ReceiptInvalid || e.SchemaVersion != SchemaVersion {
+		return invalid
+	}
+	if e.Receipt == nil {
+		if e.CachedReceipt {
+			return invalid
+		}
+		return nil
+	}
+	r := e.Receipt
+	if r.Validate() != nil || r.OperationKind != kind || r.Class != domain.ClassDestructivePrivileged || r.RedactionStatus != domain.RedactionApplied {
+		return invalid
+	}
+	if r.Outcome.Status == domain.OutcomeAborted && !slices.Contains(r.EvidenceRefs, domain.DesktopDispatchEvidence) {
+		return invalid
+	}
+	if !matchesDesktopFailure(status, e.Error.Category, r.Outcome) {
+		return invalid
+	}
+	return nil
+}
+
+func matchesDesktopFailure(status int, category string, outcome domain.ExecutionOutcome) bool {
+	type failure struct {
+		status            int
+		outcome           domain.OutcomeStatus
+		category, message string
+	}
+	clipboardMessage, _ := domain.CanonicalFailureMessage(domain.FailureCategoryClipboardUncertain)
+	known := map[string]failure{
+		"console_failed":                         {http.StatusBadRequest, domain.OutcomeFailed, "", ""},
+		domain.FailureCategoryClipboardUncertain: {http.StatusConflict, domain.OutcomeFailed, domain.FailureCategoryClipboardUncertain, clipboardMessage},
+		"timeout":                                {http.StatusGatewayTimeout, domain.OutcomeAborted, domain.FailureCategoryDeadlineExceeded, "operation deadline exceeded"},
+		"cancelled":                              {http.StatusRequestTimeout, domain.OutcomeAborted, domain.FailureCategoryCallerCanceled, "operation cancelled"},
+	}
+	want, ok := known[category]
+	return ok && status == want.status && outcome.Status == want.outcome && outcome.ErrorCategory == want.category && outcome.ErrorMessage == want.message
+}
+
+func writeDesktopError(w http.ResponseWriter, err error, out app.DesktopActionResult) {
+	writeActionError(w, err, out.Receipt, out.CachedReceipt, "desktop.action")
+}
+
+func writeActionError(w http.ResponseWriter, err error, rcpt *domain.Receipt, cached bool, kind domain.OperationKind) {
+	status, field := consoleError(err)
+	env := DesktopErrorEnvelope{ErrorEnvelope: ErrorEnvelope{SchemaVersion: SchemaVersion, Error: field}, Receipt: rcpt, CachedReceipt: cached}
+	if env.ValidateReceiptForOperation(status, kind) != nil {
+		env.Receipt, env.CachedReceipt = nil, false
+		env.ReceiptInvalid = true
+	}
+	writeJSON(w, status, env)
+}
 
 func (s *Server) dispatchDesktop(w http.ResponseWriter, r *http.Request, path string) {
 	if r.Method != http.MethodPost {
@@ -34,7 +119,7 @@ func (s *Server) dispatchDesktop(w http.ResponseWriter, r *http.Request, path st
 		}
 		out, err := s.desktopService.Action(r.Context(), actor, req)
 		if err != nil {
-			writeConsoleError(w, err)
+			writeDesktopError(w, err, out)
 			return
 		}
 		writeJSON(w, http.StatusOK, out)

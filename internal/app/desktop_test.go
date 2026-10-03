@@ -251,7 +251,7 @@ func TestDesktopNormalApprovedFailedRetryReturnsErrorWithoutRedispatch(t *testin
 	var receiptID domain.ReceiptID
 	for attempt := range 2 {
 		result, err := service.Action(context.Background(), f.actor, req)
-		if err == nil || result.Receipt == nil || result.Receipt.Outcome.Status != domain.OutcomeFailed || result.CachedReceipt {
+		if err == nil || result.Receipt == nil || result.Receipt.Outcome.Status != domain.OutcomeFailed || result.CachedReceipt != (attempt == 1) {
 			t.Fatalf("failed retry %d = %+v, %v", attempt, result, err)
 		}
 		if attempt == 0 {

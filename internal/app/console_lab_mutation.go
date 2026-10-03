@@ -12,38 +12,6 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/receipt"
 )
 
-func (s *ConsoleService) labInput(ctx context.Context, actor domain.ActorContext, req ConsoleInputRequest) (domain.Receipt, error) {
-	if req.ApprovalID != "" || req.Input.Validate() != nil {
-		return domain.Receipt{}, ErrInvalidConsoleLabGrant
-	}
-	if err := s.validateDependencies(); err != nil {
-		return domain.Receipt{}, err
-	}
-	deadline, err := time.Parse(time.RFC3339Nano, req.Deadline)
-	if err != nil {
-		return domain.Receipt{}, domain.ErrMissingDeadline
-	}
-	canonical, providerID, err := s.recovery.resolveTargetReference(ctx, req.Target)
-	if err != nil {
-		return domain.Receipt{}, err
-	}
-	mut := MutationRequest{TargetID: canonical, Actor: actor, Reason: req.Reason, IdempotencyKey: req.IdempotencyKey, Deadline: deadline, Timeout: 5 * time.Minute}
-	op, err := s.recovery.buildOperation("console.input", mut, domain.ClassDestructivePrivileged, domain.CapabilityConsoleInput, domain.ConsoleInputParameters(req.Input))
-	if err != nil {
-		return domain.Receipt{}, err
-	}
-	return s.ExecuteLabMutation(ctx, actor, req.LabGrantID, op, mut, providerID, func(execCtx context.Context) error {
-		input, err := s.resolveFrameInput(execCtx, canonical, providerID, req.Input)
-		if err != nil {
-			return err
-		}
-		if err := s.provider.SendConsoleInput(execCtx, providerID, input); err != nil {
-			return safeConsoleProviderError(err)
-		}
-		return nil
-	})
-}
-
 // ExecuteLabMutation verifies live grant authority, then uses normal approval, policy,
 // idempotency, host lease, audit, and receipt admission for a guest-only action.
 func (s *ConsoleService) ExecuteLabMutation(ctx context.Context, actor domain.ActorContext, id string, op domain.Operation, req MutationRequest, providerID string, execFn func(context.Context) error) (result domain.Receipt, resultErr error) {

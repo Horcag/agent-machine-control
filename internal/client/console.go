@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/Horcag/agent-machine-control/internal/app"
@@ -23,7 +24,21 @@ func (c *Client) ConsoleScreenshot(ctx context.Context, req app.ConsoleScreensho
 
 // ConsoleInput submits one bounded console mutation through the authenticated daemon.
 func (c *Client) ConsoleInput(ctx context.Context, req app.ConsoleInputRequest) (domain.Receipt, error) {
-	var out domain.Receipt
+	out, err := c.ConsoleInputResult(ctx, req)
+	if out.Receipt == nil {
+		return domain.Receipt{}, err
+	}
+	return *out.Receipt, err
+}
+
+// ConsoleInputResult retains failure evidence and cache provenance for desktop_act.
+func (c *Client) ConsoleInputResult(ctx context.Context, req app.ConsoleInputRequest) (app.ConsoleInputResult, error) {
+	var out app.ConsoleInputResult
 	err := c.doRequest(ctx, http.MethodPost, "/v1/console/input", req, &out)
+	if err != nil {
+		if mismatch := validateFailureRequest(out.Receipt, req.Target, req.IdempotencyKey, false); mismatch != nil {
+			return app.ConsoleInputResult{}, errors.Join(err, mismatch)
+		}
+	}
 	return out, err
 }

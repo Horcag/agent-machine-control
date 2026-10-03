@@ -126,10 +126,30 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, o
 	}
 	defer resp.Body.Close()
 
+	return decodeActionHTTPResponse(ctx, resp, out)
+}
+
+// decodeActionHTTPResponse owns the status envelope and flat console receipt compatibility.
+func decodeActionHTTPResponse(ctx context.Context, resp *http.Response, out any) error {
+
 	if resp.StatusCode >= 400 {
+		if desktop, ok := out.(*app.DesktopActionResult); ok {
+			return mapDesktopHTTPError(resp, desktop)
+		}
+		if console, ok := out.(*app.ConsoleInputResult); ok {
+			return mapActionHTTPError(resp, &console.Receipt, &console.CachedReceipt, "console.input")
+		}
 		return mapHTTPError(resp)
 	}
 
+	if console, ok := out.(*app.ConsoleInputResult); ok {
+		var rcpt domain.Receipt
+		if err := decodeHTTPResponse(ctx, resp.Body, &rcpt); err != nil {
+			return err
+		}
+		console.Receipt, console.CachedReceipt = &rcpt, resp.Header.Get("X-AMC-Cached-Receipt") == "true"
+		return nil
+	}
 	return decodeHTTPResponse(ctx, resp.Body, out)
 }
 
@@ -167,15 +187,19 @@ func mapHTTPError(resp *http.Response) error {
 	if err := dec.Decode(&env); errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return err
 	}
+	return mappedHTTPError(resp.StatusCode, env)
+}
+
+func mappedHTTPError(statusCode int, env daemon.ErrorEnvelope) error {
 
 	msg := env.Error.Message
 	if msg == "" {
-		msg = fmt.Sprintf("daemon returned HTTP %d", resp.StatusCode)
+		msg = fmt.Sprintf("daemon returned HTTP %d", statusCode)
 	}
 	cat := env.Error.Category
 
 	apiErr := &APIError{
-		StatusCode: resp.StatusCode,
+		StatusCode: statusCode,
 		Category:   cat,
 		Message:    msg,
 	}
@@ -186,7 +210,7 @@ func mapHTTPError(resp *http.Response) error {
 		return fmt.Errorf("%w: %w", domain.ErrClipboardUncertain, apiErr)
 	}
 
-	switch resp.StatusCode {
+	switch statusCode {
 	case http.StatusBadRequest:
 		return fmt.Errorf("%w: %w", ErrInvalidArgument, apiErr)
 	case http.StatusUnauthorized, http.StatusForbidden:
@@ -200,7 +224,7 @@ func mapHTTPError(resp *http.Response) error {
 	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable:
 		return fmt.Errorf("%w: %w", ErrDaemonUnavailable, apiErr)
 	default:
-		if resp.StatusCode >= 500 {
+		if statusCode >= 500 {
 			return fmt.Errorf("%w: %w", ErrMalformedResponse, apiErr)
 		}
 		return apiErr

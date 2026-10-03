@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -94,11 +95,13 @@ func (s *DesktopService) observe(ctx context.Context, actor domain.ActorContext,
 func (s *DesktopService) mutate(ctx context.Context, actor domain.ActorContext, req DesktopActionRequest, canonical, providerID string, deadline time.Time) (DesktopActionResult, error) {
 	var out DesktopActionResult
 	mut := MutationRequest{TargetID: canonical, Actor: actor, Reason: req.Reason, IdempotencyKey: req.IdempotencyKey, Deadline: deadline, ApprovalID: req.ApprovalID, Timeout: time.Minute}
+	mut.cachedReceipt = &out.CachedReceipt
+	dispatched := false
+	mut.providerDispatched = &dispatched
 	op, err := s.console.recovery.buildOperation("desktop.action", mut, domain.ClassDestructivePrivileged, domain.CapabilityDesktopAction, domain.DesktopActionParameters(req.Request))
 	if err != nil {
 		return out, err
 	}
-	dispatched := false
 	dispatch := func(execCtx context.Context) error {
 		dispatched = true
 		out.Response, err = s.dispatch(execCtx, providerID, req.Request)
@@ -116,8 +119,19 @@ func (s *DesktopService) mutate(ctx context.Context, actor domain.ActorContext, 
 	if err == nil && rcpt.Outcome.Status == domain.OutcomeFailed {
 		err = errors.New("app: guest desktop action previously failed")
 	}
+	if err != nil {
+		out.Response = domain.DesktopResponse{}
+		// Admission failures are not evidence of an admitted guest action.
+		if (!dispatched && !out.CachedReceipt) || (rcpt.Outcome.Status != domain.OutcomeFailed && rcpt.Outcome.Status != domain.OutcomeAborted) {
+			out.CachedReceipt = false
+			return out, err
+		}
+	}
+	if !validDesktopReceipt(rcpt, op) {
+		out.CachedReceipt = false
+		return out, errors.Join(err, errors.New("app: invalid desktop receipt"))
+	}
 	out.Receipt = &rcpt
-	out.CachedReceipt = !dispatched && rcpt.Outcome.Status == domain.OutcomeSuccess
 	return out, err
 }
 
@@ -172,4 +186,11 @@ func validateDesktopActor(actor domain.ActorContext, observe bool) error {
 		return &PolicyDeniedError{Reason: policy.DenialMissingScope, Message: "guest desktop mutation requires write authority"}
 	}
 	return nil
+}
+
+func validDesktopReceipt(rcpt domain.Receipt, op domain.Operation) bool {
+	idFingerprint, err := domain.ComputeIdempotencyFingerprint(op)
+	fingerprint, _ := op.Fingerprint()
+	identityMatches := rcpt.IdempotencyFingerprint == idFingerprint || (rcpt.IdempotencyFingerprint == "" && rcpt.Fingerprint == fingerprint)
+	return err == nil && identityMatches && rcpt.Validate() == nil && rcpt.Class == op.Classification && (rcpt.Outcome.Status != domain.OutcomeAborted || slices.Contains(rcpt.EvidenceRefs, domain.DesktopDispatchEvidence)) && rcpt.RedactionStatus == domain.RedactionApplied && rcpt.Actor == op.Actor.EffectiveActor && rcpt.Target == op.Target && rcpt.OperationKind == op.Kind && rcpt.IdempotencyKey == op.IdempotencyKey
 }
