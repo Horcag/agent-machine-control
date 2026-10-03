@@ -310,8 +310,17 @@ func validateLoopbackAddress(address string) error {
 	return nil
 }
 
+type stdioWriter struct{ io.Writer }
+
+func (stdioWriter) Close() error { return nil }
+
 func runStdio(ctx context.Context, server *mcp.Server, sigChan <-chan os.Signal, cancel context.CancelFunc, stderr io.Writer) int {
-	session, err := server.Connect(ctx, &mcp.StdioTransport{}, nil)
+	// Standard streams belong to the process. Closing Windows stdin can wait
+	// forever for a synchronous pipe read while the peer keeps its writer open.
+	// Close the SDK connection without closing those streams; its blocked stdin
+	// decoder remains process-owned until EOF or process exit.
+	transport := &mcp.IOTransport{Reader: io.NopCloser(os.Stdin), Writer: stdioWriter{os.Stdout}}
+	session, err := server.Connect(ctx, transport, nil)
 	if err != nil {
 		fmt.Fprintf(stderr, "amc-mcp: failed to connect stdio transport: %v\n", err)
 		return 2
@@ -328,10 +337,13 @@ func runStdio(ctx context.Context, server *mcp.Server, sigChan <-chan os.Signal,
 	select {
 	case sig := <-sigChan:
 		fmt.Fprintf(stderr, "Received signal %v, closing session...\n", sig)
-		_ = session.Close()
-		cancel()
+	case <-ctx.Done():
 	case <-done:
+		return 0
 	}
+	cancel()
+	_ = session.Close()
+	<-done
 
 	return 0
 }
