@@ -140,8 +140,8 @@ For accepted states, limitations and upstream comparisons, see the
 
 ## Failure receipts and exact retries
 
-An admitted semantic desktop action that fails returns its validated, redacted terminal
-receipt alongside the existing HTTP error category and status. The error envelope carries
+A semantic desktop action or native console input that fails after provider dispatch returns
+its validated, redacted terminal receipt alongside the existing HTTP error category and status. The error envelope carries
 `receipt` and `cached_receipt` in addition to the canonical error; an invalid
 server-side receipt is withheld with `receipt_invalid: true`. Partial guest
 responses, clipboard text, UIA elements and provider output are excluded. `desktop_act`
@@ -150,7 +150,11 @@ text so `receipt_show` can retrieve it.
 
 An exact retry uses the normal authenticated actor, target and operation identity checks.
 It returns the same receipt with `cached_receipt: true` without dispatching again. Rejected
-admission has no action receipt. Malformed, contradictory or unredacted failure evidence
+admission or native frame validation has no action receipt and is not cached as execution.
+Successful console input keeps its flat receipt body; `X-AMC-Cached-Receipt: true` marks
+an exact cached retry. New dispatched receipts carry `desktop-provider-dispatched-v1`
+in `EvidenceRefs`; legacy abort receipts without dispatch provenance are withheld. Malformed,
+contradictory or unredacted failure evidence
 is rejected by the client; an invalid response does not establish that no effect occurred.
 A deadline or cancellation receipt can follow guest dispatch and does not prove remote
 exit or zero effects. Guarded clipboard uncertainty retains its canonical reconciliation

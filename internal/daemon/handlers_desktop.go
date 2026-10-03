@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"net/http"
+	"slices"
 
 	"github.com/Horcag/agent-machine-control/internal/app"
 	"github.com/Horcag/agent-machine-control/internal/domain"
@@ -32,6 +33,10 @@ func (e *DesktopErrorEnvelope) UnmarshalJSON(data []byte) error {
 
 // ValidateReceipt rejects unsafe or contradictory evidence at both transport ends.
 func (e DesktopErrorEnvelope) ValidateReceipt(status int) error {
+	return e.ValidateReceiptForOperation(status, "desktop.action")
+}
+
+func (e DesktopErrorEnvelope) ValidateReceiptForOperation(status int, kind domain.OperationKind) error {
 	invalid := errors.New("invalid desktop failure receipt")
 	if e.ReceiptInvalid || e.SchemaVersion != SchemaVersion {
 		return invalid
@@ -43,7 +48,10 @@ func (e DesktopErrorEnvelope) ValidateReceipt(status int) error {
 		return nil
 	}
 	r := e.Receipt
-	if r.Validate() != nil || r.OperationKind != "desktop.action" || r.Class != domain.ClassDestructivePrivileged || r.RedactionStatus != domain.RedactionApplied {
+	if r.Validate() != nil || r.OperationKind != kind || r.Class != domain.ClassDestructivePrivileged || r.RedactionStatus != domain.RedactionApplied {
+		return invalid
+	}
+	if r.Outcome.Status == domain.OutcomeAborted && !slices.Contains(r.EvidenceRefs, domain.DesktopDispatchEvidence) {
 		return invalid
 	}
 	if !matchesDesktopFailure(status, e.Error.Category, r.Outcome) {
@@ -70,9 +78,13 @@ func matchesDesktopFailure(status int, category string, outcome domain.Execution
 }
 
 func writeDesktopError(w http.ResponseWriter, err error, out app.DesktopActionResult) {
+	writeActionError(w, err, out.Receipt, out.CachedReceipt, "desktop.action")
+}
+
+func writeActionError(w http.ResponseWriter, err error, rcpt *domain.Receipt, cached bool, kind domain.OperationKind) {
 	status, field := consoleError(err)
-	env := DesktopErrorEnvelope{ErrorEnvelope: ErrorEnvelope{SchemaVersion: SchemaVersion, Error: field}, Receipt: out.Receipt, CachedReceipt: out.CachedReceipt}
-	if env.ValidateReceipt(status) != nil {
+	env := DesktopErrorEnvelope{ErrorEnvelope: ErrorEnvelope{SchemaVersion: SchemaVersion, Error: field}, Receipt: rcpt, CachedReceipt: cached}
+	if env.ValidateReceiptForOperation(status, kind) != nil {
 		env.Receipt, env.CachedReceipt = nil, false
 		env.ReceiptInvalid = true
 	}

@@ -154,9 +154,6 @@ func (s *RecoveryService) executeMutation(
 	}
 
 	// 8. Lifecycle hooks & Provider Execution
-	if req.admitted != nil {
-		*req.admitted = true
-	}
 	if err := runLifecycleHooks(ctx, req); err != nil {
 		abortErr := s.compensatePreProviderAbort(ctx, req, approvalConsumed, releaseLease, err)
 		return s.preProviderFailure(ctx, op, fp, decision, now, abortErr, rollbackRef, req.ApprovalID)
@@ -168,10 +165,17 @@ func (s *RecoveryService) executeMutation(
 
 	startedAt, completedAt, runErr := s.runProviderExecution(ctx, execFn)
 
+	// A native closure may only have validated a frame or a live grant. Such
+	// failures must not become cached action evidence or consume approval.
+	if req.providerDispatched != nil && !*req.providerDispatched {
+		abortErr := s.compensatePreProviderAbort(ctx, req, approvalConsumed, releaseLease, runErr)
+		return domain.Receipt{}, abortErr
+	}
+
 	// 9. Receipt Persistence & Terminal Audit
 	finalizationCtx, cancelFinalization := boundedMutationFinalizationContext(ctx)
 	defer cancelFinalization()
-	receiptRecord, persistErr := s.persistOutcome(finalizationCtx, op, fp, decision, startedAt, completedAt, runErr, rollbackRef, req.ApprovalID)
+	receiptRecord, persistErr := s.persistOutcome(finalizationCtx, op, fp, decision, startedAt, completedAt, runErr, rollbackRef, req.ApprovalID, mutationDispatchEvidence(req)...)
 
 	// 10. Lease Release
 	releaseErr := releaseLease()
@@ -387,6 +391,7 @@ func (s *RecoveryService) persistOutcome(
 	runErr error,
 	rollbackRef string,
 	approvalID string,
+	evidenceRefs ...string,
 ) (domain.Receipt, error) {
 	outcomeStatus := domain.OutcomeSuccess
 	exitCode := 0
@@ -456,6 +461,8 @@ func (s *RecoveryService) persistOutcome(
 		receiptRecord.EvidenceRefs = []string{approvalID}
 	}
 
+	receiptRecord.EvidenceRefs = append(receiptRecord.EvidenceRefs, evidenceRefs...)
+
 	var saveErr, auditErr error
 	if s.receiptStore != nil {
 		saveErr = s.receiptStore.EnsureContext(ctx, receiptRecord)
@@ -482,4 +489,12 @@ func generateReceiptID() (string, error) {
 		return "", fmt.Errorf("crypto/rand error: %w", err)
 	}
 	return fmt.Sprintf("rcpt-%s", hex.EncodeToString(b)), nil
+}
+
+// mutationDispatchEvidence records actual provider dispatch, never closure entry.
+func mutationDispatchEvidence(req MutationRequest) []string {
+	if req.providerDispatched == nil || !*req.providerDispatched {
+		return nil
+	}
+	return []string{domain.DesktopDispatchEvidence}
 }

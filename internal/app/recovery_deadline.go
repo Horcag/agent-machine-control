@@ -36,7 +36,7 @@ func (s *RecoveryService) preProviderFailure(
 ) (domain.Receipt, error) {
 	// Desktop admission errors have no action receipt to replay: guest dispatch
 	// has not begun. In particular, do not cache a pre-admission cancellation.
-	if op.Kind == "desktop.action" {
+	if op.Kind == "desktop.action" || op.Kind == "console.input" {
 		return domain.Receipt{}, primary
 	}
 	if !errors.Is(primary, context.Canceled) && !errors.Is(primary, context.DeadlineExceeded) {

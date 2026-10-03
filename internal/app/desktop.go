@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -95,13 +96,14 @@ func (s *DesktopService) mutate(ctx context.Context, actor domain.ActorContext, 
 	var out DesktopActionResult
 	mut := MutationRequest{TargetID: canonical, Actor: actor, Reason: req.Reason, IdempotencyKey: req.IdempotencyKey, Deadline: deadline, ApprovalID: req.ApprovalID, Timeout: time.Minute}
 	mut.cachedReceipt = &out.CachedReceipt
-	admitted := false
-	mut.admitted = &admitted
+	dispatched := false
+	mut.providerDispatched = &dispatched
 	op, err := s.console.recovery.buildOperation("desktop.action", mut, domain.ClassDestructivePrivileged, domain.CapabilityDesktopAction, domain.DesktopActionParameters(req.Request))
 	if err != nil {
 		return out, err
 	}
 	dispatch := func(execCtx context.Context) error {
+		dispatched = true
 		out.Response, err = s.dispatch(execCtx, providerID, req.Request)
 		return err
 	}
@@ -120,7 +122,7 @@ func (s *DesktopService) mutate(ctx context.Context, actor domain.ActorContext, 
 	if err != nil {
 		out.Response = domain.DesktopResponse{}
 		// Admission failures are not evidence of an admitted guest action.
-		if (!admitted && !out.CachedReceipt) || (rcpt.Outcome.Status != domain.OutcomeFailed && rcpt.Outcome.Status != domain.OutcomeAborted) {
+		if (!dispatched && !out.CachedReceipt) || (rcpt.Outcome.Status != domain.OutcomeFailed && rcpt.Outcome.Status != domain.OutcomeAborted) {
 			out.CachedReceipt = false
 			return out, err
 		}
@@ -190,5 +192,5 @@ func validDesktopReceipt(rcpt domain.Receipt, op domain.Operation) bool {
 	idFingerprint, err := domain.ComputeIdempotencyFingerprint(op)
 	fingerprint, _ := op.Fingerprint()
 	identityMatches := rcpt.IdempotencyFingerprint == idFingerprint || (rcpt.IdempotencyFingerprint == "" && rcpt.Fingerprint == fingerprint)
-	return err == nil && identityMatches && rcpt.Validate() == nil && rcpt.RedactionStatus == domain.RedactionApplied && rcpt.Actor == op.Actor.EffectiveActor && rcpt.Target == op.Target && rcpt.OperationKind == op.Kind && rcpt.IdempotencyKey == op.IdempotencyKey
+	return err == nil && identityMatches && rcpt.Validate() == nil && rcpt.Class == op.Classification && (rcpt.Outcome.Status != domain.OutcomeAborted || slices.Contains(rcpt.EvidenceRefs, domain.DesktopDispatchEvidence)) && rcpt.RedactionStatus == domain.RedactionApplied && rcpt.Actor == op.Actor.EffectiveActor && rcpt.Target == op.Target && rcpt.OperationKind == op.Kind && rcpt.IdempotencyKey == op.IdempotencyKey
 }

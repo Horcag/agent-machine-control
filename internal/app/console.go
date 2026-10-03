@@ -102,53 +102,97 @@ func validateCapturedFrame(frame domain.ConsoleFrame, providerID string, width, 
 	return nil
 }
 
-func (s *ConsoleService) Input(ctx context.Context, actor domain.ActorContext, req ConsoleInputRequest) (domain.Receipt, error) {
-	if req.LabGrantID != "" {
-		return s.labInput(ctx, actor, req)
-	}
-	if strings.HasPrefix(req.ApprovalID, ConsoleLabApprovalPrefix) {
-		return domain.Receipt{}, ErrInvalidConsoleLabGrant
-	}
-	return s.consoleInput(ctx, actor, req)
+// ConsoleInputResult distinguishes valid execution evidence from admission failures.
+type ConsoleInputResult struct {
+	Receipt       *domain.Receipt
+	CachedReceipt bool
 }
 
-func (s *ConsoleService) consoleInput(ctx context.Context, actor domain.ActorContext, req ConsoleInputRequest) (domain.Receipt, error) {
-	if err := req.Input.Validate(); err != nil {
+// Input preserves the receipt-only API used by direct recovery and console callers.
+func (s *ConsoleService) Input(ctx context.Context, actor domain.ActorContext, req ConsoleInputRequest) (domain.Receipt, error) {
+	out, err := s.InputResult(ctx, actor, req)
+	if out.Receipt == nil {
 		return domain.Receipt{}, err
+	}
+	return *out.Receipt, err
+}
+
+func (s *ConsoleService) InputResult(ctx context.Context, actor domain.ActorContext, req ConsoleInputRequest) (ConsoleInputResult, error) {
+	var out ConsoleInputResult
+	if err := validateDesktopActor(actor, false); err != nil {
+		return out, err
+	}
+	if strings.HasPrefix(req.ApprovalID, ConsoleLabApprovalPrefix) || (req.LabGrantID != "" && req.ApprovalID != "") {
+		return out, ErrInvalidConsoleLabGrant
+	}
+	if err := req.Input.Validate(); err != nil {
+		return out, err
 	}
 	deadline, err := time.Parse(time.RFC3339Nano, req.Deadline)
 	if err != nil {
-		return domain.Receipt{}, domain.ErrMissingDeadline
+		return out, domain.ErrMissingDeadline
 	}
 	if err := s.validateDependencies(); err != nil {
-		return domain.Receipt{}, err
+		return out, err
 	}
 	canonical, providerID, err := s.recovery.resolveTargetReference(ctx, req.Target)
 	if err != nil {
-		return domain.Receipt{}, err
+		return out, err
 	}
+	return s.mutateConsoleInput(ctx, actor, req, canonical, providerID, deadline)
+}
+
+func (s *ConsoleService) mutateConsoleInput(ctx context.Context, actor domain.ActorContext, req ConsoleInputRequest, canonical, providerID string, deadline time.Time) (ConsoleInputResult, error) {
+	var out ConsoleInputResult
 	mut := MutationRequest{TargetID: canonical, Actor: actor, Reason: req.Reason, IdempotencyKey: req.IdempotencyKey, Deadline: deadline, ApprovalID: req.ApprovalID, Timeout: 5 * time.Minute}
+	dispatched := false
+	mut.providerDispatched, mut.cachedReceipt = &dispatched, &out.CachedReceipt
 	op, err := s.recovery.buildOperation("console.input", mut, domain.ClassDestructivePrivileged, domain.CapabilityConsoleInput, domain.ConsoleInputParameters(req.Input))
 	if err != nil {
-		return domain.Receipt{}, err
+		return out, err
 	}
-	if req.ApprovalID != "" {
-		mut.Approval, mut.ApprovalError = s.recovery.LoadOperationApprovalReference(ctx, op, req.ApprovalID)
+	dispatch := func(execCtx context.Context) error {
+		return s.dispatchConsoleInput(execCtx, canonical, providerID, req.Input, &dispatched)
 	}
-	result, err := s.recovery.executeMutation(ctx, op, mut, providerID, func(execCtx context.Context) error {
-		input, err := s.resolveFrameInput(execCtx, canonical, providerID, req.Input)
-		if err != nil {
-			return err
+
+	var rcpt domain.Receipt
+	if req.LabGrantID != "" {
+		rcpt, err = s.ExecuteLabMutation(ctx, actor, req.LabGrantID, op, mut, providerID, dispatch)
+	} else {
+		if req.ApprovalID != "" {
+			mut.Approval, mut.ApprovalError = s.recovery.LoadOperationApprovalReference(ctx, op, req.ApprovalID)
 		}
-		if err := s.provider.SendConsoleInput(execCtx, providerID, input); err != nil {
-			return safeConsoleProviderError(err)
-		}
-		return nil
-	})
-	if err == nil && result.Outcome.Status == domain.OutcomeFailed {
+		rcpt, err = s.recovery.executeMutation(ctx, op, mut, providerID, dispatch)
+	}
+	if err == nil && rcpt.Outcome.Status == domain.OutcomeFailed {
 		err = errors.New("app: console input previously failed")
 	}
-	return result, err
+	if err != nil && ((!dispatched && !out.CachedReceipt) || (rcpt.Outcome.Status != domain.OutcomeFailed && rcpt.Outcome.Status != domain.OutcomeAborted)) {
+		out.CachedReceipt = false
+		return out, err
+	}
+	if !validDesktopReceipt(rcpt, op) {
+		out.CachedReceipt = false
+		return out, errors.Join(err, errors.New("app: invalid console input receipt"))
+	}
+	out.Receipt = &rcpt
+	return out, err
+}
+
+// dispatchConsoleInput validates frame evidence before marking actual input dispatch.
+func (s *ConsoleService) dispatchConsoleInput(ctx context.Context, canonical, providerID string, input domain.ConsoleInput, dispatched *bool) error {
+	input, err := s.resolveFrameInput(ctx, canonical, providerID, input)
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	*dispatched = true
+	if err := s.provider.SendConsoleInput(ctx, providerID, input); err != nil {
+		return safeConsoleProviderError(err)
+	}
+	return nil
 }
 
 func (s *ConsoleService) validateDependencies() error {

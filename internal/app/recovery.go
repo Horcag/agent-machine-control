@@ -58,8 +58,8 @@ type MutationRequest struct {
 	OnAdmitted     func(ctx context.Context) error
 	OnRunning      func(ctx context.Context) error
 	// Set only when the normal identity-bound receipt lookup returns a terminal result.
-	cachedReceipt *bool
-	admitted      *bool
+	cachedReceipt      *bool
+	providerDispatched *bool
 }
 
 // RecoveryService orchestrates in-process direct recovery operations, policy, leases, and receipts.

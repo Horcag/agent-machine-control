@@ -128,9 +128,9 @@ func (a *Adapter) DesktopAct(ctx context.Context, call *mcp.CallToolRequest, in 
 		in.LabGrantID = grant.Grant.GrantID
 	}
 	if in.Input != nil {
-		rcpt, inputErr := cl.ConsoleInput(ctx, app.ConsoleInputRequest{Target: in.Target, Input: *in.Input, Reason: in.Reason, IdempotencyKey: in.IdempotencyKey, Deadline: in.Deadline, LabGrantID: in.LabGrantID})
+		result, inputErr := cl.ConsoleInputResult(ctx, app.ConsoleInputRequest{Target: in.Target, Input: *in.Input, Reason: in.Reason, IdempotencyKey: in.IdempotencyKey, Deadline: in.Deadline, LabGrantID: in.LabGrantID})
 		err = inputErr
-		out.Result.Receipt = &rcpt
+		out.Result.Receipt, out.Result.CachedReceipt = result.Receipt, result.CachedReceipt
 	} else {
 		req := *in.Action
 		if req.RequestID == "" {
@@ -146,7 +146,7 @@ func (a *Adapter) DesktopAct(ctx context.Context, call *mcp.CallToolRequest, in 
 		out.Result, err = cl.DesktopAction(ctx, app.DesktopActionRequest{Target: in.Target, Request: req, Reason: in.Reason, IdempotencyKey: in.IdempotencyKey, LabGrantID: in.LabGrantID})
 	}
 	if err != nil {
-		if in.Action != nil && out.Result.Receipt != nil {
+		if out.Result.Receipt != nil {
 			return operationToolError(err, "", string(out.Result.Receipt.ReceiptID)), out, nil
 		}
 		return mcpToolError(err), out, nil

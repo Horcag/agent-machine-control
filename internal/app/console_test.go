@@ -27,10 +27,15 @@ type consoleProviderFake struct {
 	nativeWidth int
 	badPNG      bool
 	failInput   bool
+	inputErr    error
+	captureErr  error
 }
 
 func (p *consoleProviderFake) CaptureConsole(_ context.Context, id string, w, h int) (domain.ConsoleFrame, error) {
 	p.captures++
+	if p.captureErr != nil {
+		return domain.ConsoleFrame{}, p.captureErr
+	}
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, w, h))); err != nil {
 		return domain.ConsoleFrame{}, err
@@ -43,6 +48,9 @@ func (p *consoleProviderFake) CaptureConsole(_ context.Context, id string, w, h 
 }
 func (p *consoleProviderFake) SendConsoleInput(_ context.Context, _ string, input domain.ConsoleInput) error {
 	p.inputs = append(p.inputs, input)
+	if p.inputErr != nil {
+		return p.inputErr
+	}
 	if p.failInput {
 		return errors.New("provider accidentally echoed secret-password")
 	}

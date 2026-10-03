@@ -1,7 +1,10 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
+	"image"
+	"image/png"
 
 	"sync/atomic"
 	"testing"
@@ -13,16 +16,24 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/policy"
 )
 
-type desktopFailureBackend struct{ exactRetryBackend }
+type desktopFailureBackend struct {
+	exactRetryBackend
+	provider *desktopFailureProvider
+}
 
 func (desktopFailureBackend) Capabilities(context.Context, string) (domain.CapabilitySet, error) {
 	return domain.NewCapabilitySet(domain.CapabilityConsoleInput, domain.CapabilityConsoleScreenshot, domain.CapabilityDesktopAction), nil
 }
-func (desktopFailureBackend) CaptureConsole(context.Context, string, int, int) (domain.ConsoleFrame, error) {
-	panic("unexpected capture")
+func (desktopFailureBackend) CaptureConsole(_ context.Context, id string, width, height int) (domain.ConsoleFrame, error) {
+	var data bytes.Buffer
+	if err := png.Encode(&data, image.NewRGBA(image.Rect(0, 0, width, height))); err != nil {
+		return domain.ConsoleFrame{}, err
+	}
+	return domain.ConsoleFrame{VMID: id, Width: width, Height: height, NativeWidth: 1920, NativeHeight: 1080, Data: data.Bytes()}, nil
 }
-func (desktopFailureBackend) SendConsoleInput(context.Context, string, domain.ConsoleInput) error {
-	panic("unexpected input")
+func (b desktopFailureBackend) SendConsoleInput(context.Context, string, domain.ConsoleInput) error {
+	b.provider.calls.Add(1)
+	return b.provider.cause
 }
 
 type desktopFailureProvider struct {
@@ -53,7 +64,8 @@ func DesktopFailureTestServer(t *testing.T, cause error) (string, string, string
 	t.Helper()
 	fixture := newExactRetryFixture(t, t.TempDir()+"/state")
 	now := time.Now().UTC()
-	srv, err := NewServer(Config{Clock: func() time.Time { return now }, StateDir: fixture.sd.Root(), Backend: desktopFailureBackend{}, ListenAddr: "127.0.0.1:0"})
+	provider := &desktopFailureProvider{cause: cause}
+	srv, err := NewServer(Config{Clock: func() time.Time { return now }, StateDir: fixture.sd.Root(), Backend: desktopFailureBackend{provider: provider}, ListenAddr: "127.0.0.1:0"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +75,6 @@ func DesktopFailureTestServer(t *testing.T, cause error) (string, string, string
 		}
 	})
 	app.WithRecoveryClock(func() time.Time { return now })(srv.recoveryService)
-	provider := &desktopFailureProvider{cause: cause}
 	app.WithConsoleLabSafetyResolver(desktopFailureSafety{})(srv.consoleService)
 	srv.desktopService = app.NewDesktopService(provider, srv.consoleService)
 	if err := srv.Start(); err != nil {

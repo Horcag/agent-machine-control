@@ -126,13 +126,30 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, o
 	}
 	defer resp.Body.Close()
 
+	return decodeActionHTTPResponse(ctx, resp, out)
+}
+
+// decodeActionHTTPResponse owns the status envelope and flat console receipt compatibility.
+func decodeActionHTTPResponse(ctx context.Context, resp *http.Response, out any) error {
+
 	if resp.StatusCode >= 400 {
 		if desktop, ok := out.(*app.DesktopActionResult); ok {
 			return mapDesktopHTTPError(resp, desktop)
 		}
+		if console, ok := out.(*app.ConsoleInputResult); ok {
+			return mapActionHTTPError(resp, &console.Receipt, &console.CachedReceipt, "console.input")
+		}
 		return mapHTTPError(resp)
 	}
 
+	if console, ok := out.(*app.ConsoleInputResult); ok {
+		var rcpt domain.Receipt
+		if err := decodeHTTPResponse(ctx, resp.Body, &rcpt); err != nil {
+			return err
+		}
+		console.Receipt, console.CachedReceipt = &rcpt, resp.Header.Get("X-AMC-Cached-Receipt") == "true"
+		return nil
+	}
 	return decodeHTTPResponse(ctx, resp.Body, out)
 }
 

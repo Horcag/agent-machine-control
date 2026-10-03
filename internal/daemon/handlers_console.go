@@ -54,12 +54,15 @@ func (s *Server) dispatchConsole(w http.ResponseWriter, r *http.Request, path st
 			writeError(w, http.StatusBadRequest, "invalid_argument", "invalid console input request")
 			return
 		}
-		result, err := s.consoleService.Input(r.Context(), caller, req)
+		result, err := s.consoleService.InputResult(r.Context(), caller, req)
 		if err != nil {
-			writeConsoleError(w, err)
+			writeActionError(w, err, result.Receipt, result.CachedReceipt, "console.input")
 			return
 		}
-		writeJSON(w, http.StatusOK, result)
+		if result.CachedReceipt {
+			w.Header().Set("X-AMC-Cached-Receipt", "true")
+		}
+		writeJSON(w, http.StatusOK, result.Receipt)
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "endpoint not found")
 	}

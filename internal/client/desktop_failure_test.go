@@ -19,16 +19,22 @@ import (
 func desktopFailureEnvelope() daemon.DesktopErrorEnvelope {
 	now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
 	return daemon.DesktopErrorEnvelope{ErrorEnvelope: daemon.ErrorEnvelope{SchemaVersion: "1", Error: daemon.ErrorField{Category: "console_failed", Message: "console request failed"}}, Receipt: &domain.Receipt{
-		ReceiptID: "rcpt-0123456789abcdef0123456789abcdef", OperationKind: "desktop.action", Fingerprint: domain.Fingerprint("sha256:" + strings.Repeat("a", 64)), IdempotencyFingerprint: domain.Fingerprint("sha256:" + strings.Repeat("b", 64)), IdempotencyKey: "synthetic-failure-key", Actor: "agent:mcp-local", Target: "local:c4a523d4-6b99-4d62-a5e2-4752c0f20001", Class: domain.ClassDestructivePrivileged, EffectiveBackend: "hyperv", StartedAt: now, CompletedAt: now.Add(time.Second), Outcome: domain.ExecutionOutcome{Status: domain.OutcomeFailed, ExitCode: 1}, ObservationType: domain.ObservationObserved, RedactionStatus: domain.RedactionApplied}}
+		ReceiptID: "rcpt-0123456789abcdef0123456789abcdef", OperationKind: "desktop.action", Fingerprint: domain.Fingerprint("sha256:" + strings.Repeat("a", 64)), IdempotencyFingerprint: domain.Fingerprint("sha256:" + strings.Repeat("b", 64)), IdempotencyKey: "synthetic-failure-key", Actor: "agent:mcp-local", Target: "local:c4a523d4-6b99-4d62-a5e2-4752c0f20001", Class: domain.ClassDestructivePrivileged, EffectiveBackend: "hyperv", StartedAt: now, CompletedAt: now.Add(time.Second), Outcome: domain.ExecutionOutcome{Status: domain.OutcomeFailed, ExitCode: 1}, ObservationType: domain.ObservationObserved, RedactionStatus: domain.RedactionApplied, EvidenceRefs: []string{domain.DesktopDispatchEvidence}}}
 }
 
 func TestDesktopFailureEnvelopeRejectsUnsafeEvidence(t *testing.T) {
-	for _, variant := range []string{"truncated", "unknown", "trailing", "duplicate", "nested duplicate", "oversized", "null", "bad schema", "bad receipt", "unredacted", "not applicable", "operation", "class", "success", "denied", "category", "clipboard contradiction", "aborted text", "target", "key", "observation", "cached without receipt", "no-receipt schema", "missing schema", "invalid signal raw message"} {
+	for _, variant := range []string{"truncated", "unknown", "trailing", "duplicate", "nested duplicate", "oversized", "null", "bad schema", "bad receipt", "unredacted", "not applicable", "operation", "class", "success", "denied", "category", "clipboard contradiction", "aborted text", "target", "key", "observation", "cached without receipt", "no-receipt schema", "missing schema", "invalid signal raw message", "legacy abort"} {
 		t.Run(variant, func(t *testing.T) {
 			env := desktopFailureEnvelope()
 			req := app.DesktopActionRequest{Target: "default", IdempotencyKey: env.Receipt.IdempotencyKey, Request: domain.DesktopRequest{Action: "clipboard.set"}}
 			status := http.StatusBadRequest
 			variants := map[string]func(){
+				"legacy abort": func() {
+					env.Error.Category = "timeout"
+					status = http.StatusGatewayTimeout
+					env.Receipt.EvidenceRefs = nil
+					env.Receipt.Outcome = domain.ExecutionOutcome{Status: domain.OutcomeAborted, ErrorCategory: domain.FailureCategoryDeadlineExceeded, ErrorMessage: "operation deadline exceeded"}
+				},
 				"bad schema":     func() { env.SchemaVersion = "2" },
 				"bad receipt":    func() { env.Receipt.ReceiptID = "bad" },
 				"unredacted":     func() { env.Receipt.RedactionStatus = domain.RedactionFailed },
@@ -160,5 +166,35 @@ func TestDesktopInvalidReceiptSignalPreservesClipboardUncertainty(t *testing.T) 
 	out, err := New(srv.URL, "synthetic-token").DesktopAction(t.Context(), app.DesktopActionRequest{})
 	if !errors.Is(err, ErrMalformedResponse) || !errors.Is(err, domain.ErrClipboardUncertain) || out.Receipt != nil || !strings.Contains(err.Error(), "effects are unknown") {
 		t.Fatal(out, err)
+	}
+}
+
+func TestDesktopMismatchedClipboardReceiptPreservesDiagnostics(t *testing.T) {
+	for _, variant := range []string{"key", "target", "observation"} {
+		t.Run(variant, func(t *testing.T) {
+			env := desktopFailureEnvelope()
+			env.Error.Category = domain.FailureCategoryClipboardUncertain
+			env.Receipt.Outcome.ErrorCategory = env.Error.Category
+			env.Receipt.Outcome.ErrorMessage, _ = domain.CanonicalFailureMessage(env.Error.Category)
+			req := app.DesktopActionRequest{Target: "default", IdempotencyKey: env.Receipt.IdempotencyKey, Request: domain.DesktopRequest{Action: "clipboard.set"}}
+			switch variant {
+			case "key":
+				req.IdempotencyKey = "different"
+			case "target":
+				req.Target = "local:bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb"
+			case "observation":
+				req.Request.Action = "windows"
+			}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(env)
+			}))
+			defer srv.Close()
+			out, err := New(srv.URL, "synthetic-token").DesktopAction(t.Context(), req)
+			api, ok := errors.AsType[*APIError](err)
+			if !errors.Is(err, ErrMalformedResponse) || !errors.Is(err, domain.ErrClipboardUncertain) || !ok || api.StatusCode != http.StatusConflict || api.Category != env.Error.Category || !reflect.DeepEqual(out, app.DesktopActionResult{}) {
+				t.Fatal(out, err)
+			}
+		})
 	}
 }

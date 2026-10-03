@@ -7,6 +7,9 @@ import (
 	"time"
 )
 
+// DesktopDispatchEvidence records provider dispatch for desktop/console abort provenance.
+const DesktopDispatchEvidence = "desktop-provider-dispatched-v1"
+
 // ReceiptID uniquely identifies an execution receipt.
 type ReceiptID string
 
