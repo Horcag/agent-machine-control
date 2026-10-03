@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPasswordBoundaryUsesSharedNativePredicate(t *testing.T) {
@@ -29,7 +30,8 @@ func TestNativePasswordBoundaryWithHiddenOwnedControls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if output, err := runParserCheck(path, nativePasswordFixture, data); err != nil {
+	// Bound native compilation and control initialization separately from parsing.
+	if output, err := runParserCheckWithTimeout(path, nativePasswordFixture, data, 46*time.Second); err != nil {
 		t.Fatalf("native password boundary fixture: %v %s", err, output)
 	}
 }
