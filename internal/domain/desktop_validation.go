@@ -14,7 +14,7 @@ var ErrInvalidDesktopRequest = errors.New("invalid guest desktop request")
 
 func (r DesktopRequest) ObserveOnly() bool {
 	switch r.Action {
-	case "status", "cursor", "windows", "uia.tree", "clipboard.get":
+	case "status", "cursor", "windows", "uia.tree", "clipboard.get", "clipboard.snapshot":
 		return true
 	default:
 		return false
@@ -35,7 +35,7 @@ func (r DesktopRequest) Validate() error {
 			return ErrInvalidDesktopRequest
 		}
 	}
-	if !r.validClipboardGuard() || !r.validPayload() || !r.validIdentity() || !r.validGeometry() {
+	if !r.validClipboardGuard() || (r.Action == "clipboard.snapshot" && !r.validInventoryObservation()) || !r.validPayload() || !r.validIdentity() || !r.validGeometry() {
 		return ErrInvalidDesktopRequest
 	}
 	return nil
@@ -109,4 +109,11 @@ func (r DesktopRequest) validClipboardGuard() bool {
 		previous = format
 	}
 	return true
+}
+
+// An inventory observation cannot carry payload, window, launch or input fields.
+func (r DesktopRequest) validInventoryObservation() bool {
+	return r.Text == "" && r.Executable == "" && len(r.Arguments) == 0 &&
+		r.WindowID == "" && r.WindowIdentity == "" && r.ElementID == "" &&
+		r.X == 0 && r.Y == 0 && r.Width == 0 && r.Height == 0 && r.Delta == 0 && r.Axis == ""
 }

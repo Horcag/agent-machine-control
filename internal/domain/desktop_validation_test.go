@@ -42,6 +42,37 @@ func TestDesktopProtocolBoundsAndIdentities(t *testing.T) {
 	}
 }
 
+func TestClipboardSnapshotIsStrictObservation(t *testing.T) {
+	base := DesktopRequest{RequestID: strings.Repeat("a", 32), Deadline: "2026-10-03T20:00:00Z", Action: "clipboard.snapshot"}
+	if base.Validate() != nil || !base.ObserveOnly() {
+		t.Fatal("snapshot requires mutation authority")
+	}
+	for _, test := range []struct {
+		name   string
+		change func(*DesktopRequest)
+	}{
+		{"text", func(r *DesktopRequest) { r.Text = "private" }},
+		{"window", func(r *DesktopRequest) { r.WindowID = "1" }},
+		{"identity", func(r *DesktopRequest) { r.WindowIdentity = "1:2:3" }},
+		{"element", func(r *DesktopRequest) { r.ElementID = "1" }},
+		{"position", func(r *DesktopRequest) { r.X = 1 }},
+		{"geometry", func(r *DesktopRequest) { r.Height = 1 }},
+		{"scroll", func(r *DesktopRequest) { r.Delta = 1 }},
+		{"axis", func(r *DesktopRequest) { r.Axis = "vertical" }},
+		{"executable", func(r *DesktopRequest) { r.Executable = `C:\fixture.exe` }},
+		{"arguments", func(r *DesktopRequest) { r.Arguments = []string{"private"} }},
+		{"guard", func(r *DesktopRequest) { zero := uint32(0); r.ExpectedSequence = &zero }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			req := base
+			test.change(&req)
+			if req.Validate() == nil {
+				t.Fatal("non-inventory request accepted")
+			}
+		})
+	}
+}
+
 func TestConsoleDoubleClickAndPointerModifierBounds(t *testing.T) {
 	base := ConsoleInput{Kind: "click", FrameID: "observed", Button: "left", Count: 2, Modifiers: "ctrl+shift"}
 	if base.Validate() != nil {

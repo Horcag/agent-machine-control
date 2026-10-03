@@ -133,6 +133,16 @@ public static class AMCClipboard {
         return new State { Sequence = Native.GetClipboardSequenceNumber(), Formats = formats,
             InventoryComplete = true, Empty = formats.Length == 0, Text = text };
     }
+    // Enumerate only: requesting a format's data can trigger private delayed rendering.
+    public static State InventorySnapshot() {
+        RequireSTA();
+        if (!Native.OpenClipboard(IntPtr.Zero)) throw new InvalidOperationException("clipboard_unavailable");
+        try {
+            uint[] formats = Inventory();
+            return new State { Sequence = Native.GetClipboardSequenceNumber(), Formats = formats,
+                InventoryComplete = true, Empty = formats.Length == 0 };
+        } finally { Native.CloseClipboard(); }
+    }
     public static State Snapshot() {
         RequireSTA();
         if (!Native.OpenClipboard(IntPtr.Zero)) throw new InvalidOperationException("clipboard_unavailable");

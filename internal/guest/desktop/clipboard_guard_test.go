@@ -62,7 +62,7 @@ func TestNativeClipboardGuardMockedBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mocked native clipboard: %v %s", err, output)
 	}
-	for _, name := range []string{"unicode_crlf", "empty", "sequence_conflict", "format_conflict", "same_text_aba", "busy", "access_denied", "enumeration_error", "oversized", "malformed", "partial_clear", "snapshot_zero", "wrap", "read_maximum", "read_padded", "read_odd_capacity", "read_missing_terminator", "read_supplementary", "read_huge_capacity_bounded", "read_malformed_surrogate", "read_aligned_terminator", "clear_false_uncertain"} {
+	for _, name := range []string{"unicode_crlf", "empty", "sequence_conflict", "format_conflict", "same_text_aba", "busy", "access_denied", "enumeration_error", "oversized", "malformed", "partial_clear", "snapshot_zero", "wrap", "read_maximum", "read_padded", "read_odd_capacity", "read_missing_terminator", "read_supplementary", "read_huge_capacity_bounded", "read_malformed_surrogate", "read_aligned_terminator", "clear_false_uncertain", "inventory_unicode", "inventory_custom", "inventory_image", "inventory_mixed_malformed", "inventory_empty_zero", "inventory_busy", "inventory_enumeration_error", "inventory_duplicate", "inventory_oversize", "inventory_mta"} {
 		if strings.Count(string(output), "passed:"+name+"\r\n") != 1 {
 			t.Fatalf("missing case %s: %s", name, output)
 		}
@@ -75,20 +75,22 @@ const clipboardMockNative = `
     private static class Native {
         public static int LastError() { return ClipboardCases.Error; }
         public static void ClearError(uint error) { ClipboardCases.Error=0; }
-        public static bool OpenClipboard(IntPtr owner) { if(ClipboardCases.Busy)return false; ClipboardCases.Locked=true;return true; }
+        public static bool OpenClipboard(IntPtr owner) { if(ClipboardCases.Busy)return false; ClipboardCases.Opens++;ClipboardCases.Locked=true;return true; }
         public static bool CloseClipboard() { ClipboardCases.Locked=false;ClipboardCases.Closes++;return true; }
         public static uint EnumClipboardFormats(uint previous) {
             ClipboardCases.CheckLock();
             if(ClipboardCases.EnumFail){ClipboardCases.Error=5;return 0;}
-            foreach(uint f in ClipboardCases.Formats)if(f>previous)return f;return 0;
+            if(ClipboardCases.EnumDuplicate)return 13;
+            if(previous==0)ClipboardCases.EnumIndex=0;
+            if(ClipboardCases.EnumIndex<ClipboardCases.Formats.Length)return ClipboardCases.Formats[ClipboardCases.EnumIndex++];return 0;
         }
         public static uint GetClipboardSequenceNumber(){ClipboardCases.CheckLock();return ClipboardCases.Sequence;}
-        public static IntPtr GetClipboardData(uint format){ClipboardCases.CheckLock();return ClipboardCases.Data;}
+        public static IntPtr GetClipboardData(uint format){ClipboardCases.CheckLock();ClipboardCases.Reads++;return ClipboardCases.Data;}
         public static bool EmptyClipboard(){ClipboardCases.CheckLock();ClipboardCases.Writes++;ClipboardCases.Formats=new uint[0];ClipboardCases.Sequence=unchecked(ClipboardCases.Sequence+1);return !ClipboardCases.ClearFail;}
-        public static IntPtr SetClipboardData(uint format,IntPtr memory){ClipboardCases.CheckLock();if(ClipboardCases.SetFail)return IntPtr.Zero;ClipboardCases.Data=memory;ClipboardCases.Formats=new uint[]{13};ClipboardCases.Sequence=unchecked(ClipboardCases.Sequence+1);return memory;}
+        public static IntPtr SetClipboardData(uint format,IntPtr memory){ClipboardCases.CheckLock();ClipboardCases.Sets++;if(ClipboardCases.SetFail)return IntPtr.Zero;ClipboardCases.Data=memory;ClipboardCases.Formats=new uint[]{13};ClipboardCases.Sequence=unchecked(ClipboardCases.Sequence+1);return memory;}
         public static IntPtr GlobalAlloc(uint flags,UIntPtr size){ClipboardCases.DataSize=size;return ClipboardCases.Allocate((int)size.ToUInt32());}
         public static UIntPtr GlobalSize(IntPtr memory){return ClipboardCases.DataSize;}
-        public static IntPtr GlobalLock(IntPtr memory){return memory;}
+        public static IntPtr GlobalLock(IntPtr memory){ClipboardCases.Locks++;return memory;}
         public static bool GlobalUnlock(IntPtr memory){return true;}
         public static IntPtr GlobalFree(IntPtr memory){ClipboardCases.Free(memory);return IntPtr.Zero;}
         public static IntPtr CreateWindowEx(int exStyle,string name,string title,int style,int x,int y,int width,int height,IntPtr parent,IntPtr menu,IntPtr instance,IntPtr parameter){ClipboardCases.Owners++;return new IntPtr(1);}
@@ -98,15 +100,15 @@ const clipboardMockNative = `
 
 const clipboardMockCases = `
 public static class ClipboardCases {
- public static bool Locked,Busy,EnumFail,SetFail,ClearFail; public static int Writes,Closes,Owners,Error,CopiedBytes;
+ public static bool Locked,Busy,EnumFail,EnumDuplicate,SetFail,ClearFail; public static int Writes,Sets,Closes,Opens,Owners,Error,CopiedBytes,Reads,Locks,Copies,EnumIndex;
  public static uint Sequence;public static uint[] Formats;public static IntPtr Data;public static UIntPtr DataSize;
  private static List<IntPtr> allocations=new List<IntPtr>();
  public static void CheckLock(){if(!Locked)throw new Exception("outside_lock");}
  public static IntPtr Allocate(int size){IntPtr p=Marshal.AllocHGlobal(size);allocations.Add(p);return p;}
  public static void Free(IntPtr p){if(!allocations.Remove(p))throw new Exception("double_free");Marshal.FreeHGlobal(p);}
- private static void Reset(){foreach(IntPtr p in allocations)Marshal.FreeHGlobal(p);allocations.Clear();Locked=Busy=EnumFail=SetFail=ClearFail=false;Writes=Closes=Owners=Error=CopiedBytes=0;Sequence=0;Formats=new uint[0];Data=IntPtr.Zero;DataSize=UIntPtr.Zero;}
- public static void Copy(IntPtr source,byte[] destination,int offset,int length){Verify(length<=8194);CopiedBytes=length;Marshal.Copy(source,destination,offset,length);}
- public static void Copy(byte[] source,int offset,IntPtr destination,int length){Marshal.Copy(source,offset,destination,length);}
+ private static void Reset(){foreach(IntPtr p in allocations)Marshal.FreeHGlobal(p);allocations.Clear();Locked=Busy=EnumFail=EnumDuplicate=SetFail=ClearFail=false;Writes=Sets=Closes=Opens=Owners=Error=CopiedBytes=Reads=Locks=Copies=EnumIndex=0;Sequence=0;Formats=new uint[0];Data=IntPtr.Zero;DataSize=UIntPtr.Zero;}
+ public static void Copy(IntPtr source,byte[] destination,int offset,int length){Copies++;Verify(length<=8194);CopiedBytes=length;Marshal.Copy(source,destination,offset,length);}
+ public static void Copy(byte[] source,int offset,IntPtr destination,int length){Copies++;Marshal.Copy(source,offset,destination,length);}
  private static void ReadData(byte[] payload,int capacity,ulong reported){
   byte[] bytes=new byte[capacity];for(int i=0;i<bytes.Length;i++)bytes[i]=120;Array.Copy(payload,bytes,payload.Length);
   Data=Allocate(capacity);Marshal.Copy(bytes,0,Data,bytes.Length);DataSize=new UIntPtr(reported);Formats=new uint[]{13};
@@ -126,8 +128,34 @@ public static class ClipboardCases {
   Verify(Writes==writes && !Locked && Owners==0);
   Verify(allocations.Count==0);
  }
+ private static void InventoryCase(string name,uint[] formats,uint sequence){
+  Reset();Formats=formats;Sequence=sequence;
+  var state=AMCClipboard.InventorySnapshot();var expected=(uint[])formats.Clone();Array.Sort(expected);
+  Verify(state.Sequence==sequence && state.InventoryComplete && state.Empty==(formats.Length==0) && state.Text==null);
+  Verify(state.Formats.Length==expected.Length);for(int i=0;i<expected.Length;i++)Verify(state.Formats[i]==expected[i]);
+  Verify(Opens==1 && Closes==1 && !Locked && Owners==0 && Writes==0 && Sets==0 && Reads==0 && Locks==0 && Copies==0);
+  Console.WriteLine("passed:"+name);
+ }
+ private static void InventoryFailure(string name,string error,int opens){
+  try{AMCClipboard.InventorySnapshot();throw new Exception("inventory_failure_missing");}
+  catch(InvalidOperationException e){Verify(e.Message==error);}
+  Verify(Opens==opens && Closes==opens && !Locked && Owners==0 && Writes==0 && Sets==0 && Reads==0 && Locks==0 && Copies==0);
+  Console.WriteLine("passed:"+name);
+ }
  public static void Run(){
   try {
+   InventoryCase("inventory_unicode",new uint[]{13},uint.MaxValue);
+   InventoryCase("inventory_custom",new uint[]{49321},42);
+   InventoryCase("inventory_image",new uint[]{2,8},2);
+   // Unicode advertises a null/malformed payload; an accidental read fails this fixture.
+   InventoryCase("inventory_mixed_malformed",new uint[]{49321,13,2},10);
+   InventoryCase("inventory_empty_zero",new uint[0],0);
+   Reset();Busy=true;InventoryFailure("inventory_busy","clipboard_unavailable",0);
+   Reset();EnumFail=true;InventoryFailure("inventory_enumeration_error","clipboard_enumeration_failed",1);
+   Reset();EnumDuplicate=true;InventoryFailure("inventory_duplicate","clipboard_inventory_incomplete",1);
+   Reset();Formats=new uint[257];for(int i=0;i<Formats.Length;i++)Formats[i]=(uint)i+1;InventoryFailure("inventory_oversize","clipboard_inventory_incomplete",1);
+   Reset();Exception threadError=null;var thread=new System.Threading.Thread(delegate(){try{InventoryFailure("inventory_mta","clipboard_requires_sta",0);}catch(Exception e){threadError=e;}});
+   thread.SetApartmentState(System.Threading.ApartmentState.MTA);thread.Start();thread.Join();if(threadError!=null)throw threadError;
    Reset();var s=AMCClipboard.Write("世界 😀\r\nnext",0,new uint[0],DateTime.UtcNow.AddMinutes(1));Verify(s.Text=="世界 😀\r\nnext" && s.Sequence==2 && s.InventoryComplete && !s.Empty && Closes==1 && !Locked && Owners==0);Console.WriteLine("passed:unicode_crlf");
    Reset();s=AMCClipboard.Write("",0,new uint[0],DateTime.UtcNow.AddMinutes(1));Verify(s.Empty && s.Formats.Length==0 && s.Sequence==1);Console.WriteLine("passed:empty");
    Reset();Sequence=1;Failure("text",0,new uint[0],"clipboard_conflict",0);Console.WriteLine("passed:sequence_conflict");

@@ -113,6 +113,11 @@ function Invoke-DesktopAction($request) {
         $response.cursor = Get-GuestCursor
         return $response
     }
+    if ($request.action -eq 'clipboard.snapshot') {
+        $snapshot = [AMCClipboard]::InventorySnapshot()
+        $response.clipboard = @{sequence = $snapshot.Sequence; formats = @($snapshot.Formats); inventory_complete = $snapshot.InventoryComplete; empty = $snapshot.Empty}
+        return $response
+    }
     if ($request.action -eq 'clipboard.get') {
         $snapshot = [AMCClipboard]::Snapshot()
         $response.text = $snapshot.Text

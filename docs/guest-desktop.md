@@ -56,7 +56,7 @@ Semantic actions include:
 
 | Action | Additional fields |
 | --- | --- |
-| `status`, `cursor`, `windows`, `clipboard.get` | No window required |
+| `status`, `cursor`, `windows`, `clipboard.get`, `clipboard.snapshot` | No window required |
 | `provision`, `remove` | Guest driver lifecycle; mutation authority required |
 | `window.focus`, `window.close`, `window.minimize`, `window.maximize`, `window.restore` | `window_id`, `window_identity` |
 | `window.move` | Window identity and native `x`, `y` |
@@ -161,6 +161,16 @@ exit or zero effects. Guarded clipboard uncertainty retains its canonical reconc
 warning. Failures do not trigger an automatic post-action observation or a second mutation.
 
 ## Clipboard inventory and guarded writes
+
+`clipboard.snapshot` observes only `clipboard` metadata: the exact uint32 `sequence`, sorted
+numeric `formats`, `inventory_complete`, and `empty`. It requires normal sensitive observation
+authority and an interactive guest session, without a window or mutation approval. Complete
+enumeration and sequence capture share one OpenClipboard lock. No format data, text, image or
+custom payload is requested; delayed rendering is never triggered by a data read. The response
+contains no `text` field. Missing, malformed or incomplete metadata and payload-bearing responses
+are refused; older helpers reject the new action without falling back to `clipboard.get`.
+Use this action for the initial inventory of a private clipboard. Sequence zero is valid, but
+only complete enumeration proves emptiness.
 
 `clipboard.get` returns bounded Unicode text and `clipboard` metadata: the actual uint32
 `sequence`, sorted numeric `formats`, `inventory_complete`, and `empty`. Metadata and text are
