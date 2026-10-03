@@ -17,7 +17,7 @@ func TestDesktopMutationRevalidatesPreparedIdentity(t *testing.T) {
 		t.Fatalf("identity fixture: %v %s", err, output)
 	}
 	t.Logf("%s", output)
-	for _, name := range []string{"valid-virtual", "same-pid-new-birth", "foreign-session", "ancestry-replacement", "disabled-preparation", "password-preparation", "valid-invoke", "valid-select", "valid-toggle", "valid-expand", "valid-collapse", "enumeration-replacement", "pattern-replacement", "readonly-replacement", "foreign-element", "foreign-root", "detached-element", "cyclic-parent", "expired-preparation", "protected-preparation", "focus-replacement", "focus-moved-bounds", "focus-stolen", "valid-wheel", "repeated-scroll-replacement", "valid-repeated-scroll"} {
+	for _, name := range []string{"valid-virtual", "pattern-runtime-change", "ancestry-runtime-change", "same-pid-new-birth", "foreign-session", "ancestry-replacement", "disabled-preparation", "password-preparation", "valid-invoke", "valid-select", "valid-toggle", "valid-expand", "valid-collapse", "enumeration-replacement", "pattern-replacement", "readonly-replacement", "foreign-element", "foreign-root", "detached-element", "cyclic-parent", "expired-preparation", "protected-preparation", "focus-replacement", "focus-moved-bounds", "focus-stolen", "valid-wheel", "repeated-scroll-replacement", "valid-repeated-scroll"} {
 		if !strings.Contains(string(output), "passed:"+name+"\n") && !strings.Contains(string(output), "passed:"+name+"\r\n") {
 			t.Errorf("missing decision %s: %s", name, output)
 		}
@@ -80,6 +80,7 @@ function New-Element($id,$parent,$elementPID){
  $e|Add-Member ScriptMethod GetSupportedPatterns {return @()}
  $e|Add-Member ScriptMethod GetCurrentPattern {param($p)
   if($script:mode-eq 'pattern-replacement'){[AMCDesktop]::PID=12}
+  if($script:mode-eq 'pattern-runtime-change'){$this.ID=3}
   if($script:mode-eq 'same-pid-new-birth'){[BindingProcess]::Birth=200}
   if($script:mode-eq 'foreign-session'){[BindingProcess]::Session=2}
   if($script:mode-eq 'disabled-preparation'){$this.Current.IsEnabled=$false}
@@ -94,6 +95,8 @@ $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
 try{
  foreach($case in @(
   @('valid-virtual','uia.setvalue','',1),
+  @('pattern-runtime-change','uia.setvalue','stale_element',0),
+  @('ancestry-runtime-change','uia.setvalue','stale_element',0),
   @('same-pid-new-birth','uia.setvalue','stale_window',0),
   @('foreign-session','uia.setvalue','foreign_session',0),
   @('ancestry-replacement','uia.setvalue','stale_window',0),
@@ -131,7 +134,7 @@ try{
    if($script:mode-eq 'enumeration-replacement'){[AMCDesktop]::PID=12};return $e.Child
   }
   $walker|Add-Member ScriptMethod GetNextSibling {param($e) return $e.Sibling}
-  $walker|Add-Member ScriptMethod GetParent {param($e) if($script:mode-eq 'ancestry-replacement'){[AMCDesktop]::PID=12};return $e.Parent}
+  $walker|Add-Member ScriptMethod GetParent {param($e) if($script:mode-eq 'ancestry-replacement'){[AMCDesktop]::PID=12};if($script:mode-eq 'ancestry-runtime-change'){$e.ID=3};return $e.Parent}
   [Windows.Automation.TreeWalker]::ControlViewWalker=$walker;[Windows.Automation.AutomationElement]::Root=$root
   $script:pattern=[pscustomobject]@{}
   $pattern|Add-Member ScriptProperty Current {if($script:mode-eq 'readonly-replacement'){[AMCDesktop]::PID=12};return [pscustomobject]@{IsReadOnly=$false}}

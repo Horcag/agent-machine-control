@@ -84,6 +84,7 @@ function Assert-ElementBinding($element, $request) {
     if (-not $contained) { throw 'stale_element' }
     $properties = $element.Current
     if ($properties.ProcessId -ne $expectedPID -or -not $properties.IsEnabled -or [AMCDesktop]::IsPasswordControl($properties.IsPassword, [IntPtr]::new($properties.NativeWindowHandle))) { throw 'element_unavailable' }
+    if (($element.GetRuntimeId() -join ':') -cne $request.element_id) { throw 'stale_element' }
     Get-WindowHandle $request.window_id $request.window_identity | Out-Null
     if ([DateTimeOffset]::UtcNow -ge $deadline) { throw 'expired_request' }
     if (-not [AMCDesktop]::InteractiveDesktop()) { throw 'protected_desktop' }
