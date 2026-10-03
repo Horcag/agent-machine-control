@@ -77,7 +77,7 @@ type boundsRecordingFixture struct {
 	backend *mockBackend
 }
 
-func newBoundsRecordingFixture(t *testing.T, provider app.ConsoleProvider) boundsRecordingFixture {
+func newBoundsRecordingFixture(t *testing.T, provider app.ConsoleProvider, leaseOptions ...lease.Option) boundsRecordingFixture {
 	t.Helper()
 	state, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
@@ -111,7 +111,7 @@ func newBoundsRecordingFixture(t *testing.T, provider app.ConsoleProvider) bound
 	clock := func() time.Time { return now }
 	recovery := app.NewRecoveryService(
 		backend,
-		lease.NewManager(state.LeasesDir()),
+		lease.NewManager(state.LeasesDir(), leaseOptions...),
 		audit.NewStore(state.AuditDir()),
 		receipt.NewStore(state.ReceiptsDir()),
 		approval.NewStore(state.ApprovalsDir()),
