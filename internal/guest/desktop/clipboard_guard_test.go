@@ -34,7 +34,7 @@ func TestClipboardGuardWireRefusesLegacyHelper(t *testing.T) {
 	}
 	path, err := exec.LookPath("powershell.exe")
 	if err != nil {
-		t.Fatal(err)
+		t.Skip("Windows PowerShell unavailable for data-only clipboard fixture")
 	}
 	queue, _ := scripts.ReadFile("queue.ps1")
 	// Simulate the installed previous allowlist, extracting only the pure dispatcher.
@@ -49,7 +49,7 @@ func TestClipboardGuardWireRefusesLegacyHelper(t *testing.T) {
 func TestNativeClipboardGuardMockedBoundary(t *testing.T) {
 	path, err := exec.LookPath("powershell.exe")
 	if err != nil {
-		t.Fatal(err)
+		t.Skip("Windows PowerShell unavailable for data-only clipboard fixture")
 	}
 	native, _ := scripts.ReadFile("native.cs")
 	source := string(native)
