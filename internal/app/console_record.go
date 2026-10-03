@@ -45,6 +45,9 @@ func (s *ConsoleService) Record(ctx context.Context, actor domain.ActorContext, 
 	if err != nil {
 		return out, err
 	}
+	if err := ctx.Err(); err != nil {
+		return out, err
+	}
 	out.ObservedAt = observed
 
 	var buffer bytes.Buffer
@@ -55,6 +58,9 @@ func (s *ConsoleService) Record(ctx context.Context, actor domain.ActorContext, 
 		return out, errors.New("app: recording exceeds artifact limit")
 	}
 	digest := sha256.Sum256(buffer.Bytes())
+	if err := ctx.Err(); err != nil {
+		return out, err
+	}
 	out.Data = buffer.Bytes()
 	out.SHA256 = hex.EncodeToString(digest[:])
 	out.MIMEType = "image/gif"
