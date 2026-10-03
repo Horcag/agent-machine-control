@@ -39,7 +39,7 @@ function Invoke-CimMethod {param($InputObject) return @{ReturnValue=0;Sid=$Input
 try{
  $id='a'*32;$other='b'*32
  $uia=@('uia.tree','uia.invoke','uia.setvalue','uia.select','uia.toggle','uia.expand','uia.collapse','uia.scroll')
- $sta=@('status','cursor','windows','clipboard.get','clipboard.set','launch','scroll','window.focus','window.move','window.resize','window.close','window.minimize','window.maximize','window.restore')
+ $sta=@('status','cursor','windows','clipboard.get','clipboard.snapshot','clipboard.set','launch','scroll','window.focus','window.move','window.resize','window.close','window.minimize','window.maximize','window.restore')
  foreach($action in $uia){Require ((Get-WorkerArguments $id $action).Contains(' -MTA ')) ('wrong UIA apartment '+$action)}
  foreach($action in $sta){Require ((Get-WorkerArguments $id $action).Contains(' -STA ')) ('wrong STA apartment '+$action)}
  foreach($action in @('uia.unknown','UIA.tree','uia.tree -STA','')){
@@ -70,7 +70,7 @@ try{
  # Execute the actual generated fixed arguments with an owned data-only worker.
  $worker=Join-Path $root 'worker.ps1'
  [IO.File]::WriteAllText($worker,'param([string]$RequestID);[Console]::Out.Write(([Threading.Thread]::CurrentThread.GetApartmentState().ToString()+":"+$RequestID))')
- foreach($case in @(@{Action='clipboard.get';Apartment='STA'},@{Action='uia.tree';Apartment='MTA'})){
+ foreach($case in @(@{Action='clipboard.get';Apartment='STA'},@{Action='clipboard.snapshot';Apartment='STA'},@{Action='uia.tree';Apartment='MTA'})){
   $start=[Diagnostics.ProcessStartInfo]::new($powerShell,(Get-WorkerArguments $id $case.Action))
   $start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
   $start.EnvironmentVariables['PSModulePath']=Join-Path $PSHOME 'Modules'

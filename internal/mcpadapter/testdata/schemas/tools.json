@@ -996,7 +996,7 @@
           "description": "Semantic guest action; native guest pixel coordinates",
           "properties": {
             "action": {
-              "description": "One of status cursor windows uia.tree clipboard.get provision remove window.focus window.move window.resize window.minimize window.maximize window.restore window.close uia.invoke uia.setvalue uia.select uia.toggle uia.expand uia.collapse uia.scroll clipboard.set scroll launch",
+              "description": "One of status cursor windows uia.tree clipboard.get clipboard.snapshot provision remove window.focus window.move window.resize window.minimize window.maximize window.restore window.close uia.invoke uia.setvalue uia.select uia.toggle uia.expand uia.collapse uia.scroll clipboard.set scroll launch",
               "type": "string"
             },
             "arguments": {

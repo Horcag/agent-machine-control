@@ -17,7 +17,7 @@ type actionRule struct {
 func requestRule(action string) (actionRule, bool) {
 	window := actionRule{window: true}
 	rules := map[string]actionRule{
-		"status": {}, "cursor": {}, "windows": {}, "clipboard.get": {},
+		"status": {}, "cursor": {}, "windows": {}, "clipboard.get": {}, "clipboard.snapshot": {},
 		"clipboard.set": {text: true}, "launch": {launch: true},
 		"window.focus": window, "window.close": window, "window.minimize": window,
 		"window.maximize": window, "window.restore": window, "uia.tree": window,
@@ -216,10 +216,19 @@ type clipboardWireMetadata struct {
 // Old helpers may return only text for a plain get; guarded writes require the
 // complete metadata protocol and exact readback from the helper's clipboard lock.
 func validClipboardResponse(data []byte, response Response, req Request) bool {
-	guarded := req.Action == "clipboard.set.guarded"
-	if !guarded && req.Action != "clipboard.get" {
+	switch req.Action {
+	case "clipboard.snapshot":
+		return validClipboardSnapshotResponse(data)
+	case "clipboard.get", "clipboard.set.guarded":
+		return validClipboardReadback(data, response, req)
+	default:
 		return true
 	}
+}
+
+// Text reads and guarded writes retain the legacy readback compatibility contract.
+func validClipboardReadback(data []byte, response Response, req Request) bool {
+	guarded := req.Action == "clipboard.set.guarded"
 	if !utf8.Valid(data) || !validClipboardText(response.Text) {
 		return false
 	}
@@ -243,6 +252,27 @@ func validClipboardResponse(data []byte, response Response, req Request) bool {
 		return !guarded && !present
 	}
 	return validClipboardInventory(wire.Clipboard, response.Text, guarded && req.Text == "")
+}
+
+// Inventory observations never accept payload-bearing response fields, even empty ones.
+// Older helpers must supply this complete protocol; there is no text-get fallback.
+func validClipboardSnapshotResponse(data []byte) bool {
+	if !utf8.Valid(data) {
+		return false
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(data, &fields) != nil {
+		return false
+	}
+	for field := range fields {
+		switch field {
+		case "request_id", "success", "session_id", "elevated", "clipboard":
+		default:
+			return false
+		}
+	}
+	var meta clipboardWireMetadata
+	return json.Unmarshal(fields["clipboard"], &meta) == nil && validClipboardInventory(&meta, "", false)
 }
 
 func validClipboardInventory(meta *clipboardWireMetadata, text string, clearing bool) bool {
