@@ -22,6 +22,8 @@ import (
 var scripts embed.FS
 
 var ErrUnavailable = errors.New("desktop: guest interactive driver unavailable")
+var ErrClipboardUncertain = domain.ErrClipboardUncertain
+
 var ErrInvalidRequest = errors.New("desktop: invalid request")
 
 // CommandRunner must use enrolled SSH credentials and pinned guest host keys.
@@ -48,6 +50,10 @@ func (p *Provider) Provision(ctx context.Context, target domain.MachineRef) (Res
 func (p *Provider) Execute(ctx context.Context, target domain.MachineRef, req Request) (Response, error) {
 	if err := validateRequest(req, time.Now()); err != nil {
 		return Response{}, err
+	}
+	// A distinct action is rejected by the installed old helper allowlist.
+	if req.ExpectedSequence != nil {
+		req.Action = "clipboard.set.guarded"
 	}
 	return p.exchange(ctx, target, req, "execute", nil, nil)
 }
@@ -149,7 +155,13 @@ func decodeResponse(data []byte, id, mode string) (Response, error) {
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&response) != nil || decoder.Decode(new(any)) != io.EOF || response.RequestID != id || !response.Success || response.Error != "" {
+	if decoder.Decode(&response) != nil || decoder.Decode(new(any)) != io.EOF || response.RequestID != id {
+		return Response{}, ErrUnavailable
+	}
+	if !response.Success || response.Error != "" {
+		if response.Error == "clipboard_possibly_cleared" {
+			return Response{}, ErrClipboardUncertain
+		}
 		return Response{}, ErrUnavailable
 	}
 	if mode != "remove" && (response.SessionID < 1 || !response.Elevated) {

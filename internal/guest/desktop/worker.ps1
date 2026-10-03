@@ -20,6 +20,8 @@ try {
     $response.request_id = $RequestID
     $response.success = $true
 } catch {
+    # Preserve only this fixed redacted partial-write category, never exception text.
+    if ($_.Exception.ToString().Contains('clipboard_possibly_cleared')) { $response.error = 'clipboard_possibly_cleared' }
     # A generic category is intentional: exceptions frequently contain guest data.
 }
 $result = Join-Path (Join-Path $root 'results') ($RequestID + '.json')

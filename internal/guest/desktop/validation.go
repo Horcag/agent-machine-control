@@ -36,7 +36,7 @@ func requestRule(action string) (actionRule, bool) {
 }
 
 func validateRequest(req Request, now time.Time) error {
-	if !validEnvelope(req, now) {
+	if req.Validate() != nil || !validEnvelope(req, now) {
 		return ErrInvalidRequest
 	}
 	rule, ok := requestRule(req.Action)

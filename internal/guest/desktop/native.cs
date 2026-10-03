@@ -82,3 +82,124 @@ public static class AMCDesktop {
         result.Append('\\', slashes * 2); result.Append('"'); return result.ToString();
     }
 }
+
+// All metadata, comparisons and readback belong to a single clipboard lock.
+public static class AMCClipboard {
+    public sealed class State {
+        public uint Sequence;
+        public uint[] Formats;
+        public bool InventoryComplete, Empty;
+        public string Text;
+    }
+    private static void RequireSTA() {
+        if (System.Threading.Thread.CurrentThread.GetApartmentState() != System.Threading.ApartmentState.STA)
+            throw new InvalidOperationException("clipboard_requires_sta");
+    }
+    private static uint[] Inventory() {
+        var formats = new List<uint>(); uint current = 0;
+        for (;;) {
+            Native.ClearError(0);
+            current = Native.EnumClipboardFormats(current);
+            if (current == 0) {
+                if (Native.LastError() != 0) throw new InvalidOperationException("clipboard_enumeration_failed");
+                break;
+            }
+            if (formats.Count >= 256 || formats.Contains(current)) throw new InvalidOperationException("clipboard_inventory_incomplete");
+            formats.Add(current);
+        }
+        formats.Sort(); return formats.ToArray();
+    }
+    private static string ReadText(uint[] formats) {
+        if (Array.IndexOf(formats, 13u) < 0) return "";
+        IntPtr handle = Native.GetClipboardData(13);
+        if (handle == IntPtr.Zero) throw new InvalidOperationException("clipboard_read_failed");
+        ulong size = Native.GlobalSize(handle).ToUInt64();
+        if (size < 2 || size % 2 != 0 || size > 8194) throw new InvalidOperationException("oversized_clipboard");
+        IntPtr pointer = Native.GlobalLock(handle);
+        if (pointer == IntPtr.Zero) throw new InvalidOperationException("clipboard_read_failed");
+        try {
+            byte[] bytes = new byte[(int)size]; Marshal.Copy(pointer, bytes, 0, bytes.Length);
+            int end = 0; while (end < bytes.Length && (bytes[end] != 0 || bytes[end + 1] != 0)) end += 2;
+            if (end == bytes.Length) throw new InvalidOperationException("malformed_clipboard_text");
+            return new UnicodeEncoding(false, false, true).GetString(bytes, 0, end);
+        } finally { Native.GlobalUnlock(handle); }
+    }
+    private static State ReadLocked() {
+        uint[] formats = Inventory(); string text = ReadText(formats);
+        // Delayed rendering can introduce formats; capture final metadata after text.
+        formats = Inventory();
+        return new State { Sequence = Native.GetClipboardSequenceNumber(), Formats = formats,
+            InventoryComplete = true, Empty = formats.Length == 0, Text = text };
+    }
+    public static State Snapshot() {
+        RequireSTA();
+        if (!Native.OpenClipboard(IntPtr.Zero)) throw new InvalidOperationException("clipboard_unavailable");
+        try { return ReadLocked(); }
+        finally { Native.CloseClipboard(); }
+    }
+    public static State Write(string text, uint expected, uint[] inventory, DateTime deadline) {
+        RequireSTA(); text = text ?? "";
+        if (text.Length > 4096 || text.IndexOf('\0') >= 0 || inventory == null || inventory.Length > 256)
+            throw new InvalidOperationException("invalid_clipboard_guard");
+        for (int i = 0; i < inventory.Length; i++)
+            if (inventory[i] == 0 || (i > 0 && inventory[i] <= inventory[i - 1])) throw new InvalidOperationException("invalid_clipboard_guard");
+        byte[] payload = new UnicodeEncoding(false, false, true).GetBytes(text + "\0");
+        IntPtr memory = IntPtr.Zero, owner = IntPtr.Zero; bool opened = false, cleared = false;
+        try {
+            if (text.Length != 0) {
+                memory = Native.GlobalAlloc(0x42, new UIntPtr((uint)payload.Length));
+                if (memory == IntPtr.Zero) throw new InvalidOperationException("clipboard_allocation_failed");
+                IntPtr pointer = Native.GlobalLock(memory);
+                if (pointer == IntPtr.Zero) throw new InvalidOperationException("clipboard_allocation_failed");
+                try { Marshal.Copy(payload, 0, pointer, payload.Length); }
+                finally { Native.GlobalUnlock(memory); }
+            }
+            // Built-in STATIC class, task-owned message-only HWND; never NULL owner.
+            owner = Native.CreateWindowEx(0, "STATIC", "", 0, 0, 0, 0, 0, new IntPtr(-3), IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+            if (owner == IntPtr.Zero) throw new InvalidOperationException("clipboard_owner_failed");
+            if (!Native.OpenClipboard(owner)) throw new InvalidOperationException("clipboard_unavailable");
+            opened = true;
+            uint[] actual = Inventory();
+            if (Native.GetClipboardSequenceNumber() != expected || actual.Length != inventory.Length)
+                throw new InvalidOperationException("clipboard_conflict");
+            for (int i = 0; i < actual.Length; i++)
+                if (actual[i] != inventory[i]) throw new InvalidOperationException("clipboard_conflict");
+            if (DateTime.UtcNow >= deadline) throw new InvalidOperationException("expired_request");
+            if (!Native.EmptyClipboard()) throw new InvalidOperationException("clipboard_clear_failed");
+            cleared = true;
+            if (memory != IntPtr.Zero) {
+                if (Native.SetClipboardData(13, memory) == IntPtr.Zero) throw new InvalidOperationException("clipboard_possibly_cleared");
+                memory = IntPtr.Zero; // System now owns the transferred allocation.
+            }
+            State state = ReadLocked();
+            if (state.Text != text || (text.Length == 0 && !state.Empty)) throw new InvalidOperationException("clipboard_possibly_cleared");
+            return state;
+        } catch {
+            if (cleared) throw new InvalidOperationException("clipboard_possibly_cleared");
+            throw;
+        } finally {
+            if (opened) Native.CloseClipboard();
+            if (owner != IntPtr.Zero) Native.DestroyWindow(owner);
+            if (memory != IntPtr.Zero) Native.GlobalFree(memory);
+        }
+    }
+    // Native boundary replaced in the data-only regression fixture; never called there.
+    private static class Native {
+        public static int LastError() { return Marshal.GetLastWin32Error(); }
+        [DllImport("kernel32.dll", EntryPoint="SetLastError")] public static extern void ClearError(uint error);
+        [DllImport("user32.dll", SetLastError=true)] public static extern bool OpenClipboard(IntPtr owner);
+        [DllImport("user32.dll")] public static extern bool CloseClipboard();
+        [DllImport("user32.dll", SetLastError=true)] public static extern uint EnumClipboardFormats(uint previous);
+        [DllImport("user32.dll")] public static extern uint GetClipboardSequenceNumber();
+        [DllImport("user32.dll")] public static extern IntPtr GetClipboardData(uint format);
+        [DllImport("user32.dll")] public static extern bool EmptyClipboard();
+        [DllImport("user32.dll")] public static extern IntPtr SetClipboardData(uint format, IntPtr memory);
+        [DllImport("kernel32.dll")] public static extern IntPtr GlobalAlloc(uint flags, UIntPtr size);
+        [DllImport("kernel32.dll")] public static extern UIntPtr GlobalSize(IntPtr memory);
+        [DllImport("kernel32.dll")] public static extern IntPtr GlobalLock(IntPtr memory);
+        [DllImport("kernel32.dll")] public static extern bool GlobalUnlock(IntPtr memory);
+        [DllImport("kernel32.dll")] public static extern IntPtr GlobalFree(IntPtr memory);
+        [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr CreateWindowEx(int exStyle, string name, string title, int style, int x, int y, int width, int height, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr parameter);
+        [DllImport("user32.dll")] public static extern bool DestroyWindow(IntPtr owner);
+    }
+}

@@ -8,6 +8,8 @@ import (
 	"unicode/utf8"
 )
 
+var ErrClipboardUncertain = errors.New("desktop: clipboard possibly cleared; reconcile before any retry or restoration")
+
 var ErrInvalidDesktopRequest = errors.New("invalid guest desktop request")
 
 func (r DesktopRequest) ObserveOnly() bool {
@@ -33,7 +35,7 @@ func (r DesktopRequest) Validate() error {
 			return ErrInvalidDesktopRequest
 		}
 	}
-	if !r.validPayload() || !r.validIdentity() || !r.validGeometry() {
+	if !r.validClipboardGuard() || !r.validPayload() || !r.validIdentity() || !r.validGeometry() {
 		return ErrInvalidDesktopRequest
 	}
 	return nil
@@ -91,3 +93,20 @@ func (r DesktopRequest) validGeometry() bool {
 
 func desktopCoordinateValid(value int) bool { return value >= -65535 && value <= 65535 }
 func desktopDimensionValid(value int) bool  { return value >= 0 && value <= 65535 }
+
+func (r DesktopRequest) validClipboardGuard() bool {
+	if r.ExpectedSequence == nil && r.ExpectedInventory == nil {
+		return true
+	}
+	if r.Action != "clipboard.set" || r.ExpectedSequence == nil || r.ExpectedInventory == nil || *r.ExpectedInventory == nil || len(*r.ExpectedInventory) > 256 {
+		return false
+	}
+	var previous uint32
+	for _, format := range *r.ExpectedInventory {
+		if format == 0 || format <= previous {
+			return false
+		}
+		previous = format
+	}
+	return true
+}

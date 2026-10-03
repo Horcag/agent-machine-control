@@ -137,3 +137,36 @@ of receipts and the application retry cache.
 
 For accepted states, limitations and upstream comparisons, see the
 [capability matrix](desktop-capability-matrix.md).
+
+## Clipboard inventory and guarded writes
+
+`clipboard.get` returns bounded Unicode text and `clipboard` metadata: the actual uint32
+`sequence`, sorted numeric `formats`, `inventory_complete`, and `empty`. Metadata and text are
+read under one OpenClipboard lock. Empty is established by complete enumeration; sequence zero
+alone proves neither emptiness nor access. Enumeration, busy/access and malformed text errors fail
+closed. This snapshot is not a full format clone: image, HTML, custom, unknown and mixed originals
+cannot be restored from it. No arbitrary format contents are read.
+
+For an opt-in compare-and-write, send external `clipboard.set` with both `expected_sequence`
+and `expected_inventory` copied from a complete snapshot. An explicit sequence `0` differs from
+omission; an empty inventory must be `[]`. Inventory is exact, sorted and contains no duplicates.
+The full request digest binds both conditions to existing approval and idempotency authority.
+The transport sends `clipboard.set.guarded`, a distinct STA action that older helper allowlists
+reject before writes. Legacy unguarded `clipboard.set` behavior remains unchanged.
+
+The native helper allocates bounded Unicode data before clearing, uses its own hidden message-only
+HWND as owner, and compares sequence and inventory under the same OpenClipboard lock as clear,
+write and readback. It returns actual post-write metadata, never a guessed increment. Conflicts
+make no writes. After a successful clear, any subsequent failure reports
+`clipboard_possibly_cleared`: the clipboard may have been cleared and requires reconciliation.
+Never blindly retry or restore. Sequence numbers wrap at uint32, and delayed rendering may change
+metadata; this guard does not promise unbounded ABA immunity.
+
+Future live acceptance must begin only with a positively empty original from complete inventory.
+Compilation and mocked regression checks never establish real guest clipboard acceptance.
+
+Win32 contract references: [OpenClipboard](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-openclipboard),
+[SetClipboardData](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setclipboarddata),
+[GetClipboardSequenceNumber](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getclipboardsequencenumber),
+[clipboard formats](https://learn.microsoft.com/en-us/windows/win32/dataxchg/clipboard-formats),
+and [window station security](https://learn.microsoft.com/en-us/windows/win32/winstation/window-station-security-and-access-rights).
