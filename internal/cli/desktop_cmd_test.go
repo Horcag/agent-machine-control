@@ -221,3 +221,11 @@ func TestConsoleRecordCLIProtectedArtifactAndCleanup(t *testing.T) {
 		t.Fatalf("unsupported artifact remains: %v", err)
 	}
 }
+
+func TestClipboardUncertaintyCLIMessage(t *testing.T) {
+	var stderr bytes.Buffer
+	code := mapClientError(domain.ErrClipboardUncertain, &stderr, "desktop")
+	if code == ExitSuccess || !strings.Contains(stderr.String(), "reconcile before any retry or restoration") {
+		t.Fatal(code, stderr.String())
+	}
+}

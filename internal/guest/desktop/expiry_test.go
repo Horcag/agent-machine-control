@@ -26,11 +26,12 @@ func TestTransportStopsBeforeNextExpiredMutation(t *testing.T) {
 	}
 	// A missing publication guard must fail because publication occurred, not
 	// because a fake staging file happens to be absent.
-	guarded := "        Assert-Deadline $deadline\n        [IO.File]::Move($tempPath, $inputPath)"
+	publication := "        # The worker may consume the request immediately after publication.\n        $dispatchPossible = $true\n        [IO.File]::Move($tempPath, $inputPath)"
+	guarded := "        Assert-Deadline $deadline\n" + publication
 	if strings.Count(transport, guarded) != 1 {
 		t.Fatal("publication guard fixture no longer matches production")
 	}
-	transport = strings.Replace(transport, guarded, "        [IO.File]::Move($tempPath, $inputPath)", 1)
+	transport = strings.Replace(transport, guarded, publication, 1)
 	data, err = json.Marshal(map[string]string{"transport": transport, "queue": string(queue)})
 	if err != nil {
 		t.Fatal(err)

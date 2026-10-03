@@ -143,7 +143,7 @@ function Get-WorkerArguments([string]$id, [string]$action = 'status') {
     if ($id -cnotmatch '\A[0-9a-f]{32}\z') { throw 'invalid_request' }
     # UIA clients use a windowless MTA; clipboard and other actions retain STA.
     $uia = @('uia.tree', 'uia.invoke', 'uia.setvalue', 'uia.select', 'uia.toggle', 'uia.expand', 'uia.collapse', 'uia.scroll')
-    $sta = @('status', 'cursor', 'windows', 'clipboard.get', 'clipboard.set', 'launch', 'scroll', 'window.focus', 'window.move', 'window.resize', 'window.close', 'window.minimize', 'window.maximize', 'window.restore')
+    $sta = @('status', 'cursor', 'windows', 'clipboard.get', 'clipboard.set', 'clipboard.set.guarded', 'launch', 'scroll', 'window.focus', 'window.move', 'window.resize', 'window.close', 'window.minimize', 'window.maximize', 'window.restore')
     if ($uia -ccontains $action) { $apartment = '-MTA' }
     elseif ($sta -ccontains $action) { $apartment = '-STA' }
     else { throw 'unsupported_action' }

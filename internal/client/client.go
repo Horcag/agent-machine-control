@@ -180,6 +180,12 @@ func mapHTTPError(resp *http.Response) error {
 		Message:    msg,
 	}
 
+	if cat == domain.FailureCategoryClipboardUncertain {
+		message, _ := domain.CanonicalFailureMessage(cat)
+		apiErr.Message = message
+		return fmt.Errorf("%w: %w", domain.ErrClipboardUncertain, apiErr)
+	}
+
 	switch resp.StatusCode {
 	case http.StatusBadRequest:
 		return fmt.Errorf("%w: %w", ErrInvalidArgument, apiErr)

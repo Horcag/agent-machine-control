@@ -135,6 +135,9 @@ func (s *DesktopService) dispatch(ctx context.Context, canonical string, req dom
 		response, err = s.provider.Execute(ctx, domain.MachineRef(canonical), req)
 	}
 	if err != nil {
+		if errors.Is(err, domain.ErrClipboardUncertain) {
+			return domain.DesktopResponse{}, domain.ErrClipboardUncertain
+		}
 		return domain.DesktopResponse{}, safeConsoleProviderError(err)
 	}
 	if !response.Success || response.RequestID != req.RequestID {

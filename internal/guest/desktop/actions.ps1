@@ -114,12 +114,20 @@ function Invoke-DesktopAction($request) {
         return $response
     }
     if ($request.action -eq 'clipboard.get') {
-        $text = [Windows.Forms.Clipboard]::GetText()
-        if ($text.Length -gt 4096) { throw 'oversized_clipboard' }
-        $response.text = $text
+        $snapshot = [AMCClipboard]::Snapshot()
+        $response.text = $snapshot.Text
+        $response.clipboard = @{sequence = $snapshot.Sequence; formats = @($snapshot.Formats); inventory_complete = $snapshot.InventoryComplete; empty = $snapshot.Empty}
+        return $response
+    }
+    if ($request.action -eq 'clipboard.set.guarded') {
+        if ($null -eq $request.expected_sequence -or $null -eq $request.expected_inventory) { throw 'invalid_clipboard_guard' }
+        $snapshot = [AMCClipboard]::Write([string]$request.text, [uint32]$request.expected_sequence, [uint32[]]$request.expected_inventory, $deadline.UtcDateTime)
+        $response.text = $snapshot.Text
+        $response.clipboard = @{sequence = $snapshot.Sequence; formats = @($snapshot.Formats); inventory_complete = $snapshot.InventoryComplete; empty = $snapshot.Empty}
         return $response
     }
     if ($request.action -eq 'clipboard.set') {
+        if ($null -ne $request.expected_sequence -or $null -ne $request.expected_inventory) { throw 'invalid_clipboard_guard' }
         $text = [string]$request.text
         if ($text.Length -gt 4096) { throw 'oversized_clipboard' }
         if ($text -eq '') { [Windows.Forms.Clipboard]::Clear() }

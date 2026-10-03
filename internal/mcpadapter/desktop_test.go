@@ -338,3 +338,22 @@ func assertDesktopRetryRequests(t *testing.T, requests []app.DesktopActionReques
 		t.Fatalf("caller action mutated: %+v", action)
 	}
 }
+
+func TestClipboardUncertaintyDesktopMCP(t *testing.T) {
+	calls := 0
+	a := desktopMCPServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":{"category":"clipboard_possibly_cleared","message":"synthetic-private-error"}}`))
+	})
+	deadline := time.Now().Add(time.Minute).UTC().Format(time.RFC3339Nano)
+	result, _, err := a.DesktopAct(t.Context(), nil, DesktopActInput{Action: &domain.DesktopRequest{Action: "clipboard.set"}, LabGrantID: "synthetic-grant", Deadline: deadline})
+	message, _ := domain.CanonicalFailureMessage(domain.FailureCategoryClipboardUncertain)
+	if err != nil || result == nil || !result.IsError || calls != 1 {
+		t.Fatal(result, err, calls)
+	}
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, message) || strings.Contains(text, "synthetic-private-error") {
+		t.Fatal(text)
+	}
+}

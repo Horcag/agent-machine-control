@@ -4,6 +4,7 @@ package domain
 // persisted for a failed operation. Their messages are fixed so receipts never
 // retain backend-controlled error text.
 const (
+	FailureCategoryClipboardUncertain        = "clipboard_possibly_cleared"
 	FailureCategoryCallerCanceled            = "caller_canceled"
 	FailureCategoryDeadlineExceeded          = "deadline_exceeded"
 	FailureCategorySessionNotFound           = "session_not_found"
@@ -22,6 +23,7 @@ const (
 )
 
 var canonicalFailureMessages = map[string]string{
+	FailureCategoryClipboardUncertain:        "clipboard possibly cleared; reconcile before any retry or restoration",
 	FailureCategoryCallerCanceled:            "operation canceled by caller",
 	FailureCategoryDeadlineExceeded:          "operation deadline exceeded",
 	FailureCategorySessionNotFound:           "session not found",

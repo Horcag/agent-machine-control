@@ -78,6 +78,24 @@ func (s *RecoveryService) finalizeMutation(
 	return receiptRecord, nil
 }
 
+// Replay only canonical terminal provenance; never redispatch a cached mutation.
+func cachedRecoveryOutcomeError(outcome domain.ExecutionOutcome) error {
+	switch outcome.Status {
+	case domain.OutcomeDenied:
+		return &PolicyDeniedError{Reason: policy.DenialReason(outcome.ErrorCategory), Message: outcome.ErrorMessage}
+	case domain.OutcomeFailed:
+		if outcome.ErrorCategory == domain.FailureCategoryClipboardUncertain {
+			return domain.ErrClipboardUncertain
+		}
+	case domain.OutcomeAborted:
+		if outcome.ErrorCategory == "caller_canceled" {
+			return context.Canceled
+		}
+		return context.DeadlineExceeded
+	}
+	return nil
+}
+
 func (s *RecoveryService) executeMutation(
 	ctx context.Context,
 	op domain.Operation,
@@ -101,19 +119,7 @@ func (s *RecoveryService) executeMutation(
 	// 1. Idempotency Check & 2. Audit Writability Check
 	if cached, err := s.checkPreconditions(ctx, op); err != nil || cached != nil {
 		if cached != nil {
-			switch cached.Outcome.Status {
-			case domain.OutcomeDenied:
-				return *cached, &PolicyDeniedError{
-					Reason:  policy.DenialReason(cached.Outcome.ErrorCategory),
-					Message: cached.Outcome.ErrorMessage,
-				}
-			case domain.OutcomeAborted:
-				if cached.Outcome.ErrorCategory == "caller_canceled" {
-					return *cached, context.Canceled
-				}
-				return *cached, context.DeadlineExceeded
-			}
-			return *cached, nil
+			return *cached, cachedRecoveryOutcomeError(cached.Outcome)
 		}
 		return s.preProviderFailure(ctx, op, fp, policy.Decision{}, s.now(), err, "", req.ApprovalID)
 	}
@@ -389,6 +395,9 @@ func (s *RecoveryService) persistOutcome(
 
 		var deniedErr *PolicyDeniedError
 		switch {
+		case errors.Is(runErr, domain.ErrClipboardUncertain):
+			errCategory = domain.FailureCategoryClipboardUncertain
+			errMsg, _ = domain.CanonicalFailureMessage(errCategory)
 		case errors.As(runErr, &deniedErr):
 			outcomeStatus = domain.OutcomeDenied
 			exitCode = 7

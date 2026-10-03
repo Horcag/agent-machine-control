@@ -22,6 +22,8 @@ import (
 var scripts embed.FS
 
 var ErrUnavailable = errors.New("desktop: guest interactive driver unavailable")
+var ErrClipboardUncertain = domain.ErrClipboardUncertain
+
 var ErrInvalidRequest = errors.New("desktop: invalid request")
 
 // CommandRunner must use enrolled SSH credentials and pinned guest host keys.
@@ -48,6 +50,10 @@ func (p *Provider) Provision(ctx context.Context, target domain.MachineRef) (Res
 func (p *Provider) Execute(ctx context.Context, target domain.MachineRef, req Request) (Response, error) {
 	if err := validateRequest(req, time.Now()); err != nil {
 		return Response{}, err
+	}
+	// A distinct action is rejected by the installed old helper allowlist.
+	if req.ExpectedSequence != nil {
+		req.Action = "clipboard.set.guarded"
 	}
 	return p.exchange(ctx, target, req, "execute", nil, nil)
 }
@@ -110,11 +116,17 @@ func (p *Provider) exchange(ctx context.Context, target domain.MachineRef, req R
 	if err != nil {
 		return Response{}, ErrInvalidRequest
 	}
+	if err := ctx.Err(); err != nil {
+		return Response{}, err
+	}
 	output, err := p.runner.RunCommand(ctx, target, transportCommand(), append(data, '\n'), 512*1024)
 	if err != nil {
+		if req.Action == "clipboard.set.guarded" {
+			return Response{}, ErrClipboardUncertain
+		}
 		return Response{}, safeError(ctx)
 	}
-	response, err := decodeResponse(output, req.RequestID, mode)
+	response, err := decodeResponse(output, req.RequestID, mode, req)
 	if err != nil {
 		return Response{}, err
 	}
@@ -142,23 +154,50 @@ func transportCommand() string {
 	return "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand " + base64.StdEncoding.EncodeToString(data)
 }
 
-func decodeResponse(data []byte, id, mode string) (Response, error) {
+func decodeResponse(data []byte, id, mode string, requests ...Request) (Response, error) {
+	var req Request
+	if len(requests) != 0 {
+		req = requests[0]
+	}
+	failure := ErrUnavailable
+	if req.Action == "clipboard.set.guarded" {
+		failure = ErrClipboardUncertain
+	}
 	var response Response
 	if len(data) > 512*1024 {
-		return response, ErrUnavailable
+		return response, failure
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&response) != nil || decoder.Decode(new(any)) != io.EOF || response.RequestID != id || !response.Success || response.Error != "" {
-		return Response{}, ErrUnavailable
+	if decoder.Decode(&response) != nil || decoder.Decode(new(any)) != io.EOF || response.RequestID != id {
+		return Response{}, failure
 	}
-	if mode != "remove" && (response.SessionID < 1 || !response.Elevated) {
-		return Response{}, ErrUnavailable
+	if !response.Success || response.Error != "" {
+		return Response{}, responseFailure(response, failure)
 	}
-	if len(response.Windows) > 128 || len(response.Elements) > 256 || len(response.Text) > 16384 {
-		return Response{}, ErrUnavailable
+	if !validResponseEnvelope(response, mode) {
+		return Response{}, failure
+	}
+	if !validClipboardResponse(data, response, req) {
+		return Response{}, failure
 	}
 	return response, nil
+}
+
+// Validate the session authority and bounded payload shared by all actions.
+func validResponseEnvelope(response Response, mode string) bool {
+	return (mode == "remove" || (response.SessionID >= 1 && response.Elevated)) &&
+		len(response.Windows) <= 128 && len(response.Elements) <= 256 && len(response.Text) <= 16384
+}
+
+func responseFailure(response Response, fallback error) error {
+	if !response.Success && (response.Error == "clipboard_pre_effect_rejected" || response.Error == "unsupported_action") {
+		return ErrUnavailable
+	}
+	if response.Error == "clipboard_possibly_cleared" {
+		return ErrClipboardUncertain
+	}
+	return fallback
 }
 
 func safeError(ctx context.Context) error {

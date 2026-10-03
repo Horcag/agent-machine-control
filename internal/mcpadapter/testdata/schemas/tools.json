@@ -1028,6 +1028,27 @@
               "description": "Absolute Windows executable path for launch",
               "type": "string"
             },
+            "expected_inventory": {
+              "description": "Exact sorted numeric clipboard format IDs; required together with expected_sequence, including an explicit empty array",
+              "items": {
+                "maximum": 4294967295,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "expected_sequence": {
+              "description": "Opt-in clipboard.set guard; explicit zero differs from omission",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
             "height": {
               "type": "integer"
             },
@@ -1189,6 +1210,43 @@
             "desktop": {
               "additionalProperties": false,
               "properties": {
+                "clipboard": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "empty": {
+                      "type": "boolean"
+                    },
+                    "formats": {
+                      "items": {
+                        "maximum": 4294967295,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "type": [
+                        "null",
+                        "array"
+                      ]
+                    },
+                    "inventory_complete": {
+                      "type": "boolean"
+                    },
+                    "sequence": {
+                      "maximum": 4294967295,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "sequence",
+                    "formats",
+                    "inventory_complete",
+                    "empty"
+                  ],
+                  "type": [
+                    "null",
+                    "object"
+                  ]
+                },
                 "cursor": {
                   "additionalProperties": false,
                   "properties": {
@@ -1559,6 +1617,43 @@
             "response": {
               "additionalProperties": false,
               "properties": {
+                "clipboard": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "empty": {
+                      "type": "boolean"
+                    },
+                    "formats": {
+                      "items": {
+                        "maximum": 4294967295,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "type": [
+                        "null",
+                        "array"
+                      ]
+                    },
+                    "inventory_complete": {
+                      "type": "boolean"
+                    },
+                    "sequence": {
+                      "maximum": 4294967295,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "sequence",
+                    "formats",
+                    "inventory_complete",
+                    "empty"
+                  ],
+                  "type": [
+                    "null",
+                    "object"
+                  ]
+                },
                 "cursor": {
                   "additionalProperties": false,
                   "properties": {
@@ -1824,6 +1919,43 @@
         "desktop": {
           "additionalProperties": false,
           "properties": {
+            "clipboard": {
+              "additionalProperties": false,
+              "properties": {
+                "empty": {
+                  "type": "boolean"
+                },
+                "formats": {
+                  "items": {
+                    "maximum": 4294967295,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "type": [
+                    "null",
+                    "array"
+                  ]
+                },
+                "inventory_complete": {
+                  "type": "boolean"
+                },
+                "sequence": {
+                  "maximum": 4294967295,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "sequence",
+                "formats",
+                "inventory_complete",
+                "empty"
+              ],
+              "type": [
+                "null",
+                "object"
+              ]
+            },
             "cursor": {
               "additionalProperties": false,
               "properties": {

@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -56,15 +58,62 @@ func TestGuestScriptsParseAndNativeDeclarationsCompile(t *testing.T) {
 }
 
 func runParserCheck(path, check string, data []byte) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	return runParserCheckWithTimeout(path, check, data, 15*time.Second)
+}
+
+func runParserCheckWithTimeout(path, check string, data []byte, timeout time.Duration) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	// A pwsh-launched Go test can inherit Core modules incompatible with Windows
 	// PowerShell. Restrict only this synthetic child to its own built-in modules.
 	check = `$env:PSModulePath=Join-Path $PSHOME 'Modules';` + check
 	// #nosec G204 -- fixed parser/compiler programs; executable resolved from local PATH, no guest input executed.
 	command := exec.CommandContext(ctx, path, "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(check))
+	command.WaitDelay = time.Second
 	command.Stdin = strings.NewReader(base64.StdEncoding.EncodeToString(data))
-	return command.CombinedOutput()
+	output, err := command.CombinedOutput()
+	if err != nil {
+		// CommandContext can report only the killed process's exit status.
+		// Preserve the deadline cause so it cannot look like a fixture assertion.
+		err = errors.Join(err, ctx.Err())
+	}
+	return output, err
+}
+
+func TestParserCheckDistinguishesDeadlineFromScriptFailure(t *testing.T) {
+	path, err := exec.LookPath("powershell.exe")
+	if err != nil {
+		t.Skip("Windows PowerShell unavailable for synthetic runner check")
+	}
+	t.Run("success", func(t *testing.T) {
+		output, err := runParserCheck(path, "[Console]::Out.Write('fixture_ran')", nil)
+		if err != nil || !strings.Contains(string(output), "fixture_ran") {
+			t.Fatalf("fixture did not succeed: %v %s", err, output)
+		}
+	})
+	t.Run("script_failure", func(t *testing.T) {
+		output, err := runParserCheck(path, "[Console]::Out.Write('fixture_ran');exit 7", nil)
+		var exitError *exec.ExitError
+		if errors.Is(err, context.DeadlineExceeded) || !errors.As(err, &exitError) || exitError.ExitCode() != 7 || !strings.Contains(string(output), "fixture_ran") {
+			t.Fatalf("script failure must preserve exit status 7 without a deadline: %v %s", err, output)
+		}
+	})
+	t.Run("deadline", func(t *testing.T) {
+		output, err := runParserCheckWithTimeout(path, "[Console]::Out.Write('fixture_ran')", nil, 0)
+		if !errors.Is(err, context.DeadlineExceeded) || strings.Contains(string(output), "fixture_ran") {
+			t.Fatalf("expired runner must report deadline without executing fixture: %v %s", err, output)
+		}
+	})
+	t.Run("running_deadline", func(t *testing.T) {
+		if runtime.GOOS != "windows" {
+			t.Skip("requires native Windows process cancellation, not a WSL interop launcher")
+		}
+		output, err := runParserCheckWithTimeout(path, "[Console]::Out.Write('fixture_started');[Console]::Out.Flush();Start-Sleep -Seconds 30", nil, 10*time.Second)
+		var exitError *exec.ExitError
+		if !strings.Contains(string(output), "fixture_started") || !errors.Is(err, context.DeadlineExceeded) || !errors.As(err, &exitError) {
+			t.Fatalf("terminated child must preserve both deadline and process failure: %v %s", err, output)
+		}
+	})
 }
 
 func encodePowerShell(script string) string {
