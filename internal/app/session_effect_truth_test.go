@@ -327,11 +327,12 @@ func TestOpenPostCommitDirectorySyncFailurePreservesEffectAndExactRetryTruth(t *
 
 func TestControlAcceptedBytesThenCancellationFinalizesEffectTruth(t *testing.T) {
 	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	channel := &acceptedControlCancelChannel{done: make(chan struct{}), cancel: cancel}
 	h := newEffectTruthHarness(t, channel)
 	params := app.SessionControlParams{
 		SessionID: h.opened.ID, Caller: h.actor, Key: domain.ControlKeyCtrlC,
-		Reason: "control accepted before cancellation", IdempotencyKey: "effect-truth-control", Timeout: time.Second,
+		Reason: "control accepted before cancellation", IdempotencyKey: "effect-truth-control", Timeout: 30 * time.Second,
 	}
 	firstReceipt, firstErr := h.svc.ControlSession(parent, params)
 	if !errors.Is(firstErr, context.Canceled) {

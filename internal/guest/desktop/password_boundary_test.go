@@ -10,8 +10,8 @@ import (
 func TestPasswordBoundaryUsesSharedNativePredicate(t *testing.T) {
 	data, _ := scripts.ReadFile("actions.ps1")
 	source := string(data)
-	if strings.Count(source, "[AMCDesktop]::IsPasswordControl(") != 2 {
-		t.Fatal("tree redaction and mutation refusal must both use the native password predicate")
+	if strings.Count(source, "[AMCDesktop]::IsPasswordControl(") != 3 {
+		t.Fatal("tree redaction and both mutation guards must use the native password predicate")
 	}
 	if strings.Contains(source, "if ($properties.IsPassword)") || strings.Contains(source, "-or $element.Current.IsPassword)") {
 		t.Fatal("UIA-only password checks miss legacy password edits")
@@ -59,7 +59,7 @@ namespace Windows.Automation {
 '@
 $tokens=$null;$errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseInput($data.actions,[ref]$tokens,[ref]$errors)
-foreach($name in @('Get-Bounds','Get-Elements','Invoke-DesktopAction','Invoke-ElementPattern')){
+foreach($name in @('Get-Bounds','Get-Elements','Assert-ElementBinding','Invoke-DesktopAction','Invoke-ElementPattern')){
  $function=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name-eq $name},$false)
  $body=$function.Extent.Text.Replace('[AMCDesktop]::InteractiveDesktop()','$true')
  . ([ScriptBlock]::Create($body))
@@ -67,7 +67,7 @@ foreach($name in @('Get-Bounds','Get-Elements','Invoke-DesktopAction','Invoke-El
 function Assert-ConsoleSession {}
 function Get-WindowHandle {param($id,$expected) return $script:regular.Handle}
 function New-Element($id,$name,$handle,$password){
- $element=[pscustomobject]@{ID=$id;Child=$null;Sibling=$null;Writes=0;PatternReads=0;Value='';Current=[pscustomobject]@{Name=$name;AutomationId='fixture';NativeWindowHandle=$handle.ToInt32();IsPassword=$password;IsEnabled=$true;IsOffscreen=$false;ControlType=[pscustomobject]@{ProgrammaticName='ControlType.Pane'};BoundingRectangle=[pscustomobject]@{IsEmpty=$true}}}
+ $element=[pscustomobject]@{ID=$id;Parent=$null;Child=$null;Sibling=$null;Writes=0;PatternReads=0;Value='';Current=[pscustomobject]@{ProcessId=$PID;Name=$name;AutomationId='fixture';NativeWindowHandle=$handle.ToInt32();IsPassword=$password;IsEnabled=$true;IsOffscreen=$false;ControlType=[pscustomobject]@{ProgrammaticName='ControlType.Pane'};BoundingRectangle=[pscustomobject]@{IsEmpty=$true}}}
  $element|Add-Member ScriptMethod GetRuntimeId {return @($this.ID)}
  $element|Add-Member ScriptMethod GetSupportedPatterns {return @()}
  $element|Add-Member ScriptMethod GetCurrentPattern {param($pattern) $this.PatternReads++;return $this}
@@ -103,10 +103,11 @@ try{
  try{[AMCDesktop]::IsPasswordControl($false,$stale)|Out-Null;throw 'stale_handle_allowed'}catch{if($_.Exception.Message-notmatch 'element_unavailable'){throw}}
  if(-not [AMCDesktop]::IsPasswordControl($true,[IntPtr]::Zero)){throw 'uia_password_flag_lost'}
  $elements=@((New-Element 1 'synthetic regular text' $regular.Handle $false),(New-Element 2 'synthetic masked secret' $masked.Handle $false),(New-Element 3 'synthetic system secret' $system.Handle $false),(New-Element 4 'synthetic native secret' $edit $false),(New-Element 5 'synthetic pane name' $panel.Handle $false),(New-Element 6 'synthetic uia secret' ([IntPtr]::Zero) $true),(New-Element 7 'synthetic virtual name' ([IntPtr]::Zero) $false),(New-Element 8 'synthetic native regular' $plain $false))
- for($i=1;$i-lt $elements.Count;$i++){$elements[$i-1].Child=$elements[$i]}
+ for($i=1;$i-lt $elements.Count;$i++){$elements[$i-1].Child=$elements[$i];$elements[$i].Parent=$elements[$i-1]}
  $walker=[pscustomobject]@{}
  $walker|Add-Member ScriptMethod GetFirstChild {param($element) return $element.Child}
  $walker|Add-Member ScriptMethod GetNextSibling {param($element) return $element.Sibling}
+ $walker|Add-Member ScriptMethod GetParent {param($element) return $element.Parent}
  [Windows.Automation.AutomationElement]::Root=$elements[0]
  [Windows.Automation.TreeWalker]::ControlViewWalker=$walker
  $deadline=[DateTimeOffset]::UtcNow.AddSeconds(10)
@@ -117,12 +118,12 @@ try{
  $public=$tree|ConvertTo-Json -Depth 8
  if($public.Contains('secret')){throw 'password_in_public_tree'}
  foreach($index in @(1,2,3,5)){
-  $request=[pscustomobject]@{action='uia.setvalue';window_id='1';window_identity='synthetic';element_id=([string]($index+1));text='synthetic replacement'}
+  $request=[pscustomobject]@{action='uia.setvalue';window_id='1';window_identity=('1:'+$PID+':1');element_id=([string]($index+1));text='synthetic replacement'}
   try{Invoke-DesktopAction $request|Out-Null;throw 'password_write_allowed'}catch{if($_.Exception.Message-notmatch 'element_unavailable'){throw}}
   if($elements[$index].Writes-ne 0 -or $elements[$index].PatternReads-ne 0){throw 'password_pattern_invoked'}
  }
  foreach($index in @(0,4,6,7)){
-  Invoke-DesktopAction ([pscustomobject]@{action='uia.setvalue';window_id='1';window_identity='synthetic';element_id=([string]($index+1));text='synthetic replacement'})|Out-Null
+  Invoke-DesktopAction ([pscustomobject]@{action='uia.setvalue';window_id='1';window_identity=('1:'+$PID+':1');element_id=([string]($index+1));text='synthetic replacement'})|Out-Null
   if($elements[$index].Writes-ne 1 -or $elements[$index].Value-ne 'synthetic replacement'){throw 'ordinary_write_changed'}
  }
 }finally{

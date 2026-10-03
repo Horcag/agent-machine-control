@@ -67,6 +67,29 @@ function Get-Elements($hwnd) {
     return $elements.ToArray()
 }
 
+function Assert-ElementBinding($element, $request) {
+    if ([DateTimeOffset]::UtcNow -ge $deadline) { throw 'expired_request' }
+    if (-not [AMCDesktop]::InteractiveDesktop()) { throw 'protected_desktop' }
+    $hwnd = Get-WindowHandle $request.window_id $request.window_identity
+    $expectedPID = [uint32]($request.window_identity.Split(':')[1])
+    $root = [Windows.Automation.AutomationElement]::FromHandle($hwnd)
+    $rootID = $root.GetRuntimeId() -join ':'
+    $parent = $element
+    $contained = $false
+    for ($depth = 0; $parent -and $depth -le 8; $depth++) {
+        if ($parent.Current.ProcessId -ne $expectedPID) { throw 'stale_element' }
+        if (($parent.GetRuntimeId() -join ':') -ceq $rootID) { $contained = $true; break }
+        $parent = [Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($parent)
+    }
+    if (-not $contained) { throw 'stale_element' }
+    $properties = $element.Current
+    if ($properties.ProcessId -ne $expectedPID -or -not $properties.IsEnabled -or [AMCDesktop]::IsPasswordControl($properties.IsPassword, [IntPtr]::new($properties.NativeWindowHandle))) { throw 'element_unavailable' }
+    if (($element.GetRuntimeId() -join ':') -cne $request.element_id) { throw 'stale_element' }
+    Get-WindowHandle $request.window_id $request.window_identity | Out-Null
+    if ([DateTimeOffset]::UtcNow -ge $deadline) { throw 'expired_request' }
+    if (-not [AMCDesktop]::InteractiveDesktop()) { throw 'protected_desktop' }
+}
+
 function Get-GuestCursor {
     $cursor = [AMCDesktop+CursorInfo]::new()
     $cursor.Size = [Runtime.InteropServices.Marshal]::SizeOf($cursor)
@@ -136,6 +159,13 @@ function Invoke-DesktopAction($request) {
             if ($request.x -lt $bounds.left -or $request.y -lt $bounds.top -or $request.x -ge $bounds.left + $bounds.width -or $request.y -ge $bounds.top + $bounds.height) { throw 'invalid_pointer' }
             Focus-Window $hwnd
             if ($request.axis -and $request.axis -notin @('horizontal', 'vertical')) { throw 'invalid_axis' }
+            $hwnd = Get-WindowHandle $request.window_id $request.window_identity
+            $bounds = (Get-WindowInfo $hwnd).bounds
+            if ($request.x -lt $bounds.left -or $request.y -lt $bounds.top -or $request.x -ge $bounds.left + $bounds.width -or $request.y -ge $bounds.top + $bounds.height) { throw 'invalid_pointer' }
+            if ([DateTimeOffset]::UtcNow -ge $deadline) { throw 'expired_request' }
+            if (-not [AMCDesktop]::InteractiveDesktop()) { throw 'protected_desktop' }
+            Get-WindowHandle $request.window_id $request.window_identity | Out-Null
+            if ([AMCDesktop]::GetForegroundWindow() -ne $hwnd) { throw 'foreground_denied' }
             if (-not [AMCDesktop]::SetCursorPos($request.x, $request.y) -or -not [AMCDesktop]::Wheel($request.delta, $request.axis -eq 'horizontal')) { throw 'input_failed' }
         }
         { $_ -in @('uia.tree', 'uia.invoke', 'uia.setvalue', 'uia.select', 'uia.toggle', 'uia.expand', 'uia.collapse', 'uia.scroll') } {
@@ -157,29 +187,38 @@ function Invoke-DesktopAction($request) {
 }
 
 function Invoke-ElementPattern($element, $request) {
+    $identifier = switch ($request.action) {
+        'uia.invoke' { [Windows.Automation.InvokePattern]::Pattern }
+        'uia.select' { [Windows.Automation.SelectionItemPattern]::Pattern }
+        'uia.toggle' { [Windows.Automation.TogglePattern]::Pattern }
+        'uia.expand' { [Windows.Automation.ExpandCollapsePattern]::Pattern }
+        'uia.collapse' { [Windows.Automation.ExpandCollapsePattern]::Pattern }
+        'uia.setvalue' { [Windows.Automation.ValuePattern]::Pattern }
+        'uia.scroll' { [Windows.Automation.ScrollPattern]::Pattern }
+        default { throw 'unsupported_pattern' }
+    }
+    $pattern = $element.GetCurrentPattern($identifier)
+    if ($request.action -eq 'uia.setvalue') {
+        if ($request.text.Length -gt 4096) { throw 'oversized_value' }
+        if ($pattern.Current.IsReadOnly) { throw 'element_readonly' }
+    }
+    Assert-ElementBinding $element $request
     switch ($request.action) {
-        'uia.invoke' { $element.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke() }
-        'uia.select' { $element.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern).Select() }
-        'uia.toggle' { $element.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern).Toggle() }
-        'uia.expand' { $element.GetCurrentPattern([Windows.Automation.ExpandCollapsePattern]::Pattern).Expand() }
-        'uia.collapse' { $element.GetCurrentPattern([Windows.Automation.ExpandCollapsePattern]::Pattern).Collapse() }
-        'uia.setvalue' {
-            if ($request.text.Length -gt 4096) { throw 'oversized_value' }
-            $pattern = $element.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern)
-            if ($pattern.Current.IsReadOnly) { throw 'element_readonly' }
-            $pattern.SetValue([string]$request.text)
-        }
+        'uia.invoke' { $pattern.Invoke() }
+        'uia.select' { $pattern.Select() }
+        'uia.toggle' { $pattern.Toggle() }
+        'uia.expand' { $pattern.Expand() }
+        'uia.collapse' { $pattern.Collapse() }
+        'uia.setvalue' { $pattern.SetValue([string]$request.text) }
         'uia.scroll' {
             if ($request.delta -eq 0 -or [Math]::Abs([long]$request.delta) -gt 10 -or ($request.axis -and $request.axis -notin @('horizontal', 'vertical'))) { throw 'invalid_scroll' }
-            $pattern = $element.GetCurrentPattern([Windows.Automation.ScrollPattern]::Pattern)
             $amount = [Windows.Automation.ScrollAmount]::SmallIncrement
             if ($request.delta -lt 0) { $amount = [Windows.Automation.ScrollAmount]::SmallDecrement }
             for ($index = 0; $index -lt [Math]::Abs($request.delta); $index++) {
-                if ([DateTimeOffset]::UtcNow -ge $deadline) { throw 'expired_request' }
+                Assert-ElementBinding $element $request
                 if ($request.axis -eq 'horizontal') { $pattern.Scroll($amount, [Windows.Automation.ScrollAmount]::NoAmount) }
                 else { $pattern.Scroll([Windows.Automation.ScrollAmount]::NoAmount, $amount) }
             }
         }
-        default { throw 'unsupported_pattern' }
     }
 }

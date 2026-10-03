@@ -134,7 +134,7 @@ func TestCloseSessionPartialEffectIsDurableExactRetryDoesNotDuplicateAndNewKeyRe
 	h := newCloseRetryHarness(t)
 	firstParams := app.SessionCloseParams{
 		SessionID: h.opened.ID, Caller: h.actor, Reason: "first bounded close",
-		IdempotencyKey: "close-timeout-original", Timeout: time.Second,
+		IdempotencyKey: "close-timeout-original", Timeout: 30 * time.Second,
 	}
 	firstObs, firstReceipt, firstErr := h.svc.CloseSession(context.Background(), firstParams)
 	if !errors.Is(firstErr, context.DeadlineExceeded) {
@@ -159,7 +159,7 @@ func TestCloseSessionPartialEffectIsDurableExactRetryDoesNotDuplicateAndNewKeyRe
 
 	closed, closeReceipt, err := h.svc.CloseSession(context.Background(), app.SessionCloseParams{
 		SessionID: h.opened.ID, Caller: h.actor, Reason: "retry cleanup with new key",
-		IdempotencyKey: "close-timeout-retry-new", Timeout: time.Second,
+		IdempotencyKey: "close-timeout-retry-new", Timeout: 30 * time.Second,
 	})
 	if err != nil || closeReceipt == nil || closed.State != domain.SessionStateClosed {
 		t.Fatalf("new-key cleanup retry = obs %+v receipt %+v err %v", closed, closeReceipt, err)
