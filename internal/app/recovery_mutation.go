@@ -119,6 +119,9 @@ func (s *RecoveryService) executeMutation(
 	// 1. Idempotency Check & 2. Audit Writability Check
 	if cached, err := s.checkPreconditions(ctx, op); err != nil || cached != nil {
 		if cached != nil {
+			if req.cachedReceipt != nil {
+				*req.cachedReceipt = true
+			}
 			return *cached, cachedRecoveryOutcomeError(cached.Outcome)
 		}
 		return s.preProviderFailure(ctx, op, fp, policy.Decision{}, s.now(), err, "", req.ApprovalID)
@@ -151,6 +154,9 @@ func (s *RecoveryService) executeMutation(
 	}
 
 	// 8. Lifecycle hooks & Provider Execution
+	if req.admitted != nil {
+		*req.admitted = true
+	}
 	if err := runLifecycleHooks(ctx, req); err != nil {
 		abortErr := s.compensatePreProviderAbort(ctx, req, approvalConsumed, releaseLease, err)
 		return s.preProviderFailure(ctx, op, fp, decision, now, abortErr, rollbackRef, req.ApprovalID)

@@ -74,7 +74,7 @@ func TestClipboardUncertaintyClientRedaction(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls++
 		w.WriteHeader(http.StatusConflict)
-		_, _ = w.Write([]byte(`{"error":{"category":"clipboard_possibly_cleared","message":"synthetic-private-error"}}`))
+		_, _ = w.Write([]byte(`{"schema_version":"1","error":{"category":"clipboard_possibly_cleared","message":"synthetic-private-error"}}`))
 	}))
 	defer srv.Close()
 	_, err := New(srv.URL, "synthetic-token").DesktopAction(t.Context(), app.DesktopActionRequest{})

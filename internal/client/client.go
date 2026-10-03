@@ -127,6 +127,9 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, o
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
+		if desktop, ok := out.(*app.DesktopActionResult); ok {
+			return mapDesktopHTTPError(resp, desktop)
+		}
 		return mapHTTPError(resp)
 	}
 
@@ -167,15 +170,19 @@ func mapHTTPError(resp *http.Response) error {
 	if err := dec.Decode(&env); errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return err
 	}
+	return mappedHTTPError(resp.StatusCode, env)
+}
+
+func mappedHTTPError(statusCode int, env daemon.ErrorEnvelope) error {
 
 	msg := env.Error.Message
 	if msg == "" {
-		msg = fmt.Sprintf("daemon returned HTTP %d", resp.StatusCode)
+		msg = fmt.Sprintf("daemon returned HTTP %d", statusCode)
 	}
 	cat := env.Error.Category
 
 	apiErr := &APIError{
-		StatusCode: resp.StatusCode,
+		StatusCode: statusCode,
 		Category:   cat,
 		Message:    msg,
 	}
@@ -186,7 +193,7 @@ func mapHTTPError(resp *http.Response) error {
 		return fmt.Errorf("%w: %w", domain.ErrClipboardUncertain, apiErr)
 	}
 
-	switch resp.StatusCode {
+	switch statusCode {
 	case http.StatusBadRequest:
 		return fmt.Errorf("%w: %w", ErrInvalidArgument, apiErr)
 	case http.StatusUnauthorized, http.StatusForbidden:
@@ -200,7 +207,7 @@ func mapHTTPError(resp *http.Response) error {
 	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable:
 		return fmt.Errorf("%w: %w", ErrDaemonUnavailable, apiErr)
 	default:
-		if resp.StatusCode >= 500 {
+		if statusCode >= 500 {
 			return fmt.Errorf("%w: %w", ErrMalformedResponse, apiErr)
 		}
 		return apiErr

@@ -146,6 +146,9 @@ func (a *Adapter) DesktopAct(ctx context.Context, call *mcp.CallToolRequest, in 
 		out.Result, err = cl.DesktopAction(ctx, app.DesktopActionRequest{Target: in.Target, Request: req, Reason: in.Reason, IdempotencyKey: in.IdempotencyKey, LabGrantID: in.LabGrantID})
 	}
 	if err != nil {
+		if in.Action != nil && out.Result.Receipt != nil {
+			return operationToolError(err, "", string(out.Result.Receipt.ReceiptID)), out, nil
+		}
 		return mcpToolError(err), out, nil
 	}
 	return a.observeDesktopActionResult(ctx, call, in, out)

@@ -66,19 +66,21 @@ func (s *Server) dispatchConsole(w http.ResponseWriter, r *http.Request, path st
 }
 
 func writeConsoleError(w http.ResponseWriter, err error) {
+	status, field := consoleError(err)
+	writeError(w, status, field.Category, field.Message)
+}
+
+func consoleError(err error) (int, ErrorField) {
 	if errors.Is(err, domain.ErrClipboardUncertain) {
 		message, _ := domain.CanonicalFailureMessage(domain.FailureCategoryClipboardUncertain)
-		writeError(w, http.StatusConflict, domain.FailureCategoryClipboardUncertain, message)
-		return
+		return http.StatusConflict, ErrorField{Category: domain.FailureCategoryClipboardUncertain, Message: message}
 	}
 	if denied, ok := errors.AsType[*app.PolicyDeniedError](err); ok {
-		writeError(w, http.StatusForbidden, string(denied.Reason), denied.Message)
-		return
+		return http.StatusForbidden, ErrorField{Category: string(denied.Reason), Message: denied.Message}
 	}
-	if isTargetResolutionFailure(err) {
-		writeTargetResolutionError(w, err)
-		return
+	if class, known := classifyTargetFailure(err); known {
+		return class.status, ErrorField{Category: class.category, Message: class.message}
 	}
 	// Provider messages can contain guest input or framebuffer details.
-	writeError(w, http.StatusBadRequest, "console_failed", "console request failed")
+	return http.StatusBadRequest, ErrorField{Category: "console_failed", Message: "console request failed"}
 }
