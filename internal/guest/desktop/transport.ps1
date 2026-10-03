@@ -1,3 +1,4 @@
+$dispatchPossible = $false
 try {
     if ($null -eq $request) { throw 'invalid_request' }
     $deadline = Assert-Request $request
@@ -73,6 +74,8 @@ try {
         Write-PrivateFile $tempPath ([Text.Encoding]::UTF8.GetBytes(($request | ConvertTo-Json -Compress -Depth 12)))
         $ownsTemp = $true
         Assert-Deadline $deadline
+        # The worker may consume the request immediately after publication.
+        $dispatchPossible = $true
         [IO.File]::Move($tempPath, $inputPath)
         $ownsInput = $true
         $ownsTemp = $false
@@ -91,5 +94,7 @@ try {
     }
 } catch {
     # Never expose exceptions containing paths, UIA properties, clipboard or typed input.
-    Write-Response @{request_id = $request.request_id; success = $false; error = 'desktop_unavailable'}
+    $category = 'desktop_unavailable'
+    if ($null -ne $request -and $request.action -ceq 'clipboard.set.guarded' -and -not $dispatchPossible) { $category = 'clipboard_pre_effect_rejected' }
+    Write-Response @{request_id = $request.request_id; success = $false; error = $category}
 }

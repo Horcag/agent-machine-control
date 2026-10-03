@@ -114,11 +114,13 @@ public static class AMCClipboard {
         IntPtr handle = Native.GetClipboardData(13);
         if (handle == IntPtr.Zero) throw new InvalidOperationException("clipboard_read_failed");
         ulong size = Native.GlobalSize(handle).ToUInt64();
-        if (size < 2 || size % 2 != 0 || size > 8194) throw new InvalidOperationException("oversized_clipboard");
+        if (size < 2) throw new InvalidOperationException("oversized_clipboard");
         IntPtr pointer = Native.GlobalLock(handle);
         if (pointer == IntPtr.Zero) throw new InvalidOperationException("clipboard_read_failed");
         try {
-            byte[] bytes = new byte[(int)size]; Marshal.Copy(pointer, bytes, 0, bytes.Length);
+            // GlobalSize is allocation capacity, including possible slack or odd padding.
+            int copySize = (int)Math.Min(size, 8194UL); copySize -= copySize % 2;
+            byte[] bytes = new byte[copySize]; Marshal.Copy(pointer, bytes, 0, bytes.Length);
             int end = 0; while (end < bytes.Length && (bytes[end] != 0 || bytes[end + 1] != 0)) end += 2;
             if (end == bytes.Length) throw new InvalidOperationException("malformed_clipboard_text");
             return new UnicodeEncoding(false, false, true).GetString(bytes, 0, end);
@@ -144,7 +146,7 @@ public static class AMCClipboard {
         for (int i = 0; i < inventory.Length; i++)
             if (inventory[i] == 0 || (i > 0 && inventory[i] <= inventory[i - 1])) throw new InvalidOperationException("invalid_clipboard_guard");
         byte[] payload = new UnicodeEncoding(false, false, true).GetBytes(text + "\0");
-        IntPtr memory = IntPtr.Zero, owner = IntPtr.Zero; bool opened = false, cleared = false;
+        IntPtr memory = IntPtr.Zero, owner = IntPtr.Zero; bool opened = false, effectPossible = false;
         try {
             if (text.Length != 0) {
                 memory = Native.GlobalAlloc(0x42, new UIntPtr((uint)payload.Length));
@@ -165,8 +167,8 @@ public static class AMCClipboard {
             for (int i = 0; i < actual.Length; i++)
                 if (actual[i] != inventory[i]) throw new InvalidOperationException("clipboard_conflict");
             if (DateTime.UtcNow >= deadline) throw new InvalidOperationException("expired_request");
+            effectPossible = true;
             if (!Native.EmptyClipboard()) throw new InvalidOperationException("clipboard_clear_failed");
-            cleared = true;
             if (memory != IntPtr.Zero) {
                 if (Native.SetClipboardData(13, memory) == IntPtr.Zero) throw new InvalidOperationException("clipboard_possibly_cleared");
                 memory = IntPtr.Zero; // System now owns the transferred allocation.
@@ -175,7 +177,7 @@ public static class AMCClipboard {
             if (state.Text != text || (text.Length == 0 && !state.Empty)) throw new InvalidOperationException("clipboard_possibly_cleared");
             return state;
         } catch {
-            if (cleared) throw new InvalidOperationException("clipboard_possibly_cleared");
+            if (effectPossible) throw new InvalidOperationException("clipboard_possibly_cleared");
             throw;
         } finally {
             if (opened) Native.CloseClipboard();

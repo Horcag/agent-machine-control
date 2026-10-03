@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 	"time"
@@ -203,4 +204,103 @@ func validExecutable(path string) bool {
 		return false
 	}
 	return path[1:3] == ":\\" && strings.HasSuffix(strings.ToLower(path), ".exe") && !strings.ContainsAny(path, "\x00\r\n\"")
+}
+
+type clipboardWireMetadata struct {
+	Sequence *uint32   `json:"sequence"`
+	Formats  *[]uint32 `json:"formats"`
+	Complete *bool     `json:"inventory_complete"`
+	Empty    *bool     `json:"empty"`
+}
+
+// Old helpers may return only text for a plain get; guarded writes require the
+// complete metadata protocol and exact readback from the helper's clipboard lock.
+func validClipboardResponse(data []byte, response Response, req Request) bool {
+	guarded := req.Action == "clipboard.set.guarded"
+	if !guarded && req.Action != "clipboard.get" {
+		return true
+	}
+	if !utf8.Valid(data) || !validClipboardText(response.Text) {
+		return false
+	}
+	var wire struct {
+		Text      json.RawMessage        `json:"text"`
+		Clipboard *clipboardWireMetadata `json:"clipboard"`
+	}
+	if json.Unmarshal(data, &wire) != nil || !validJSONUnicode(wire.Text) {
+		return false
+	}
+	if (guarded || wire.Clipboard != nil) && len(wire.Text) == 0 {
+		return false
+	}
+	if guarded && response.Text != req.Text {
+		return false
+	}
+	if wire.Clipboard == nil {
+		var fields map[string]json.RawMessage
+		_ = json.Unmarshal(data, &fields)
+		_, present := fields["clipboard"]
+		return !guarded && !present
+	}
+	return validClipboardInventory(wire.Clipboard, response.Text, guarded && req.Text == "")
+}
+
+func validClipboardInventory(meta *clipboardWireMetadata, text string, clearing bool) bool {
+	if meta.Sequence == nil || meta.Formats == nil || meta.Complete == nil || !*meta.Complete || meta.Empty == nil {
+		return false
+	}
+	formats := *meta.Formats
+	if len(formats) > 256 || *meta.Empty != (len(formats) == 0) {
+		return false
+	}
+	if clearing {
+		return len(formats) == 0
+	}
+	hasUnicodeText := false
+	for i, format := range formats {
+		if format == 0 || (i > 0 && format <= formats[i-1]) {
+			return false
+		}
+		hasUnicodeText = hasUnicodeText || format == 13
+	}
+	return text == "" || hasUnicodeText
+}
+
+func validClipboardText(text string) bool {
+	return utf8.ValidString(text) && !strings.ContainsRune(text, 0) && len(utf16.Encode([]rune(text))) <= 4096
+}
+
+// encoding/json replaces lone escaped surrogates with U+FFFD. Check the wire
+// string first so malformed UTF-16 cannot be accepted as a successful readback.
+func validJSONUnicode(raw json.RawMessage) bool {
+	if len(raw) != 0 && raw[0] != '"' {
+		return false
+	}
+	for i := 0; i < len(raw); i++ {
+		if raw[i] != '\\' {
+			continue
+		}
+		i++
+		if i >= len(raw) || raw[i] != 'u' {
+			continue
+		}
+		// The caller has already decoded this JSON, proving the escape is six bytes.
+		code, _ := strconv.ParseUint(string(raw[i+1:i+5]), 16, 16)
+		i += 4
+		if code >= 0xdc00 && code <= 0xdfff {
+			return false
+		}
+		if code < 0xd800 || code > 0xdbff {
+			continue
+		}
+		if i+6 >= len(raw) || string(raw[i+1:i+3]) != "\\u" {
+			return false
+		}
+		low, _ := strconv.ParseUint(string(raw[i+3:i+7]), 16, 16)
+		if low < 0xdc00 || low > 0xdfff {
+			return false
+		}
+		i += 6
+	}
+	return true
 }

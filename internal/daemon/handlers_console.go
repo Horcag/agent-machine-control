@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/Horcag/agent-machine-control/internal/app"
+	"github.com/Horcag/agent-machine-control/internal/domain"
 )
 
 func (s *Server) dispatchConsole(w http.ResponseWriter, r *http.Request, path string) {
@@ -65,6 +66,11 @@ func (s *Server) dispatchConsole(w http.ResponseWriter, r *http.Request, path st
 }
 
 func writeConsoleError(w http.ResponseWriter, err error) {
+	if errors.Is(err, domain.ErrClipboardUncertain) {
+		message, _ := domain.CanonicalFailureMessage(domain.FailureCategoryClipboardUncertain)
+		writeError(w, http.StatusConflict, domain.FailureCategoryClipboardUncertain, message)
+		return
+	}
 	if denied, ok := errors.AsType[*app.PolicyDeniedError](err); ok {
 		writeError(w, http.StatusForbidden, string(denied.Reason), denied.Message)
 		return

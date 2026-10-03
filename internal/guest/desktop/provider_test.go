@@ -35,7 +35,20 @@ func (r *runnerFake) RunCommand(ctx context.Context, _ domain.MachineRef, comman
 	if err := json.Unmarshal(input, &req); err != nil {
 		return nil, err
 	}
-	return json.Marshal(Response{RequestID: req.RequestID, Success: true, SessionID: 1, Elevated: true})
+	response := Response{RequestID: req.RequestID, Success: true, SessionID: 1, Elevated: true}
+	if req.Action == "clipboard.set.guarded" || req.Action == "clipboard.get" {
+		response.Text = req.Text
+		formats := []uint32{}
+		if req.Text != "" {
+			formats = []uint32{13}
+		}
+		response.Clipboard = &domain.DesktopClipboard{Formats: formats, InventoryComplete: true, Empty: len(formats) == 0}
+	}
+	data, err := json.Marshal(response)
+	if response.Clipboard != nil && req.Text == "" {
+		data = append([]byte(`{"text":"",`), data[1:]...)
+	}
+	return data, err
 }
 
 func request(action string) Request {

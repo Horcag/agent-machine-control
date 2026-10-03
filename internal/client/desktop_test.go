@@ -2,9 +2,11 @@ package client
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/Horcag/agent-machine-control/internal/app"
@@ -64,5 +66,20 @@ func TestDesktopClientAuthenticatedContracts(t *testing.T) {
 				t.Fatalf("response=%+v calls=%d err=%v", got, calls, err)
 			}
 		})
+	}
+}
+
+func TestClipboardUncertaintyClientRedaction(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":{"category":"clipboard_possibly_cleared","message":"synthetic-private-error"}}`))
+	}))
+	defer srv.Close()
+	_, err := New(srv.URL, "synthetic-token").DesktopAction(t.Context(), app.DesktopActionRequest{})
+	message, _ := domain.CanonicalFailureMessage(domain.FailureCategoryClipboardUncertain)
+	if !errors.Is(err, domain.ErrClipboardUncertain) || !strings.Contains(err.Error(), message) || strings.Contains(err.Error(), "synthetic-private-error") || calls != 1 {
+		t.Fatal(err, calls)
 	}
 }
