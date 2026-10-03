@@ -344,7 +344,7 @@ func TestClipboardUncertaintyDesktopMCP(t *testing.T) {
 	a := desktopMCPServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		calls++
 		w.WriteHeader(http.StatusConflict)
-		_, _ = w.Write([]byte(`{"error":{"category":"clipboard_possibly_cleared","message":"synthetic-private-error"}}`))
+		_, _ = w.Write([]byte(`{"schema_version":"1","error":{"category":"clipboard_possibly_cleared","message":"synthetic-private-error"}}`))
 	})
 	deadline := time.Now().Add(time.Minute).UTC().Format(time.RFC3339Nano)
 	result, _, err := a.DesktopAct(t.Context(), nil, DesktopActInput{Action: &domain.DesktopRequest{Action: "clipboard.set"}, LabGrantID: "synthetic-grant", Deadline: deadline})

@@ -57,6 +57,9 @@ type MutationRequest struct {
 	ApprovalError  error
 	OnAdmitted     func(ctx context.Context) error
 	OnRunning      func(ctx context.Context) error
+	// Set only when the normal identity-bound receipt lookup returns a terminal result.
+	cachedReceipt      *bool
+	providerDispatched *bool
 }
 
 // RecoveryService orchestrates in-process direct recovery operations, policy, leases, and receipts.

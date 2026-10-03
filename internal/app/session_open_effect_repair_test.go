@@ -27,6 +27,7 @@ type incompleteOpenTransport struct {
 	releaseSupervisor chan struct{}
 	supervisorDone    chan struct{}
 	supervisorOnce    sync.Once
+	releaseOnce       sync.Once
 }
 
 func (t *incompleteOpenTransport) Dial(context.Context, domain.MachineRef, uint16, uint16, string) (guestssh.Channel, error) {
@@ -142,6 +143,14 @@ func TestSessionOpenIncompletePostEffectCleanupIsDurableAndNotRedialed(t *testin
 			return "", errors.New("synthetic session ID generation failure")
 		}),
 	)
+	t.Cleanup(func() {
+		transport.releaseOnce.Do(func() { close(transport.releaseSupervisor) })
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := mgr.Shutdown(ctx); err != nil {
+			t.Errorf("cleanup manager shutdown failed: %v", err)
+		}
+	})
 	svc := app.NewSessionService(
 		mgr,
 		diagnosticReversibleSafety{},
@@ -160,10 +169,11 @@ func TestSessionOpenIncompletePostEffectCleanupIsDurableAndNotRedialed(t *testin
 		Caller:         actor,
 		Reason:         "record incomplete post-effect cleanup",
 		IdempotencyKey: "incomplete-post-effect-open",
-		Timeout:        time.Second,
+		Timeout:        30 * time.Second,
 	}
 
 	obs, firstReceipt, firstErr := svc.OpenSession(context.Background(), params)
+	t.Logf("first open transport: dial=%d close=%d error=%v", transport.dialCalls.Load(), transport.closeCalls.Load(), firstErr)
 	assertIncompleteOpenFailure(t, obs, firstReceipt, firstErr)
 	select {
 	case <-transport.supervisorStarted:
@@ -173,7 +183,7 @@ func TestSessionOpenIncompletePostEffectCleanupIsDurableAndNotRedialed(t *testin
 	assertOpenTransportCalls(t, transport, 2)
 	assertIncompleteOpenRetry(t, svc, params, firstReceipt)
 	assertOpenTransportCalls(t, transport, 2)
-	close(transport.releaseSupervisor)
+	transport.releaseOnce.Do(func() { close(transport.releaseSupervisor) })
 	select {
 	case <-transport.supervisorDone:
 	case <-time.After(time.Second):

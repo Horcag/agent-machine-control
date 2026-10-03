@@ -3,8 +3,10 @@ package client
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 
 	"github.com/Horcag/agent-machine-control/internal/app"
@@ -54,5 +56,58 @@ func TestConsoleInputCarriesApprovalAndReturnsReceipt(t *testing.T) {
 	got, err := New(srv.URL, "synthetic-token").ConsoleInput(t.Context(), wanted)
 	if err != nil || got.ReceiptID != "synthetic-receipt" || got.Outcome.Status != domain.OutcomeSuccess {
 		t.Fatalf("receipt=%+v err=%v", got, err)
+	}
+}
+
+func TestConsoleInputResultSuccessKeepsFlatWireAndCacheMetadata(t *testing.T) {
+	env := desktopFailureEnvelope()
+	env.Receipt.OperationKind = "console.input"
+	env.Receipt.Outcome = domain.ExecutionOutcome{Status: domain.OutcomeSuccess}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-AMC-Cached-Receipt", "true")
+		_ = json.NewEncoder(w).Encode(env.Receipt)
+	}))
+	defer srv.Close()
+	out, err := New(srv.URL, "synthetic-token").ConsoleInputResult(t.Context(), app.ConsoleInputRequest{})
+	if err != nil || !out.CachedReceipt || !reflect.DeepEqual(out.Receipt, env.Receipt) {
+		t.Fatal(out, err)
+	}
+}
+
+func TestConsoleInputFailureRejectsUnsafeEvidence(t *testing.T) {
+	for _, variant := range []string{"wrong operation", "class", "legacy abort", "key", "target", "cached without receipt"} {
+		t.Run(variant, func(t *testing.T) {
+			env := desktopFailureEnvelope()
+			env.Receipt.OperationKind = "console.input"
+			req := app.ConsoleInputRequest{Target: "default", IdempotencyKey: env.Receipt.IdempotencyKey}
+			status := http.StatusBadRequest
+			switch variant {
+			case "wrong operation":
+				env.Receipt.OperationKind = "desktop.action"
+			case "class":
+				env.Receipt.Class = domain.ClassObserve
+			case "legacy abort":
+				env.Receipt.EvidenceRefs = nil
+				env.Receipt.Outcome = domain.ExecutionOutcome{Status: domain.OutcomeAborted, ErrorCategory: domain.FailureCategoryDeadlineExceeded, ErrorMessage: "operation deadline exceeded"}
+				env.Error.Category = "timeout"
+				status = http.StatusGatewayTimeout
+			case "key":
+				req.IdempotencyKey = "different"
+			case "target":
+				req.Target = "local:bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb"
+			case "cached without receipt":
+				env.Receipt = nil
+				env.CachedReceipt = true
+			}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(status)
+				_ = json.NewEncoder(w).Encode(env)
+			}))
+			defer srv.Close()
+			out, err := New(srv.URL, "synthetic-token").ConsoleInputResult(t.Context(), req)
+			if !errors.Is(err, ErrMalformedResponse) || out.Receipt != nil || out.CachedReceipt {
+				t.Fatal(out, err)
+			}
+		})
 	}
 }
