@@ -31,7 +31,7 @@ func TestConsoleRejectsBeforeExecutor(t *testing.T) {
 	if _, err := adapter.CaptureConsole(context.Background(), "bad", 1, 1); err == nil {
 		t.Fatal("accepted GUID")
 	}
-	for _, input := range []domain.ConsoleInput{{Kind: "scroll"}, {Kind: "type", Text: strings.Repeat("x", 257)}, {Kind: "key", Key: "a+ctrl"}, {Kind: "click", Button: "left"}, {Kind: "move", FrameID: "frame", X: -1}} {
+	for _, input := range []domain.ConsoleInput{{Kind: "scroll"}, {Kind: "type", Text: strings.Repeat("x", 257)}, {Kind: "key", Key: "a+ctrl"}, {Kind: "click", Button: "left"}, {Kind: "move", FrameID: "frame", X: -1}, {Kind: "drag", FrameID: "frame", Button: "left", DurationMS: 5001}, {Kind: "key", Key: "enter", DurationMS: 400}} {
 		if err := adapter.SendConsoleInput(context.Background(), consoleTestID, input); err == nil {
 			t.Fatal("accepted input")
 		}

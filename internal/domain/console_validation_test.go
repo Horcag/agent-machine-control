@@ -38,3 +38,29 @@ func TestConsoleFunctionKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestConsoleDragDurationValidation(t *testing.T) {
+	for _, duration := range []int{0, 20, 401, 5000} {
+		input := ConsoleInput{Kind: "drag", FrameID: "frame", Button: "left", DurationMS: duration}
+		if err := input.Validate(); err != nil {
+			t.Fatalf("duration %d rejected: %v", duration, err)
+		}
+	}
+	for _, duration := range []int{-1, 1, 19, 5001} {
+		if (ConsoleInput{Kind: "drag", FrameID: "frame", Button: "left", DurationMS: duration}).Validate() == nil {
+			t.Fatalf("unbounded duration %d accepted", duration)
+		}
+	}
+	for _, input := range []ConsoleInput{{Kind: "move", FrameID: "frame"}, {Kind: "click", FrameID: "frame", Button: "left"}, {Kind: "key", Key: "enter"}, {Kind: "type", Text: "sample"}} {
+		input.DurationMS = 400
+		if input.Validate() == nil {
+			t.Fatalf("duration accepted for %s", input.Kind)
+		}
+	}
+	first := ConsoleInput{Kind: "drag", FrameID: "frame", Button: "left", DurationMS: 400}
+	second := first
+	second.DurationMS = 5000
+	if ConsoleInputParameters(first)["input_sha256"] == ConsoleInputParameters(second)["input_sha256"] {
+		t.Fatal("changed duration reused authorization/idempotency fingerprint")
+	}
+}

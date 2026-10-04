@@ -659,6 +659,10 @@
             "delta": {
               "type": "integer"
             },
+            "duration_ms": {
+              "description": "Drag movement duration in milliseconds: 20 to 5000; zero preserves the 400ms default; only valid for drag",
+              "type": "integer"
+            },
             "frame_id": {
               "type": "string"
             },
@@ -1106,6 +1110,10 @@
               "type": "integer"
             },
             "delta": {
+              "type": "integer"
+            },
+            "duration_ms": {
+              "description": "Drag movement duration in milliseconds: 20 to 5000; zero preserves the 400ms default; only valid for drag",
               "type": "integer"
             },
             "frame_id": {

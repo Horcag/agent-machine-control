@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"io"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -21,9 +22,12 @@ func TestConsoleGestureScriptsApplyAndReleaseSyntheticDevices(t *testing.T) {
 		t.Skip("native PowerShell unavailable")
 	}
 	for _, test := range []consoleGestureCase{
-		{"double", "click", 2, 0, true, 2, 1},
-		{"drag", "drag", 0, 0, true, 1, 21},
-		{"failed_drag", "drag", 0, 3, false, 1, 3},
+		{"double", "click", 2, 0, true, 2, 1, 0},
+		{"drag", "drag", 0, 0, true, 1, 21, 0},
+		{"short_drag", "drag", 0, 0, true, 1, 21, 20},
+		{"fractional_step_drag", "drag", 0, 0, true, 1, 21, 401},
+		{"long_drag", "drag", 0, 0, true, 1, 21, 5000},
+		{"failed_drag", "drag", 0, 3, false, 1, 3, 5000},
 	} {
 		t.Run(test.name, func(t *testing.T) { runSyntheticConsoleGesture(t, path, test) })
 	}
@@ -34,6 +38,7 @@ type consoleGestureCase struct {
 	count, failAt  int
 	success        bool
 	presses, moves int
+	duration       int
 }
 
 func runSyntheticConsoleGesture(t *testing.T, path string, test consoleGestureCase) {
@@ -41,6 +46,7 @@ func runSyntheticConsoleGesture(t *testing.T, path string, test consoleGestureCa
 
 	fixture := `class SyntheticDevice {
     static [Collections.Generic.List[string]] $Events=[Collections.Generic.List[string]]::new()
+    static [Collections.Generic.List[int]] $Sleeps=[Collections.Generic.List[int]]::new()
     static [int] $Moves=0
     static [int] $FailAt=0
     [object] PressKey([uint32]$key) { [SyntheticDevice]::Events.Add('press:'+$key);return @{ReturnValue=0} }
@@ -54,18 +60,20 @@ func runSyntheticConsoleGesture(t *testing.T, path string, test consoleGestureCa
    $ProgressPreference='SilentlyContinue';$r=([Console]::In.ReadToEnd()|ConvertFrom-Json);$id=$r.vm_id;[SyntheticDevice]::FailAt=$r.fail_at
    function GuestDevice($kind) { if($kind -eq 'Msvm_VideoHead'){return @{CurrentHorizontalResolution=200;CurrentVerticalResolution=200}};return [SyntheticDevice]::new() }
    function RequireSuccess($result){if($result.ReturnValue -ne 0){throw 'synthetic failure'}}
+   function Start-Sleep([int]$Milliseconds) { [SyntheticDevice]::Sleeps.Add($Milliseconds) }
    [Console]::Out.WriteLine('amc-gesture-ready')
    $result=& {
    ` + strings.TrimPrefix(ScriptConsoleInput, scriptConsolePrelude) + `
    }
-   @{result=($result|ConvertFrom-Json);events=@([SyntheticDevice]::Events)}|ConvertTo-Json -Compress -Depth 5`
-	data, _ := json.Marshal(map[string]any{"vm_id": consoleTestID, "keys": []int{17, 16}, "fail_at": test.failAt, "input": map[string]any{"kind": test.kind, "x": 10, "y": 20, "to_x": 110, "to_y": 120, "button": "left", "count": test.count}})
+   @{result=($result|ConvertFrom-Json);events=@([SyntheticDevice]::Events);sleeps=@([SyntheticDevice]::Sleeps)}|ConvertTo-Json -Compress -Depth 5`
+	data, _ := json.Marshal(map[string]any{"vm_id": consoleTestID, "keys": []int{17, 16}, "fail_at": test.failAt, "input": map[string]any{"kind": test.kind, "x": 10, "y": 20, "to_x": 110, "to_y": 120, "button": "left", "count": test.count, "duration_ms": test.duration}})
 	output := runReadyConsoleGesture(t, path, fixture, data)
 	var result struct {
 		Result struct {
 			Success bool `json:"success"`
 		} `json:"result"`
 		Events []string `json:"events"`
+		Sleeps []int    `json:"sleeps"`
 	}
 	if json.Unmarshal(output, &result) != nil || result.Result.Success != test.success {
 		t.Fatalf("unexpected result %s", output)
@@ -89,6 +97,22 @@ func runSyntheticConsoleGesture(t *testing.T, path string, test consoleGestureCa
 	if test.name == "drag" && result.Events[len(result.Events)-4] != "move:110,120" {
 		t.Fatal("drag missed destination")
 	}
+	if test.kind == "drag" && test.success {
+		if !slices.Equal(result.Sleeps, expectedDragDelays(test.duration)) || result.Events[len(result.Events)-4] != "move:110,120" {
+			t.Fatalf("duration/end mismatch: delays=%v events=%v", result.Sleeps, result.Events)
+		}
+	}
+}
+
+func expectedDragDelays(duration int) []int {
+	if duration == 0 {
+		duration = 400
+	}
+	delays := make([]int, 20)
+	for step := range delays {
+		delays[step] = duration*(step+1)/20 - duration*step/20
+	}
+	return delays
 }
 
 // runReadyConsoleGesture bounds cold startup separately from synthetic execution.

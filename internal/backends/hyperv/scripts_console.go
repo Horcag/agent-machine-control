@@ -56,6 +56,11 @@ const ScriptConsoleInput = scriptConsolePrelude + scriptConsoleRelease + `
 $keyboard=$null; $mouse=$null; $held=@(); $buttonHeld=$false; $button=0; $ok=$false
 try {
     $input = $r.input
+    $duration=400
+    if ($input.duration_ms) {
+        $duration=[int]$input.duration_ms
+        if ($input.kind -ne 'drag' -or $duration -lt 20 -or $duration -gt 5000) { throw 'Invalid drag duration' }
+    }
     if ($input.kind -ne 'key' -and @($r.keys).Count -gt 0) {
         $keyboard = GuestDevice 'Msvm_Keyboard'
         foreach ($key in $r.keys) { $held += [uint32]$key; RequireSuccess ($keyboard.PressKey([uint32]$key)) }
@@ -88,7 +93,7 @@ try {
                 if ($input.kind -eq 'drag') {
                     for ($step=1; $step -le 20; $step++) {
                         RequireSuccess ($mouse.SetAbsolutePosition([int]($x+([int]$input.to_x-$x)*$step/20),[int]($y+([int]$input.to_y-$y)*$step/20)))
-                        Start-Sleep -Milliseconds 20
+                        Start-Sleep -Milliseconds ([int][Math]::Floor($duration*$step/20)-[int][Math]::Floor($duration*($step-1)/20))
                     }
                 }
                 if ($input.kind -eq 'click' -and [int]$input.count -eq 2) {
