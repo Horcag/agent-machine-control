@@ -27,7 +27,7 @@ func (d *LocalDaemon) Healthy(ctx context.Context, stateDir string) (bool, error
 	if err != nil {
 		return false, err
 	}
-	record, present, err := d.readOwnedEndpoint(sd.DaemonDir())
+	record, present, err := d.readReadinessSnapshot(ctx, sd.DaemonDir())
 	if err != nil {
 		return false, err
 	}
@@ -35,7 +35,7 @@ func (d *LocalDaemon) Healthy(ctx context.Context, stateDir string) (bool, error
 		return false, nil
 	}
 	runtimeID, _, _ := d.identity.CurrentIdentity()
-	if record.RuntimeID == "" || record.RuntimeID != runtimeID || record.ProcessStartTime == "" {
+	if runtimeID == "" || record.ProcessStartTime == "" {
 		return false, app.ErrBootstrapDrift
 	}
 	alive, err := d.liveness.IsAlive(record.PID, record.ProcessStartTime)
@@ -57,6 +57,59 @@ func (d *LocalDaemon) Healthy(ctx context.Context, stateDir string) (bool, error
 		return false, app.ErrBootstrapDrift
 	}
 	return true, nil
+}
+
+func (d *LocalDaemon) readReadinessSnapshot(ctx context.Context, daemonDir string) (daemon.EndpointRecord, bool, error) {
+	guard, err := daemon.LockSingletonObservation(ctx, daemonDir)
+	if err != nil {
+		return daemon.EndpointRecord{}, false, err
+	}
+	if guard != nil {
+		defer guard.Close()
+	}
+	record, present, err := d.readOwnedEndpoint(daemonDir)
+	if err != nil || !present {
+		return record, present, err
+	}
+	runtimeID, _, _ := d.identity.CurrentIdentity()
+	if record.RuntimeID != runtimeID {
+		return daemon.EndpointRecord{}, false, d.priorRuntimeEndpointReadiness(daemonDir, record, runtimeID)
+	}
+	return record, present, nil
+}
+
+// A prior-boot endpoint is never contacted. Only proven dead ownership or an exact
+// live replacement singleton can make it an unavailable startup observation.
+func (d *LocalDaemon) priorRuntimeEndpointReadiness(daemonDir string, record daemon.EndpointRecord, runtimeID string) error {
+	if !daemon.SameLinuxHostDifferentBoot(record.RuntimeID, runtimeID) || record.ProcessStartTime == "" ||
+		!priorRuntimePathsOwned(daemonDir, true) {
+		return app.ErrBootstrapDrift
+	}
+	alive, err := d.liveness.IsAlive(record.PID, record.ProcessStartTime)
+	if err != nil {
+		return err
+	}
+	if alive {
+		return app.ErrBootstrapDrift
+	}
+	owner, present, err := readSingletonOwner(daemonDir)
+	if err != nil || !present || owner.ProcessStartTime == "" {
+		return app.ErrBootstrapDrift
+	}
+	if sameOwnedProcess(record.RuntimeID, record.RuntimeID, record.PID, record.ProcessStartTime, owner.RuntimeID, owner.PID, owner.ProcessStartTime) {
+		return nil
+	}
+	if owner.RuntimeID != runtimeID {
+		return app.ErrBootstrapDrift
+	}
+	alive, err = d.liveness.IsAlive(owner.PID, owner.ProcessStartTime)
+	if err != nil {
+		return err
+	}
+	if !alive {
+		return app.ErrBootstrapDrift
+	}
+	return nil
 }
 
 func (d *LocalDaemon) ObserveRelease(ctx context.Context, stateDir string) (app.BootstrapDaemonReleaseObservation, error) {
@@ -192,6 +245,18 @@ func (d *LocalDaemon) readOwnedEndpoint(daemonDir string) (daemon.EndpointRecord
 	}
 	if !os.IsNotExist(err) {
 		return daemon.EndpointRecord{}, false, app.ErrBootstrapDrift
+	}
+	owner, present, ownerErr := readSingletonOwner(daemonDir)
+	runtimeID, _, _ := d.identity.CurrentIdentity()
+	if ownerErr == nil && present && daemon.SameLinuxHostDifferentBoot(owner.RuntimeID, runtimeID) &&
+		owner.ProcessStartTime != "" && priorRuntimePathsOwned(daemonDir, false) {
+		alive, err := d.liveness.IsAlive(owner.PID, owner.ProcessStartTime)
+		if err != nil {
+			return daemon.EndpointRecord{}, false, err
+		}
+		if !alive {
+			return daemon.EndpointRecord{}, false, nil
+		}
 	}
 	observation, err := d.observeSingletonRelease(daemonDir)
 	if err != nil || (observation.State != app.BootstrapDaemonReleased && observation.State != app.BootstrapDaemonShutdownPending) {

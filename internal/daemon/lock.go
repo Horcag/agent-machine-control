@@ -128,7 +128,7 @@ func tryReclaimLock(ownerPath, lockDir, daemonDir, runtimeID string, checker lea
 		return ErrDaemonRunning
 	}
 
-	if ownerRec.RuntimeID != runtimeID && !sameLinuxHostDifferentBoot(ownerRec.RuntimeID, runtimeID) {
+	if ownerRec.RuntimeID != runtimeID && !SameLinuxHostDifferentBoot(ownerRec.RuntimeID, runtimeID) {
 		return ErrDaemonRunning
 	}
 
@@ -149,7 +149,9 @@ func tryReclaimLock(ownerPath, lockDir, daemonDir, runtimeID string, checker lea
 	return nil
 }
 
-func sameLinuxHostDifferentBoot(ownerRuntimeID, currentRuntimeID string) bool {
+// SameLinuxHostDifferentBoot proves two runtime IDs name the same known Linux host
+// with different structurally valid boot identities. It does not prove process death.
+func SameLinuxHostDifferentBoot(ownerRuntimeID, currentRuntimeID string) bool {
 	ownerHost, ownerBoot, ownerOK := linuxRuntimeParts(ownerRuntimeID)
 	currentHost, currentBoot, currentOK := linuxRuntimeParts(currentRuntimeID)
 	return ownerOK && currentOK && ownerHost == currentHost && ownerBoot != currentBoot
