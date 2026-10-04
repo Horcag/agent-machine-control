@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Horcag/agent-machine-control/internal/audit"
 	"github.com/Horcag/agent-machine-control/internal/domain"
 	"github.com/Horcag/agent-machine-control/internal/sessions"
 )
@@ -19,17 +20,57 @@ func (s *SessionService) ReconcileMutationFinalizations(ctx context.Context, now
 	if err != nil {
 		return 0, err
 	}
-	reconciled := 0
+	if len(records) == 0 {
+		return 0, ctx.Err()
+	}
+	if s.receiptStore == nil || s.auditStore == nil {
+		return 0, errors.New("app: terminal mutation stores are unavailable")
+	}
+	requests := make([]audit.TerminalOutcomeRequest, 0, len(records))
 	for i := range records {
-		changed, err := s.reconcileMutationReservation(ctx, &records[i], now)
+		if _, err := s.ensureRecoveryIntent(ctx, &records[i], now); err != nil {
+			return 0, err
+		}
+		request, err := s.prepareMutationTerminalEvidence(ctx, records[i])
 		if err != nil {
+			return 0, err
+		}
+		requests = append(requests, request)
+	}
+	if err := s.auditStore.EnsureTerminalOutcomesContext(ctx, requests); err != nil {
+		return 0, fmt.Errorf("app: reconcile mutation audit: %w", err)
+	}
+	reconciled := 0
+	for _, record := range records {
+		if record.State != sessions.MutationReservationFinalizing {
+			continue
+		}
+		if err := s.mutationJournal.MarkFinalizedRecordContext(ctx, record, now); err != nil {
 			return reconciled, err
 		}
-		if changed {
-			reconciled++
-		}
+		reconciled++
 	}
 	return reconciled, nil
+}
+
+func (s *SessionService) prepareMutationTerminalEvidence(ctx context.Context, record sessions.MutationReservation) (audit.TerminalOutcomeRequest, error) {
+	if record.Receipt != nil {
+		if err := s.receiptStore.EnsureContext(ctx, *record.Receipt); err != nil {
+			return audit.TerminalOutcomeRequest{}, fmt.Errorf("app: reconcile mutation receipt: %w", err)
+		}
+		return audit.TerminalOutcomeRequest{Receipt: *record.Receipt}, nil
+	}
+	if record.State != sessions.MutationReservationFinalized {
+		return audit.TerminalOutcomeRequest{}, errors.New("app: mutation finalization intent is missing its canonical receipt")
+	}
+	legacyReceipt, err := s.receiptStore.GetContext(ctx, string(record.ReceiptID))
+	if err != nil {
+		return audit.TerminalOutcomeRequest{}, err
+	}
+	if !receiptMatchesMutationRecord(*legacyReceipt, record) {
+		return audit.TerminalOutcomeRequest{}, sessions.ErrMutationReservationCollision
+	}
+	return audit.TerminalOutcomeRequest{Receipt: *legacyReceipt, RequireExisting: true}, nil
 }
 
 func (s *SessionService) reconcileMutationReservation(ctx context.Context, record *sessions.MutationReservation, now time.Time) (bool, error) {

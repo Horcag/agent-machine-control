@@ -93,6 +93,7 @@ type Store struct {
 	nowFn            func() time.Time
 	syncDirFn        func(dir string) error
 	closeFn          func(*os.File) error
+	openReadFn       func(string) (*os.File, error)
 	livenessChecker  lease.LivenessChecker
 	identityProvider lease.IdentityProvider
 	lockTimeout      time.Duration
@@ -110,6 +111,7 @@ func NewStore(dir string, opts ...Option) *Store {
 		nowFn:            time.Now,
 		syncDirFn:        statedir.SyncDir,
 		closeFn:          (*os.File).Close,
+		openReadFn:       os.Open,
 		livenessChecker:  &lease.DefaultLivenessChecker{},
 		identityProvider: &lease.DefaultIdentityProvider{},
 		lockTimeout:      5 * time.Second,
@@ -289,6 +291,10 @@ func (s *Store) ensureTerminalOutcomeLocked(ctx context.Context, receipt domain.
 		}
 		return nil
 	}
+	return s.appendTerminalOutcomeLocked(ctx, event)
+}
+
+func (s *Store) appendTerminalOutcomeLocked(ctx context.Context, event Event) error {
 	if s.ensureHook != nil {
 		if err := s.ensureHook(ctx, event); err != nil {
 			return err
