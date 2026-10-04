@@ -50,7 +50,7 @@ func (s *Store) readEventsLockedContext(ctx context.Context) ([]Event, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	f, err := os.Open(s.logPath())
+	f, err := s.openReadFn(s.logPath())
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []Event{}, nil
