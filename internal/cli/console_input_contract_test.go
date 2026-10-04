@@ -52,6 +52,7 @@ func TestConsoleSupportedInputCommandsPreserveRequests(t *testing.T) {
 		{domain.ConsoleInput{Kind: "move", FrameID: "synthetic-frame", X: 12, Y: 34, Modifiers: "ctrl"}, []string{"--frame-id", "synthetic-frame", "--x", "12", "--y", "34", "--modifiers", "ctrl"}},
 		{domain.ConsoleInput{Kind: "click", FrameID: "synthetic-frame", X: 12, Y: 34, Button: "right", Count: 2}, []string{"--frame-id", "synthetic-frame", "--x", "12", "--y", "34", "--button", "right", "--count", "2"}},
 		{domain.ConsoleInput{Kind: "drag", FrameID: "synthetic-frame", X: 12, Y: 34, ToX: 56, ToY: 78, Button: "left"}, []string{"--frame-id", "synthetic-frame", "--x", "12", "--y", "34", "--to-x", "56", "--to-y", "78", "--button", "left"}},
+		{domain.ConsoleInput{Kind: "drag", FrameID: "synthetic-frame", X: 12, Y: 34, ToX: 56, ToY: 78, Button: "left", DurationMS: 5000}, []string{"--frame-id", "synthetic-frame", "--x", "12", "--y", "34", "--to-x", "56", "--to-y", "78", "--button", "left", "--duration-ms", "5000"}},
 	} {
 		t.Run(tc.input.Kind, func(t *testing.T) {
 			svc := &consoleStub{}

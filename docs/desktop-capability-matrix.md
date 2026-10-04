@@ -38,6 +38,8 @@ Recommendation: keep the native VM console path independent, add semantic guest 
 
 AMC's native framebuffer and synthetic input address the VM directly. Guest UIA and clipboard actions run in the enrolled guest session; this workflow does not require controlling the operator's host desktop. `clipboard.snapshot` reads inventory and sequence only; `clipboard.get` explicitly reads text. Neither route establishes the behavior of unrelated clipboard synchronization software.
 
+Native drag accepts an optional `duration_ms` from 20 to 5000 for controlled slower gestures; omission or zero retains the 400-ms movement schedule. CLI uses `amc console drag --duration-ms 5000`. Duration changes movement pacing, not the operation deadline, and is invalid for other input kinds. Provider execution time can exceed the requested movement schedule. Cancellation and failure retain the independent bounded input-release attempt; actual interrupted-path and release evidence are still required for installed cancellation acceptance.
+
 ## Capability and acceptance matrix
 
 N = native VM console fallback; G = interactive guest helper; T = authenticated guest terminal. “Pending” is an evidence placeholder, not a failure or a claim of missing implementation. Source tests and review establish implementation behavior only; installed-host evidence establishes only the effects explicitly read back for that build and fixture. Record exact backend/build, synthetic VM identity, session/integrity state, request receipt, expected result, observed result, and private artifact digest for each acceptance run.

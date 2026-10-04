@@ -40,6 +40,7 @@ func (a *App) runConsoleInput(ctx context.Context, direct bool, stateDir string,
 	textFile := fs.String("text-file", "", "read typed text from a file")
 	fs.IntVar(&input.Count, "count", 0, "click count: one or two")
 	fs.StringVar(&input.Modifiers, "modifiers", "", "pointer modifier chord: ctrl+shift, alt, or win")
+	fs.IntVar(&input.DurationMS, "duration-ms", 0, "drag movement duration: 20..5000 ms (default 400 ms)")
 	grant := fs.String("lab-grant-id", "", "active operator-issued VM lab grant")
 	common, err := parseCommonFlags(fs, flags, stderr, "console "+args[0])
 	if err != nil || len(pos) > 1 {

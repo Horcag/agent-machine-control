@@ -39,6 +39,9 @@ func (in ConsoleInput) Validate() error {
 }
 
 func (in ConsoleInput) validatePointerOptions() error {
+	if in.DurationMS != 0 && (in.Kind != "drag" || in.DurationMS < 20 || in.DurationMS > 5000) {
+		return ErrInvalidConsoleInput
+	}
 	if in.Count < 0 || in.Count > 2 || (in.Kind != "click" && in.Count != 0) || len(in.Modifiers) > 24 {
 		return ErrInvalidConsoleInput
 	}
