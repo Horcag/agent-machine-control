@@ -25,7 +25,7 @@ try {
     # Only exact fixed native pre-effect failures prove a guarded write was rejected.
     $failure = $_.Exception
     while ($null -ne $failure.InnerException) { $failure = $failure.InnerException }
-    $preEffect = @('invalid_clipboard_guard', 'clipboard_requires_sta', 'clipboard_unavailable', 'clipboard_conflict', 'clipboard_enumeration_failed', 'clipboard_inventory_incomplete', 'clipboard_allocation_failed', 'clipboard_owner_failed', 'expired_request', 'protected_desktop', 'invalid_console_session')
+    $preEffect = @('invalid_clipboard_guard', 'clipboard_requires_sta', 'clipboard_unavailable', 'clipboard_conflict', 'clipboard_enumeration_failed', 'clipboard_inventory_incomplete', 'clipboard_allocation_failed', 'clipboard_encoding_failed', 'clipboard_owner_failed', 'expired_request', 'protected_desktop', 'invalid_console_session')
     if ($null -ne $request -and $request.action -ceq 'clipboard.set.guarded') {
         if (-not $actionStarted -or $preEffect -ccontains $failure.Message) { $response.error = 'clipboard_pre_effect_rejected' }
         else { $response.error = 'clipboard_possibly_cleared' }

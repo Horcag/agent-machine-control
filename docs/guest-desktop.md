@@ -186,13 +186,22 @@ The full request digest binds both conditions to existing approval and idempoten
 The transport sends `clipboard.set.guarded`, a distinct STA action that older helper allowlists
 reject before writes. Legacy unguarded `clipboard.set` behavior remains unchanged.
 
-The native helper allocates bounded Unicode data before clearing, uses its own hidden message-only
-HWND as owner, and compares sequence and inventory under the same OpenClipboard lock as clear,
-write and readback. It returns actual post-write metadata, never a guessed increment. Conflicts
-make no writes. After a successful clear, any subsequent failure reports
-`clipboard_possibly_cleared`: the clipboard may have been cleared and requires reconciliation.
-Never blindly retry or restore. Sequence numbers wrap at uint32, and delayed rendering may change
-metadata; this guard does not promise unbounded ABA immunity.
+The native helper validates bounded Unicode text and prepares all nonempty text formats before
+opening the clipboard: CF_UNICODETEXT, CF_TEXT, CF_OEMTEXT and CF_LOCALE. The explicit LCID is the
+thread's Standards and Formats locale, distinct from its input language. Both legacy encodings
+use the default ANSI/OEM code pages for that LCID; legacy aliases can lose characters while the
+Unicode payload remains exact. NLS default code-page selectors CP_ACP/CP_OEMCP are respected when
+returned for the LCID. Encoding and allocation failures leave the original intact.
+
+Its hidden message-only HWND owns the clipboard. Sequence and exact inventory are compared under
+the same OpenClipboard lock as clear, all format transfers and readback. The helper closes the
+clipboard and destroys its owner before checking that the locked token's sequence still matches.
+It returns that captured state, never a guessed increment or a token adopted from a later writer.
+Conflicts make no writes. Once clearing is attempted, partial publication, close/owner failure or
+observed sequence drift reports `clipboard_possibly_cleared` and requires reconciliation. Never
+blindly retry or restore. A subsequent writer can still invalidate the token; sequence numbers wrap
+at uint32 and delayed rendering may change metadata. This guard does not promise unbounded ABA
+immunity.
 
 Future live acceptance must begin only with a positively empty original from complete inventory.
 Compilation and mocked regression checks never establish real guest clipboard acceptance.
@@ -201,4 +210,6 @@ Win32 contract references: [OpenClipboard](https://learn.microsoft.com/en-us/win
 [SetClipboardData](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setclipboarddata),
 [GetClipboardSequenceNumber](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getclipboardsequencenumber),
 [clipboard formats](https://learn.microsoft.com/en-us/windows/win32/dataxchg/clipboard-formats),
+[standard formats and CF_LOCALE](https://learn.microsoft.com/en-us/windows/win32/dataxchg/standard-clipboard-formats),
+[locale code pages](https://learn.microsoft.com/en-us/windows/win32/api/winnls/nf-winnls-getlocaleinfow),
 and [window station security](https://learn.microsoft.com/en-us/windows/win32/winstation/window-station-security-and-access-rights).

@@ -186,7 +186,7 @@ func TestGuardedClipboardHelperFailureMarkers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failure marker fixture: %v %s", err, output)
 	}
-	for _, name := range []string{"worker_before_action", "worker_conflict", "worker_nested_conflict", "worker_partial", "worker_generic", "worker_substring", "transport_before_publish", "transport_after_publish"} {
+	for _, name := range []string{"worker_before_action", "worker_conflict", "worker_encoding", "worker_nested_conflict", "worker_partial", "worker_generic", "worker_substring", "transport_before_publish", "transport_after_publish"} {
 		if !strings.Contains(string(output), "passed:"+name) {
 			t.Fatalf("missing case %s: %s", name, output)
 		}
@@ -205,6 +205,7 @@ $request=[pscustomobject]@{action='clipboard.set.guarded';request_id=('a'*32)}
 foreach($case in @(
  @{Name='worker_before_action';Started=$false;Message='private failure';Expected='clipboard_pre_effect_rejected'},
  @{Name='worker_conflict';Started=$true;Message='clipboard_conflict';Expected='clipboard_pre_effect_rejected'},
+ @{Name='worker_encoding';Started=$true;Message='clipboard_encoding_failed';Expected='clipboard_pre_effect_rejected'},
  @{Name='worker_nested_conflict';Started=$true;Message='clipboard_conflict';Nested=$true;Expected='clipboard_pre_effect_rejected'},
  @{Name='worker_partial';Started=$true;Message='clipboard_possibly_cleared';Expected='clipboard_possibly_cleared'},
  @{Name='worker_generic';Started=$true;Message='private failure';Expected='clipboard_possibly_cleared'},
