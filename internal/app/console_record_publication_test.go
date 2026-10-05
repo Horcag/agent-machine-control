@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"github.com/Horcag/agent-machine-control/internal/statedir"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,7 +15,7 @@ func TestRecordingStatusFinalizationFailureCannotPublishTerminal(t *testing.T) {
 	service := &ConsoleService{framesDir: filepath.Join(t.TempDir(), "console-frames"), recovery: &RecoveryService{nowFn: func() time.Time { return now }}}
 	id := "a123456789abcdef0123456789abcdef"
 	dir := filepath.Join(service.recordingDirectory(), id)
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := statedir.EnsurePrivateDirectory(dir); err != nil {
 		t.Fatal(err)
 	}
 	progress := &recordingProgress{service: service, document: recordingStatusDocument{SchemaVersion: 1, Caller: "operator:test", Actor: "operator:test", Status: ConsoleRecordStatus{SchemaVersion: "1", RecordingID: id, VMID: "local:c4a523d4-6b99-4d62-a5e2-4752c0f20001", RequestedFrames: 2, AttemptedCaptures: 2, CompletedCaptures: 2, StartedAt: now, UpdatedAt: now, ExpiresAt: now.Add(recordingStatusTTL)}}}
@@ -45,7 +46,7 @@ func TestRecordingStatusFinalizationCancellationAndDeadline(t *testing.T) {
 			now := time.Now().UTC()
 			service := &ConsoleService{framesDir: filepath.Join(t.TempDir(), "console-frames"), recovery: &RecoveryService{nowFn: func() time.Time { return now }}}
 			id := "a123456789abcdef0123456789abcdef"
-			if err := os.MkdirAll(filepath.Join(service.recordingDirectory(), id), 0700); err != nil {
+			if err := statedir.EnsurePrivateDirectory(filepath.Join(service.recordingDirectory(), id)); err != nil {
 				t.Fatal(err)
 			}
 			progress := &recordingProgress{service: service, document: recordingStatusDocument{SchemaVersion: 1, Caller: "operator:test", Actor: "operator:test", Status: ConsoleRecordStatus{SchemaVersion: "1", RecordingID: id, VMID: "local:c4a523d4-6b99-4d62-a5e2-4752c0f20001", RequestedFrames: 2, AttemptedCaptures: 2, CompletedCaptures: 2, StartedAt: now, UpdatedAt: now, ExpiresAt: now.Add(recordingStatusTTL)}}}

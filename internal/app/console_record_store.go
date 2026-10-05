@@ -20,7 +20,10 @@ func (s *ConsoleService) writeRecordingStatus(ctx context.Context, doc recording
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	dir := filepath.Join(s.recordingDirectory(), doc.Status.RecordingID)
+	dir, err := s.recordingPath(doc.Status.RecordingID)
+	if err != nil {
+		return err
+	}
 	security := target.NewPrivatePathSecurity()
 	if err := security.ValidateDir(ctx, dir); err != nil {
 		return err
@@ -51,10 +54,10 @@ func (s *ConsoleService) writeRecordingStatus(ctx context.Context, doc recording
 	}
 	defer removeLabReservation(root, "pending", info)
 	defer file.Close()
-	return publishRecordingSnapshot(root, file, dir, name, data, info, markerInfo)
+	return publishRecordingSnapshot(root, file, name, data, info, markerInfo)
 }
 
-func publishRecordingSnapshot(root *os.Root, file *os.File, dir, name string, data []byte, pendingInfo, markerInfo os.FileInfo) error {
+func publishRecordingSnapshot(root *os.Root, file *os.File, name string, data []byte, pendingInfo, markerInfo os.FileInfo) error {
 	if _, err := file.Write(data); err != nil {
 		return err
 	}
@@ -71,7 +74,7 @@ func publishRecordingSnapshot(root *os.Root, file *os.File, dir, name string, da
 	if err := root.Rename("pending", name); err != nil {
 		return err
 	}
-	if err := statedir.SyncDir(dir); err != nil {
+	if err := statedir.SyncRoot(root); err != nil {
 		return err
 	}
 	// Leave the marker on every write failure. Readers treat publication uncertainty
@@ -84,6 +87,10 @@ func publishRecordingSnapshot(root *os.Root, file *os.File, dir, name string, da
 }
 
 func (s *ConsoleService) reserveRecording(ctx context.Context, doc recordingStatusDocument) (resultErr error) {
+	child, err := s.recordingPath(doc.Status.RecordingID)
+	if err != nil {
+		return err
+	}
 	lock, err := s.recovery.leaseManager.Acquire(ctx, "console-recording-metadata", "console.record", "metadata", 10*time.Second)
 	if err != nil {
 		return ErrRecordingStatusInconclusive
@@ -121,7 +128,6 @@ func (s *ConsoleService) reserveRecording(ctx context.Context, doc recordingStat
 	if err := root.Mkdir(doc.Status.RecordingID, 0700); err != nil {
 		return ErrRecordingIDUnavailable
 	}
-	child := filepath.Join(dir, doc.Status.RecordingID)
 	if target.NewPrivatePathSecurity().ProtectNewDir(ctx, child) != nil {
 		return ErrRecordingStatusInconclusive
 	}
@@ -132,7 +138,10 @@ func (s *ConsoleService) reserveRecording(ctx context.Context, doc recordingStat
 }
 
 func (s *ConsoleService) removeExpiredRecording(ctx context.Context, parent *os.Root, id string, sequence int) error {
-	dir := filepath.Join(s.recordingDirectory(), id)
+	dir, err := s.recordingPath(id)
+	if err != nil {
+		return err
+	}
 	if err := target.NewPrivatePathSecurity().ValidateDir(ctx, dir); err != nil {
 		return err
 	}

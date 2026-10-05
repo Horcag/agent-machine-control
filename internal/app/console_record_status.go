@@ -57,6 +57,14 @@ func (s *ConsoleService) recordingDirectory() string {
 
 func validRecordingID(id string) bool { return validFrameID(id) && id == lowerRecordingID(id) }
 
+func (s *ConsoleService) recordingPath(id string) (string, error) {
+	if !validRecordingID(id) {
+		return "", ErrRecordingStatusInconclusive
+	}
+	// Use the checked single component at every pathname security boundary.
+	return filepath.Join(s.recordingDirectory(), filepath.Base(id)), nil
+}
+
 func lowerRecordingID(id string) string {
 	// Hex IDs are canonical; reject aliases that could collide on Windows.
 	for _, c := range id {

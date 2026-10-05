@@ -17,6 +17,19 @@ func SyncDir(dir string) error {
 		return fmt.Errorf("failed to open directory for sync %q: %w", dir, err)
 	}
 
+	return syncOpenedDir(f, dir)
+}
+
+// SyncRoot flushes metadata through the existing directory identity.
+func SyncRoot(root *os.Root) error {
+	f, err := root.Open(".")
+	if err != nil {
+		return fmt.Errorf("failed to open rooted directory for sync: %w", err)
+	}
+	return syncOpenedDir(f, "rooted directory")
+}
+
+func syncOpenedDir(f *os.File, dir string) error {
 	if runtime.GOOS == "windows" {
 		// Win32 FlushFileBuffers does not support directory handles.
 		// Verify that the handle was opened successfully and close it.

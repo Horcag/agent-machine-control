@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/Horcag/agent-machine-control/internal/statedir"
 	"github.com/Horcag/agent-machine-control/internal/target"
 	"os"
 	"path/filepath"
@@ -18,7 +19,7 @@ func recordingStoreFixture(t *testing.T) (*ConsoleService, recordingStatusDocume
 	s := &ConsoleService{framesDir: filepath.Join(t.TempDir(), "console-frames"), recovery: &RecoveryService{nowFn: func() time.Time { return now }}}
 	id := "a123456789abcdef0123456789abcdef"
 	dir := filepath.Join(s.recordingDirectory(), id)
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := statedir.EnsurePrivateDirectory(dir); err != nil {
 		t.Fatal(err)
 	}
 	doc := recordingStatusDocument{SchemaVersion: 1, Caller: "operator:test", Actor: "operator:test", Status: ConsoleRecordStatus{SchemaVersion: "1", RecordingID: id, VMID: "local:c4a523d4-6b99-4d62-a5e2-4752c0f20001", RequestedFrames: 2, StartedAt: now, UpdatedAt: now, ExpiresAt: now.Add(recordingStatusTTL)}}
@@ -70,6 +71,9 @@ func TestRecordingStatusRejectsCorruptSnapshots(t *testing.T) {
 				data, _ = json.Marshal(doc)
 			}
 			if err := os.WriteFile(filepath.Join(dir, "00.json"), data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := target.NewPrivatePathSecurity().ProtectNewFile(t.Context(), filepath.Join(dir, "00.json")); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := s.readRecordingStatus(t.Context(), doc.Status.RecordingID); !errors.Is(err, ErrRecordingStatusInconclusive) {
@@ -180,6 +184,9 @@ func TestRecordingStatusPublicationMarkerAppearingAfterInitialCheckIsInconclusiv
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "01.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := target.NewPrivatePathSecurity().ProtectNewFile(t.Context(), filepath.Join(dir, "01.json")); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "publishing"), nil, 0600); err != nil {

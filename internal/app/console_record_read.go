@@ -17,7 +17,10 @@ func (s *ConsoleService) readRecordingStatus(ctx context.Context, id string) (re
 	if err := ctx.Err(); err != nil {
 		return doc, ErrRecordingStatusInconclusive
 	}
-	dir := filepath.Join(s.recordingDirectory(), id)
+	dir, err := s.recordingPath(id)
+	if err != nil {
+		return doc, err
+	}
 	security := target.NewPrivatePathSecurity()
 	if security.ValidateDir(ctx, dir) != nil {
 		return doc, ErrRecordingStatusInconclusive

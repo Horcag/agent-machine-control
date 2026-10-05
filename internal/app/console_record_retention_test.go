@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/app"
+	"github.com/Horcag/agent-machine-control/internal/statedir"
+	"github.com/Horcag/agent-machine-control/internal/target"
 )
 
 func TestRecordingStatusRetentionPreservesActiveForeignAndCorrupt(t *testing.T) {
@@ -55,11 +57,11 @@ func TestRecordingStatusCapacityRefusesWithoutCapture(t *testing.T) {
 	provider := &boundsRecordingProviderFake{}
 	f := newBoundsRecordingFixture(t, provider)
 	dir := filepath.Join(f.root, "console-recordings")
-	if err := os.Mkdir(dir, 0700); err != nil {
+	if err := statedir.EnsurePrivateDirectory(dir); err != nil {
 		t.Fatal(err)
 	}
 	for i := range 64 {
-		if err := os.Mkdir(filepath.Join(dir, fmt.Sprintf("%032x", i)), 0700); err != nil {
+		if err := statedir.EnsurePrivateDirectory(filepath.Join(dir, fmt.Sprintf("%032x", i))); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -75,7 +77,7 @@ func writeRetentionFixture(t *testing.T, f boundsRecordingFixture, dir string, d
 	t.Helper()
 	id := fmt.Sprintf("%032x", i+1)
 	child := filepath.Join(dir, id)
-	if err := os.Mkdir(child, 0700); err != nil {
+	if err := statedir.EnsurePrivateDirectory(child); err != nil {
 		t.Fatal(err)
 	}
 	doc["sequence"] = 0
@@ -96,6 +98,9 @@ func writeRetentionFixture(t *testing.T, f boundsRecordingFixture, dir string, d
 		data = []byte(`{"guest":"secret"}`)
 	}
 	if err := os.WriteFile(filepath.Join(child, "00.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := target.NewPrivatePathSecurity().ProtectNewFile(t.Context(), filepath.Join(child, "00.json")); err != nil {
 		t.Fatal(err)
 	}
 }
