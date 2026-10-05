@@ -96,9 +96,17 @@ type DesktopActInput struct {
 }
 
 type DesktopActResult struct {
-	SchemaVersion string                  `json:"schema_version"`
-	Result        app.DesktopActionResult `json:"result"`
-	Observation   *DesktopObserveResult   `json:"observation,omitempty"`
+	SchemaVersion string                `json:"schema_version"`
+	Result        DesktopActOutcome     `json:"result"`
+	Observation   *DesktopObserveResult `json:"observation,omitempty"`
+}
+
+// DesktopActOutcome includes a guest response only for semantic actions.
+// Native input receipts describe execution, not verified application effects.
+type DesktopActOutcome struct {
+	Response      *domain.DesktopResponse `json:"response,omitempty" jsonschema:"Guest helper response for semantic actions only; absent for native input"`
+	Receipt       *domain.Receipt         `json:"receipt,omitempty"`
+	CachedReceipt bool                    `json:"cached_receipt"`
 }
 
 func (a *Adapter) DesktopAct(ctx context.Context, call *mcp.CallToolRequest, in DesktopActInput) (*mcp.CallToolResult, DesktopActResult, error) {
@@ -143,7 +151,9 @@ func (a *Adapter) DesktopAct(ctx context.Context, call *mcp.CallToolRequest, in 
 		if req.Deadline != in.Deadline {
 			return mcpToolError(NewInputError("action deadline must match operation deadline")), out, nil
 		}
-		out.Result, err = cl.DesktopAction(ctx, app.DesktopActionRequest{Target: in.Target, Request: req, Reason: in.Reason, IdempotencyKey: in.IdempotencyKey, LabGrantID: in.LabGrantID})
+		result, actionErr := cl.DesktopAction(ctx, app.DesktopActionRequest{Target: in.Target, Request: req, Reason: in.Reason, IdempotencyKey: in.IdempotencyKey, LabGrantID: in.LabGrantID})
+		err = actionErr
+		out.Result = DesktopActOutcome{Response: &result.Response, Receipt: result.Receipt, CachedReceipt: result.CachedReceipt}
 	}
 	if err != nil {
 		if out.Result.Receipt != nil {
