@@ -21,15 +21,21 @@ import (
 
 type consoleDaemonBackend struct {
 	*mockDaemonBackend
-	mu         sync.Mutex
-	inputs     []domain.ConsoleInput
-	captureErr error
+	mu          sync.Mutex
+	inputs      []domain.ConsoleInput
+	captureErr  error
+	captureHook func(context.Context) error
 }
 
 func (b *consoleDaemonBackend) Capabilities(context.Context, string) (domain.CapabilitySet, error) {
 	return domain.NewCapabilitySet(domain.CapabilityConsoleScreenshot, domain.CapabilityConsoleInput), nil
 }
-func (b *consoleDaemonBackend) CaptureConsole(_ context.Context, id string, width, height int) (domain.ConsoleFrame, error) {
+func (b *consoleDaemonBackend) CaptureConsole(ctx context.Context, id string, width, height int) (domain.ConsoleFrame, error) {
+	if b.captureHook != nil {
+		if err := b.captureHook(ctx); err != nil {
+			return domain.ConsoleFrame{}, err
+		}
+	}
 	if b.captureErr != nil {
 		return domain.ConsoleFrame{}, b.captureErr
 	}
@@ -57,7 +63,13 @@ func setupConsoleDaemon(t *testing.T, backend *consoleDaemonBackend) (string, st
 	if err := srv.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = srv.Shutdown(context.Background()) })
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			t.Errorf("console daemon shutdown: %v", err)
+		}
+	})
 	op, err := auth.ReadTokenFile(filepath.Join(dir, "auth"), auth.TokenTypeOperator)
 	if err != nil {
 		t.Fatal(err)

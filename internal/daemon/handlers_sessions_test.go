@@ -268,66 +268,63 @@ func TestDaemonSessions_EncodedRoutesFailClosed(t *testing.T) {
 }
 
 func TestDaemonSessions_SubSecondTimeoutsReachAppAndTransport(t *testing.T) {
-	dir := missingDaemonStateRoot(t)
-	seedDaemonTestTarget(t, dir)
-	target := "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
-	checkpoint := "e4a523d4-6b99-4d62-a5e2-4752c0f20001"
-	transport := &deadlineCaptureTransport{remaining: make(map[string]time.Duration)}
-	keyProvider := &guestssh.MockKeyProvider{MachineConfig: &guestssh.MachineSSHConfig{
-		Endpoint: "192.0.2.20:22", User: "synthetic", DefaultKeyAlias: "default",
-		PinnedHostKeySHA256: "c3ludGhldGlj", ExternalEffectsContained: true, RollbackCheckpointID: checkpoint,
-	}}
-	srv, err := daemon.NewServer(daemon.Config{
-		StateDir: dir, ListenAddr: "127.0.0.1:0", Backend: &mockDaemonBackend{}, Transport: transport, KeyProvider: keyProvider,
-	})
-	if err != nil {
-		t.Fatal(err)
+	for _, operation := range []string{"open", "write", "control", "wait", "close"} {
+		t.Run(operation, func(t *testing.T) {
+			srv, transport, token := setupSubSecondDeadlineServer(t, &mockDaemonBackend{})
+			path := srv.Endpoint() + "/v1/sessions"
+			var request any
+			if operation == "open" {
+				request = daemon.SessionOpenRequest{
+					Target: subSecondTarget, Reason: "sub-second open", IdempotencyKey: "subsecond-open", TimeoutMillis: 250,
+				}
+			} else {
+				path += "/" + openSubSecondSetupSession(t, srv.Endpoint(), token) + "/" + operation
+				switch operation {
+				case "write":
+					request = daemon.SessionWriteRequest{Data: "x", Reason: "sub-second write", IdempotencyKey: "subsecond-write", TimeoutMillis: 250}
+				case "control":
+					request = daemon.SessionControlRequest{Key: "ctrl-c", Reason: "sub-second control", IdempotencyKey: "subsecond-control", TimeoutMillis: 250}
+				case "wait":
+					request = daemon.SessionWaitRequest{Regex: "never-matches", TimeoutMillis: 40}
+				case "close":
+					request = daemon.SessionCloseRequest{Reason: "sub-second close", IdempotencyKey: "subsecond-close", TimeoutMillis: 250}
+				}
+			}
+			started := time.Now()
+			status, body := doJSONReq(t, http.MethodPost, path, token, request)
+			if operation == "wait" {
+				if status != http.StatusGatewayTimeout {
+					t.Fatalf("sub-second wait status=%d, want 504; body=%s", status, body)
+				}
+				if elapsed := time.Since(started); elapsed > 300*time.Millisecond {
+					t.Fatalf("40ms daemon wait lasted %v; body=%s", elapsed, body)
+				}
+				return
+			}
+			assertSubSecondTransportOutcome(t, transport, operation, status, body)
+		})
 	}
-	if err := srv.Start(); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = srv.Shutdown(context.Background()) }()
-	token, err := auth.ReadTokenFile(filepath.Join(dir, "auth"), auth.TokenTypeOperator)
-	if err != nil {
-		t.Fatal(err)
-	}
+}
 
-	status, data := doJSONReq(t, http.MethodPost, srv.Endpoint()+"/v1/sessions", token, daemon.SessionOpenRequest{
-		Target: target, Reason: "sub-second open", IdempotencyKey: "subsecond-open", TimeoutMillis: 250,
-	})
-	if !assertSubSecondTransportOutcome(t, transport, "open", status) {
-		return
-	}
-	var opened daemon.SessionOpenResponse
-	if err := json.Unmarshal(data, &opened); err != nil {
-		t.Fatal(err)
-	}
-	sessionPath := srv.Endpoint() + "/v1/sessions/" + opened.Session.SessionID
-
-	status, _ = doJSONReq(t, http.MethodPost, sessionPath+"/write", token, daemon.SessionWriteRequest{
-		Data: "x", Reason: "sub-second write", IdempotencyKey: "subsecond-write", TimeoutMillis: 250,
-	})
-	assertSubSecondTransportOutcome(t, transport, "write", status)
-	status, _ = doJSONReq(t, http.MethodPost, sessionPath+"/control", token, daemon.SessionControlRequest{
-		Key: "ctrl-c", Reason: "sub-second control", IdempotencyKey: "subsecond-control", TimeoutMillis: 250,
-	})
-	assertSubSecondTransportOutcome(t, transport, "control", status)
-
-	waitStarted := time.Now()
-	status, _ = doJSONReq(t, http.MethodPost, sessionPath+"/wait", token, daemon.SessionWaitRequest{
-		Regex: "never-matches", TimeoutMillis: 40,
+func TestDaemonSessions_SubSecondAdmissionExpiryHasNoTransportEffect(t *testing.T) {
+	backend := &subSecondExpiryBackend{}
+	srv, transport, token := setupSubSecondDeadlineServer(t, backend)
+	id := openSubSecondSetupSession(t, srv.Endpoint(), token)
+	backend.expire.Store(true)
+	status, body := doJSONReq(t, http.MethodPost, srv.Endpoint()+"/v1/sessions/"+id+"/write", token, daemon.SessionWriteRequest{
+		Data: "x", Reason: "expire before transport", IdempotencyKey: "subsecond-expired-write", TimeoutMillis: 250,
 	})
 	if status != http.StatusGatewayTimeout {
-		t.Fatalf("sub-second wait status=%d, want 504", status)
+		t.Fatalf("expired write status=%d, want 504; body=%s", status, body)
 	}
-	if elapsed := time.Since(waitStarted); elapsed > 300*time.Millisecond {
-		t.Fatalf("40ms daemon wait lasted %v", elapsed)
+	var failure daemon.ErrorEnvelope
+	if err := json.Unmarshal(body, &failure); err != nil || failure.Error.Category != "timeout" {
+		t.Fatalf("expired write body=%s, decode=%v", body, err)
 	}
-
-	status, _ = doJSONReq(t, http.MethodPost, sessionPath+"/close", token, daemon.SessionCloseRequest{
-		Reason: "sub-second close", IdempotencyKey: "subsecond-close", TimeoutMillis: 250,
-	})
-	assertSubSecondTransportOutcome(t, transport, "close", status)
+	assertSubSecondTransportOutcome(t, transport, "write", status, body)
+	if calls := backend.gateCalls.Load(); calls != 1 {
+		t.Fatalf("admission expiry safety gate calls=%d, want 1; body=%s", calls, body)
+	}
 }
 
 func TestDaemonSessions_ErrorBranches(t *testing.T) {

@@ -60,6 +60,7 @@ func operationToolError(err error, operationID, receiptID string) *mcp.CallToolR
 // Category keys are allowlisted protocol metadata, never provider message text.
 func categoryToolError(category string) string {
 	messages := map[string]string{
+		"recording_status_inconclusive":   "recording_status_inconclusive: recording status is inconclusive",
 		"approval_required":               "approval_required: operator approval required for this operation",
 		"target_not_enrolled":             "target is not enrolled",
 		"target_mismatch":                 "target is not enrolled",

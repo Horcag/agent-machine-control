@@ -20,3 +20,15 @@ func (a *Adapter) ConsoleRecord(ctx context.Context, _ *mcp.CallToolRequest, in 
 	out.Data = nil
 	return &mcp.CallToolResult{Content: []mcp.Content{content}}, out, nil
 }
+
+func (a *Adapter) ConsoleRecordStatus(ctx context.Context, _ *mcp.CallToolRequest, in app.ConsoleRecordStatusRequest) (*mcp.CallToolResult, app.ConsoleRecordStatus, error) {
+	cl, err := a.getClient()
+	if err != nil {
+		return mcpToolError(err), app.ConsoleRecordStatus{}, nil
+	}
+	out, err := cl.ConsoleRecordStatus(ctx, in)
+	if err != nil {
+		return mcpToolError(err), app.ConsoleRecordStatus{}, nil
+	}
+	return nil, out, nil
+}

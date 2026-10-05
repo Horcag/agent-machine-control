@@ -42,3 +42,9 @@ func (c *Client) ConsoleInputResult(ctx context.Context, req app.ConsoleInputReq
 	}
 	return out, err
 }
+
+func (c *Client) ConsoleRecordStatus(ctx context.Context, req app.ConsoleRecordStatusRequest) (app.ConsoleRecordStatus, error) {
+	var out app.ConsoleRecordStatus
+	err := c.doRequest(ctx, http.MethodPost, "/v1/console/record/status", req, &out)
+	return out, err
+}

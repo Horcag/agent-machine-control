@@ -845,6 +845,9 @@
         "interval_millis": {
           "type": "integer"
         },
+        "recording_id": {
+          "type": "string"
+        },
         "target": {
           "type": "string"
         },
@@ -903,6 +906,82 @@
         "width",
         "height",
         "observed_at"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Read actor-owned VM recording lifecycle metadata; missing, expired or nonterminal status cannot prove capture has stopped",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "recording_id": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "recording_id"
+      ],
+      "type": "object"
+    },
+    "name": "console_record_status",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "attempted_captures": {
+          "type": "integer"
+        },
+        "capture_in_flight": {
+          "type": "boolean"
+        },
+        "completed_captures": {
+          "type": "integer"
+        },
+        "expires_at": {
+          "type": "string"
+        },
+        "recording_id": {
+          "type": "string"
+        },
+        "requested_frames": {
+          "type": "integer"
+        },
+        "schema_version": {
+          "type": "string"
+        },
+        "started_at": {
+          "type": "string"
+        },
+        "terminal": {
+          "type": "boolean"
+        },
+        "terminal_reason": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string"
+        },
+        "vm_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "recording_id",
+        "vm_id",
+        "requested_frames",
+        "attempted_captures",
+        "completed_captures",
+        "capture_in_flight",
+        "terminal",
+        "terminal_reason",
+        "started_at",
+        "updated_at",
+        "expires_at"
       ],
       "type": "object"
     }

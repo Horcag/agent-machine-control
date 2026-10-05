@@ -97,24 +97,25 @@ func TestToolList(t *testing.T) {
 	toolsResult := getExposedTools(ctx, t)
 
 	expectedTools := map[string]bool{
-		"console_screenshot": true,
-		"console_record":     true,
-		"desktop_observe":    true,
-		"desktop_act":        true,
-		"console_input":      true,
-		"doctor":             true,
-		"machine_list":       true,
-		"machine_inspect":    true,
-		"checkpoint_list":    true,
-		"machine_start":      true,
-		"machine_stop":       true,
-		"checkpoint_create":  true,
-		"checkpoint_restore": true,
-		"operation_list":     true,
-		"operation_show":     true,
-		"operation_wait":     true,
-		"receipt_show":       true,
-		"receipt_list":       true,
+		"console_screenshot":    true,
+		"console_record":        true,
+		"console_record_status": true,
+		"desktop_observe":       true,
+		"desktop_act":           true,
+		"console_input":         true,
+		"doctor":                true,
+		"machine_list":          true,
+		"machine_inspect":       true,
+		"checkpoint_list":       true,
+		"machine_start":         true,
+		"machine_stop":          true,
+		"checkpoint_create":     true,
+		"checkpoint_restore":    true,
+		"operation_list":        true,
+		"operation_show":        true,
+		"operation_wait":        true,
+		"receipt_show":          true,
+		"receipt_list":          true,
 		// Session tools
 		"session_open":    true,
 		"session_read":    true,
@@ -140,8 +141,8 @@ func TestToolList(t *testing.T) {
 		}
 	}
 
-	if len(toolsResult.Tools) != 26 {
-		t.Errorf("expected exactly 26 tools, got %d", len(toolsResult.Tools))
+	if len(toolsResult.Tools) != 27 {
+		t.Errorf("expected exactly 27 tools, got %d", len(toolsResult.Tools))
 	}
 }
 
