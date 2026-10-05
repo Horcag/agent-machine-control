@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -75,21 +74,6 @@ func openSubSecondSetupSession(t *testing.T, endpoint, token string) string {
 		t.Fatalf("setup has no session ID; body=%s", body)
 	}
 	return opened.Session.SessionID
-}
-
-type subSecondExpiryBackend struct {
-	mockDaemonBackend
-	expire    atomic.Bool
-	gateCalls atomic.Int32
-}
-
-func (b *subSecondExpiryBackend) ListCheckpoints(ctx context.Context, id string) ([]domain.CheckpointObservation, error) {
-	if b.expire.Load() {
-		b.gateCalls.Add(1)
-		<-ctx.Done()
-		return nil, ctx.Err()
-	}
-	return b.mockDaemonBackend.ListCheckpoints(ctx, id)
 }
 
 type deadlineCaptureTransport struct {

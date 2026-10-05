@@ -48,9 +48,20 @@ provisioning the new build. Foreign or modified installations are refused.
    attaches a fresh PNG and observation after success.
 3. Verify the intended effect from the new image, UI tree, application state or terminal
    output. A successful input receipt does not prove a button performed its purpose.
-4. After a transport failure, observe before deciding to retry. Reuse the exact payload,
-   retry key and deadline only for an exact retry. A cached success returns its receipt
-   without replaying the operation or retaining private response data.
+4. After a transport failure, observe and reconcile the original result. If its receipt
+   ID is missing, use `receipt_list` with the original idempotency key, verify the actor,
+   canonical target and operation kind, then call `receipt_show` for each candidate.
+   Missing or ambiguous matches remain inconclusive. An exact cached retry requires the
+   identical payload, retry key and deadline; do not generate a new key to repeat an
+   uncertain mutation.
+
+A structurally valid PNG can be black while the guest helper still reports an active
+console session, windows and cursor. These observations describe different facilities.
+For an authorized readiness probe, obtain fresh frame and cursor metadata, map the guest
+cursor into frame pixels, and send one nearby `input.kind: "move"` without buttons or
+modifiers, with `observe_after: true`. Verify both the guest cursor and new pixels. This
+can restore visible capture; it does not identify a power-policy or rendering cause.
+Preserve unknown windows and use guest terminal diagnostics if the image remains black.
 
 Semantic actions include:
 
@@ -117,6 +128,18 @@ completed.
 Frame capture times determine playback delays. This is a screenshot sequence, not a
 continuous high-frame-rate video or an audio recording. PNG/GIF CLI files are created
 exclusively with private permissions; partial task-owned files are removed after failure.
+
+Supply an optional unique `recording_id` of 32 lowercase hexadecimal characters to
+`console_record`, or use CLI `--recording-id`. Query `console_record_status` with the
+same target and ID, or `amc console record-status TARGET --recording-id ID --json`.
+This metadata-only observation is limited to the authenticated caller, effective actor
+and canonical VM, expires after fifteen minutes, and never starts a capture.
+It reports attempted/completed captures, `capture_in_flight`, `terminal` and
+`terminal_reason`. Attempted/in-flight publication precedes provider dispatch, so those
+fields alone do not prove native entry. A terminal status with no capture in flight
+after provider return identifies synchronous AMC producer cessation; it does not
+promise instant Hyper-V termination. Missing status or `recording_status_inconclusive`
+requires bounded metadata reconciliation, never automatic recording replay.
 
 The existing terminal session tools provide deterministic command execution and streaming
 output. `launch` opens a visible guest application or graphical terminal; it does not

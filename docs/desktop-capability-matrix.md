@@ -109,6 +109,66 @@ An additional recording smoke on this installation requested two 320 × 240 fram
 
 The current installed-profile digest is `7d32cd74bf7fafe505d8184688f16ed5511a1bf44d3844bc90da991dfb670d90`. Helper identity/source proof is `af75558fb839bfe667759ee79c252076f853d1a6518d811a8eaffe4acae1eac2`. The new case result digest is `bd24e9e71e08918009dd4baf10ba2f7841028b3bc5c3a7f5ca20877e302fdab3`; durable receipt readback is `a2f020d9c833bec4e67ddffce622a1ce30ebbb27b80d93a9c4e3f24311c27a84`. These bind the current installation and the separately verified cancellation case without reattributing other historical UI effects to the new build.
 
+## Correlated recording and display readiness on the current core
+
+PR28 source revision `de1f43607a332e6874ae34701d33df702bebb0f7` passed all sixteen
+exact-head CI checks and was merged as `64620b86413d`. Normal activation verified its
+immutable core, command links and five unchanged guest-helper assets. A fresh owned
+MCP connection advertises 27 tools. Existing clients can retain an older tool catalog;
+a fresh connection is required to discover newly added tools.
+
+Optional caller-generated `recording_id` correlates a recording with actor- and
+VM-scoped `console_record_status` metadata. An actual cancellation after the first
+completed capture yielded terminal `canceled`, no capture in flight, and unchanged
+attempt/completion counts over three subsequent reads. A fresh PNG from the same VM
+followed. This establishes bounded AMC producer cessation after the synchronous capture
+returned; it does not establish instant termination inside Hyper-V. Missing or
+inconclusive status is not permission to replay the recording. The private result
+digest is `f810c32077746002c8c7a43bad7091ab7a1b2b5b96994ba26b9c80abe5576881`.
+
+A separate current-core recording returned a GIF independently decoded as two
+320 × 240 frames, 18,556 bytes, with ordered timestamps. Actual capture spacing was
+4.079 seconds despite a requested one-second interval; the encoded delays were
+4,070 and 1,000 milliseconds. Provider execution contributes to cadence. This passes
+bounded sequence completion and decoding, without claiming real-time interval fidelity
+or an animated marker. Compact decoded evidence digest:
+`8d9d1b8c0e788024a79c5ee59a06f5f2c60b7d2bd54573a35d95a89129c03239`.
+
+A structurally valid black PNG coexisted with an active Default console-session helper,
+window inventory and guest cursor. One nearby native guest pointer move produced a
+visible desktop PNG and verified cursor motion, without host desktop control. A separate
+read-only guest display-policy query completed through a newly owned terminal, which
+was normally closed. The underlying black-frame cause remains unknown; no guest or host
+power policy was changed. The recovery evidence digest is
+`cf6cafd77be2012e82c4175d8ba21264df2dea3e30240bc324af9e77d4d6a449`.
+
+These current-core cases supplement the rows above. Historical application effects,
+protected clipboard state and unverified secure-desktop/layout cases retain their
+declared scope; successful recording or readiness recovery does not reattribute them
+to this build.
+
+## Elevated graphical terminal on the current core
+
+A separate current-core case launched an owned graphical PowerShell window in the
+interactive guest session. Its visible window belonged to the independently verified
+PowerShell process itself; a console host image name alone is not an ownership proof.
+The case bound the window, PID and process creation time to a nonce and trusted
+executable hash before focusing or typing.
+
+Native VM keyboard input typed and submitted an owned synthetic command. Independent
+before/after PNG inspection showed the invocation, matching output nonce with `EXIT_7`,
+and returned prompt. Independent guest files bound the native child to the GUI process
+and confirmed exit code 7, Administrator membership, High integrity and session 1.
+Both exact process lifetimes were absent afterward; the owned root contained zero
+files and bytes, and the owned terminal session closed normally. Independent code/security
+and architecture reviews cleared this declared case. The private acceptance digest is
+`f5b97c3db4b7b6966422c2d588598fb89c15225bf8161b36014d396784e6f6bd`.
+
+This establishes one native elevated graphical-terminal workflow without host desktop
+control or clipboard use. Foreground observation and later input are separate actions;
+the case does not establish an atomic focus lock, shared-terminal control, secure-desktop
+access, or general acceptance of every Windows application.
+
 ## Validation gates and stop condition
 
 1. Unit and contract tests prove parameter validation, capability refusal, provider decoding, idempotency/deadlines and cleanup. They do not prove guest effects.
