@@ -24,18 +24,10 @@ func (s *Server) dispatchConsole(w http.ResponseWriter, r *http.Request, path st
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
 	switch path {
+	case "console/record/status":
+		s.dispatchRecordingStatus(w, r, caller)
 	case "console/record":
-		var req app.ConsoleRecordRequest
-		if decodeStrictJSONObject(r.Body, &req) != nil {
-			writeError(w, http.StatusBadRequest, "invalid_argument", "invalid recording request")
-			return
-		}
-		out, err := s.consoleService.Record(r.Context(), caller, req)
-		if err != nil {
-			writeConsoleError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, out)
+		s.dispatchRecording(w, r, caller)
 	case "console/screenshot":
 		var req app.ConsoleScreenshotRequest
 		if err := decodeStrictJSONObject(r.Body, &req); err != nil {
@@ -86,4 +78,36 @@ func consoleError(err error) (int, ErrorField) {
 	}
 	// Provider messages can contain guest input or framebuffer details.
 	return http.StatusBadRequest, ErrorField{Category: "console_failed", Message: "console request failed"}
+}
+
+func (s *Server) dispatchRecordingStatus(w http.ResponseWriter, r *http.Request, caller domain.ActorContext) {
+	var req app.ConsoleRecordStatusRequest
+	if decodeStrictJSONObject(r.Body, &req) != nil {
+		writeError(w, http.StatusBadRequest, "invalid_argument", "invalid recording status request")
+		return
+	}
+	out, err := s.consoleService.RecordStatus(r.Context(), caller, req)
+	if errors.Is(err, app.ErrRecordingStatusInconclusive) {
+		writeError(w, http.StatusConflict, "recording_status_inconclusive", "recording status is inconclusive")
+		return
+	}
+	if err != nil {
+		writeConsoleError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) dispatchRecording(w http.ResponseWriter, r *http.Request, caller domain.ActorContext) {
+	var req app.ConsoleRecordRequest
+	if decodeStrictJSONObject(r.Body, &req) != nil {
+		writeError(w, http.StatusBadRequest, "invalid_argument", "invalid recording request")
+		return
+	}
+	out, err := s.consoleService.Record(r.Context(), caller, req)
+	if err != nil {
+		writeConsoleError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
 }

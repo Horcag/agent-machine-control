@@ -50,6 +50,9 @@ func (a *App) runConsole(ctx context.Context, direct bool, stateDir string, args
 	if args[0] == "screenshot" {
 		return a.runConsoleScreenshot(ctx, direct, stateDir, args[1:], stdout, stderr)
 	}
+	if args[0] == "record-status" {
+		return a.runConsoleRecordStatus(ctx, direct, stateDir, args[1:], stdout, stderr)
+	}
 	if args[0] == "record" {
 		return a.runConsoleRecord(ctx, direct, stateDir, args[1:], stdout, stderr)
 	}

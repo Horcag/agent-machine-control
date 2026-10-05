@@ -13,13 +13,84 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/Horcag/agent-machine-control/internal/app"
+	"github.com/Horcag/agent-machine-control/internal/auth"
 	"github.com/Horcag/agent-machine-control/internal/daemon"
 	"github.com/Horcag/agent-machine-control/internal/domain"
 	guestssh "github.com/Horcag/agent-machine-control/internal/guest/ssh"
 )
+
+const subSecondTarget = "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
+
+func setupSubSecondDeadlineServer(t *testing.T, backend app.Backend) (*daemon.Server, *deadlineCaptureTransport, string) {
+	t.Helper()
+	dir := missingDaemonStateRoot(t)
+	seedDaemonTestTarget(t, dir)
+	transport := &deadlineCaptureTransport{remaining: make(map[string]time.Duration)}
+	keyProvider := &guestssh.MockKeyProvider{MachineConfig: &guestssh.MachineSSHConfig{
+		Endpoint: "192.0.2.20:22", User: "synthetic", DefaultKeyAlias: "default",
+		PinnedHostKeySHA256: "c3ludGhldGlj", ExternalEffectsContained: true,
+		RollbackCheckpointID: "e4a523d4-6b99-4d62-a5e2-4752c0f20001",
+	}}
+	// Fix policy timestamps while retaining real context timers and transport budgets.
+	now := time.Now().UTC()
+	srv, err := daemon.NewServer(daemon.Config{
+		StateDir: dir, ListenAddr: "127.0.0.1:0", Backend: backend, Transport: transport,
+		KeyProvider: keyProvider, Clock: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := srv.Shutdown(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
+	token, err := auth.ReadTokenFile(filepath.Join(dir, "auth"), auth.TokenTypeOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return srv, transport, token
+}
+
+func openSubSecondSetupSession(t *testing.T, endpoint, token string) string {
+	t.Helper()
+	// This setup is unmeasured; every operation under test keeps its 250ms/40ms budget.
+	status, body := doJSONReq(t, http.MethodPost, endpoint+"/v1/sessions", token, daemon.SessionOpenRequest{
+		Target: subSecondTarget, Reason: "unmeasured session setup", IdempotencyKey: "subsecond-setup-open", TimeoutSeconds: 30,
+	})
+	requireJSONOK(t, status, body, "unmeasured session setup")
+	var opened daemon.SessionOpenResponse
+	if err := json.Unmarshal(body, &opened); err != nil {
+		t.Fatal(err)
+	}
+	if opened.Session.SessionID == "" {
+		t.Fatalf("setup has no session ID; body=%s", body)
+	}
+	return opened.Session.SessionID
+}
+
+type subSecondExpiryBackend struct {
+	mockDaemonBackend
+	expire    atomic.Bool
+	gateCalls atomic.Int32
+}
+
+func (b *subSecondExpiryBackend) ListCheckpoints(ctx context.Context, id string) ([]domain.CheckpointObservation, error) {
+	if b.expire.Load() {
+		b.gateCalls.Add(1)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return b.mockDaemonBackend.ListCheckpoints(ctx, id)
+}
 
 type deadlineCaptureTransport struct {
 	mu        sync.Mutex
@@ -44,23 +115,23 @@ func (t *deadlineCaptureTransport) remainingFor(name string) (time.Duration, boo
 	return remaining, ok
 }
 
-func assertSubSecondTransportOutcome(t *testing.T, transport *deadlineCaptureTransport, operation string, status int) bool {
+func assertSubSecondTransportOutcome(t *testing.T, transport *deadlineCaptureTransport, operation string, status int, body []byte) {
 	t.Helper()
 	remaining, called := transport.remainingFor(operation)
 	switch status {
 	case http.StatusOK:
 		if !called || remaining <= 0 || remaining > 250*time.Millisecond {
-			t.Fatalf("%s transport deadline remaining=%v present=%v, want (0, 250ms]", operation, remaining, called)
+			t.Fatalf("%s transport deadline remaining=%v present=%v, want (0, 250ms]; body=%s", operation, remaining, called, body)
 		}
-		return true
+		return
 	case http.StatusGatewayTimeout:
 		if called {
-			t.Fatalf("%s transport was called after admission exhausted its budget: remaining=%v", operation, remaining)
+			t.Fatalf("%s transport was called after admission exhausted its budget: remaining=%v; body=%s", operation, remaining, body)
 		}
-		return false
+		return
 	default:
-		t.Fatalf("%s status=%d, want 200 with positive transport budget or 504 with zero transport effect", operation, status)
-		return false
+		t.Fatalf("%s status=%d, want 200 with positive transport budget or 504 with zero transport effect; body=%s", operation, status, body)
+		return
 	}
 }
 

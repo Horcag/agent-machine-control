@@ -18,6 +18,7 @@ import (
 
 type ConsoleRecordRequest struct {
 	Target         string `json:"target,omitempty"`
+	RecordingID    string `json:"recording_id,omitempty"`
 	Width          int    `json:"width"`
 	Height         int    `json:"height"`
 	Frames         int    `json:"frames"`
@@ -34,14 +35,27 @@ type ConsoleRecording struct {
 }
 
 // Record produces a bounded animated GIF from VM frames, without a host recorder.
-func (s *ConsoleService) Record(ctx context.Context, actor domain.ActorContext, req ConsoleRecordRequest) (ConsoleRecording, error) {
-	var out ConsoleRecording
-	if req.Frames < 2 || req.Frames > 30 || req.IntervalMillis < 100 || req.IntervalMillis > 2000 || req.Frames*req.IntervalMillis > 30000 || req.Width < 1 || req.Height < 1 || req.Width > 307200/req.Height {
+func (s *ConsoleService) Record(ctx context.Context, actor domain.ActorContext, req ConsoleRecordRequest) (out ConsoleRecording, resultErr error) {
+	if !validConsoleRecordingBounds(req) {
 		return out, errors.New("app: invalid recording bounds")
 	}
+	var progress *recordingProgress
+	if req.RecordingID != "" {
+		var err error
+		progress, err = s.beginRecording(ctx, actor, &req)
+		if err != nil {
+			return out, err
+		}
+	}
+	defer func() {
+		if err := progress.finish(resultErr); err != nil {
+			out = ConsoleRecording{}
+			resultErr = errors.Join(resultErr, err)
+		}
+	}()
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	animation, observed, err := s.collectRecordingFrames(ctx, actor, req)
+	animation, observed, err := s.collectRecordingFrames(ctx, actor, req, progress)
 	if err != nil {
 		return out, err
 	}
@@ -99,14 +113,14 @@ func recordingPalettedFrame(data []byte) (*image.Paletted, error) {
 	return p, nil
 }
 
-func (s *ConsoleService) collectRecordingFrames(ctx context.Context, actor domain.ActorContext, req ConsoleRecordRequest) (gif.GIF, []time.Time, error) {
+func (s *ConsoleService) collectRecordingFrames(ctx context.Context, actor domain.ActorContext, req ConsoleRecordRequest, progress *recordingProgress) (gif.GIF, []time.Time, error) {
 	animation := gif.GIF{LoopCount: 0}
 	observed := make([]time.Time, 0, req.Frames)
 	for i := 0; i < req.Frames; i++ {
 		if err := ctx.Err(); err != nil {
 			return animation, observed, err
 		}
-		frame, err := s.Screenshot(ctx, actor, ConsoleScreenshotRequest{Target: req.Target, Width: req.Width, Height: req.Height})
+		frame, err := s.screenshot(ctx, actor, progress, ConsoleScreenshotRequest{Target: req.Target, Width: req.Width, Height: req.Height})
 		if err != nil {
 			return animation, observed, err
 		}
@@ -133,4 +147,8 @@ func (s *ConsoleService) collectRecordingFrames(ctx context.Context, actor domai
 
 	}
 	return animation, observed, nil
+}
+
+func validConsoleRecordingBounds(req ConsoleRecordRequest) bool {
+	return req.Frames >= 2 && req.Frames <= 30 && req.IntervalMillis >= 100 && req.IntervalMillis <= 2000 && req.Frames*req.IntervalMillis <= 30000 && req.Width >= 1 && req.Height >= 1 && req.Width <= 307200/req.Height
 }

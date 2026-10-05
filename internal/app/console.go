@@ -34,15 +34,23 @@ func NewConsoleService(provider ConsoleProvider, recovery *RecoveryService, targ
 }
 
 func (s *ConsoleService) Screenshot(ctx context.Context, actor domain.ActorContext, req ConsoleScreenshotRequest) (domain.ConsoleFrame, error) {
+	return s.screenshot(ctx, actor, nil, req)
+}
+
+func (s *ConsoleService) screenshot(ctx context.Context, actor domain.ActorContext, progress *recordingProgress, req ConsoleScreenshotRequest) (domain.ConsoleFrame, error) {
 	resolution, req, err := s.admitScreenshot(ctx, actor, req)
 	if err != nil {
 		return domain.ConsoleFrame{}, err
 	}
+	if err := progress.beforeCapture(ctx); err != nil {
+		return domain.ConsoleFrame{}, err
+	}
 	frame, err := s.provider.CaptureConsole(ctx, resolution.ProviderVMID, req.Width, req.Height)
 	if err != nil {
-		return domain.ConsoleFrame{}, safeConsoleProviderError(err)
+		return domain.ConsoleFrame{}, errors.Join(safeConsoleProviderError(err), progress.afterCapture(false))
 	}
-	if err := validateCapturedFrame(frame, resolution.ProviderVMID, req.Width, req.Height); err != nil {
+	validationErr := validateCapturedFrame(frame, resolution.ProviderVMID, req.Width, req.Height)
+	if err := errors.Join(validationErr, progress.afterCapture(validationErr == nil)); err != nil {
 		return domain.ConsoleFrame{}, err
 	}
 	var id [16]byte
