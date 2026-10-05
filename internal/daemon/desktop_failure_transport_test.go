@@ -122,7 +122,10 @@ func assertMCPDesktopFailure(t *testing.T, result *mcp.CallToolResult, attempt i
 	if err := json.Unmarshal(data, &out); err != nil {
 		t.Fatal(err)
 	}
-	assertTransportFailure(t, out.Result, errors.New("synthetic execution failed"), attempt == 1)
+	if out.Result.Response == nil {
+		t.Fatal("semantic failure omitted its guest response")
+	}
+	assertTransportFailure(t, app.DesktopActionResult{Response: *out.Result.Response, Receipt: out.Result.Receipt, CachedReceipt: out.Result.CachedReceipt}, errors.New("synthetic execution failed"), attempt == 1)
 	if out.Observation != nil {
 		t.Fatal("failure performed post-observation")
 	}

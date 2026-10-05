@@ -141,7 +141,7 @@ func assertNativeMCPRetries(t *testing.T, cs *mcp.ClientSession, in mcpadapter.D
 			t.Fatal(err)
 		}
 		assertNativeFailure(t, app.ConsoleInputResult{Receipt: out.Result.Receipt, CachedReceipt: out.Result.CachedReceipt}, errors.New("synthetic failure"), attempt == 1)
-		if out.Observation != nil || !reflect.DeepEqual(out.Result.Response, domain.DesktopResponse{}) {
+		if out.Observation != nil || out.Result.Response != nil {
 			t.Fatal("partial response or observation escaped")
 		}
 		if attempt == 0 {

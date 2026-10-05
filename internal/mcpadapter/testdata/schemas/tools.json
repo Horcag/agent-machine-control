@@ -1928,11 +1928,14 @@
                 "session_id",
                 "elevated"
               ],
-              "type": "object"
+              "type": [
+                "null",
+                "object"
+              ],
+              "description": "Guest helper response for semantic actions only; absent for native input"
             }
           },
           "required": [
-            "response",
             "cached_receipt"
           ],
           "type": "object"
