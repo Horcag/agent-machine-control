@@ -132,6 +132,10 @@ func (s *ConsoleService) resolveActiveLabGrant(ctx context.Context, grant Consol
 }
 
 func (s *ConsoleService) resolveLabBinding(ctx context.Context, grant ConsoleLabGrant) (TargetResolution, error) {
+	return s.resolveLabBindingWithResolution(ctx, grant, nil)
+}
+
+func (s *ConsoleService) resolveLabBindingWithResolution(ctx context.Context, grant ConsoleLabGrant, observed *TargetResolution) (TargetResolution, error) {
 	now := s.recovery.now()
 	if now.Before(grant.IssuedAt) || !now.Before(grant.ExpiresAt) {
 		return TargetResolution{}, ErrInvalidConsoleLabGrant
@@ -140,7 +144,20 @@ func (s *ConsoleService) resolveLabBinding(ctx context.Context, grant ConsoleLab
 	if err != nil || revoked {
 		return TargetResolution{}, ErrInvalidConsoleLabGrant
 	}
-	resolution, identity, err := s.labIdentity(ctx, string(grant.Target))
+	var resolution TargetResolution
+	var identity string
+	if observed == nil {
+		resolution, identity, err = s.labIdentity(ctx, string(grant.Target))
+	} else {
+		resolution = *observed
+		if s.labEnrollment == nil || s.labSafety == nil || resolution.Validate() != nil {
+			return TargetResolution{}, ErrInvalidConsoleLabGrant
+		}
+		identity, err = s.labEnrollment(ctx, domain.MachineRef(resolution.Locator.String()))
+		if !validLabDigest(identity) {
+			return TargetResolution{}, ErrInvalidConsoleLabGrant
+		}
+	}
 	if err != nil || resolution.Locator.String() != string(grant.Target) || identity != grant.EnrollmentIdentity {
 		return TargetResolution{}, ErrInvalidConsoleLabGrant
 	}
