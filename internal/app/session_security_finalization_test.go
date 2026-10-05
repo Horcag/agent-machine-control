@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/audit"
 	"github.com/Horcag/agent-machine-control/internal/domain"
 	guestssh "github.com/Horcag/agent-machine-control/internal/guest/ssh"
+	"github.com/Horcag/agent-machine-control/internal/lease"
 	"github.com/Horcag/agent-machine-control/internal/policy"
 	"github.com/Horcag/agent-machine-control/internal/receipt"
 	"github.com/Horcag/agent-machine-control/internal/sessions"
@@ -50,12 +52,38 @@ func (diagnosticReversibleSafety) ResolveSafety(context.Context, domain.MachineR
 	}, nil
 }
 
+// admissionDeadlineContext expires only at the safety boundary. Background Value
+// prevents context's cancellable-parent shortcut from replacing DeadlineExceeded.
+type admissionDeadlineContext struct {
+	context.Context
+	done    chan struct{}
+	expired atomic.Bool
+}
+
+func (c *admissionDeadlineContext) Done() <-chan struct{} { return c.done }
+
+func (c *admissionDeadlineContext) Err() error {
+	if c.expired.Load() {
+		<-c.done
+		return context.DeadlineExceeded
+	}
+	return nil
+}
+
+func (c *admissionDeadlineContext) expire() {
+	if c.expired.CompareAndSwap(false, true) {
+		close(c.done)
+	}
+}
+
 type expiringAdmissionSafety struct {
-	calls atomic.Int32
+	calls  atomic.Int32
+	expire func()
 }
 
 func (s *expiringAdmissionSafety) ResolveSafety(ctx context.Context, target domain.MachineRef) (app.SafetyResolution, error) {
 	if s.calls.Add(1) == 1 {
+		s.expire()
 		<-ctx.Done()
 		return app.SafetyResolution{Classification: domain.ClassDestructivePrivileged}, nil
 	}
@@ -216,43 +244,86 @@ func TestAdmissionDeadlineAfterLeaseLeavesNoDurableMutationState(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	const target = "c4a523d4-6b99-4d62-a5e2-4752c0f20001"
+	deadlineCtx := &admissionDeadlineContext{Context: context.Background(), done: make(chan struct{})}
 	transport := &trackingTransport{}
-	safety := &expiringAdmissionSafety{}
+	safety := &expiringAdmissionSafety{expire: func() {
+		assertAdmissionOwnsLease(t, sd, target)
+		deadlineCtx.expire()
+	}}
 	mgr := sessions.NewManager(sd.SessionsDir(), transport, time.Now)
+	t.Cleanup(func() {
+		if err := mgr.Shutdown(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
 	auditStore := audit.NewStore(sd.AuditDir())
 	receiptStore := receipt.NewStore(sd.ReceiptsDir())
-	svc := app.NewSessionService(mgr, safety, nil, auditStore, receiptStore, approval.NewStore(sd.ApprovalsDir()))
+	svc := app.NewSessionService(mgr, safety, lease.NewManager(sd.LeasesDir()), auditStore, receiptStore, approval.NewStore(sd.ApprovalsDir()))
 	scopes := domain.NewScopeSet(domain.ScopeSessionOpen, domain.ScopeSessionRead, domain.ScopeSessionClose)
 	actor, err := domain.NewActorContext("agent:deadline", "agent:deadline", scopes, scopes)
 	if err != nil {
 		t.Fatal(err)
 	}
 	params := app.SessionOpenParams{
-		Target: "c4a523d4-6b99-4d62-a5e2-4752c0f20001", Caller: actor,
-		Reason: "expire during admission", IdempotencyKey: "admission-expired", Timeout: 10 * time.Millisecond,
+		Target: target, Caller: actor, Reason: "expire during admission",
+		IdempotencyKey: "admission-expired", Timeout: 30 * time.Second, // Watchdog; expiry is triggered inside safety resolution.
 	}
-	assertAdmissionDeadlineLeavesNoState(t, svc, transport, auditStore, sd, params)
+	assertAdmissionDeadlineLeavesNoState(deadlineCtx, t, svc, transport, auditStore, sd, params)
+	if got := safety.calls.Load(); got != 1 {
+		t.Fatalf("safety calls after deadline = %d, want 1", got)
+	}
 	assertAdmissionRetrySucceeds(t, svc, transport, params)
-	if err := mgr.Shutdown(context.Background()); err != nil {
-		t.Fatal(err)
+	if got := safety.calls.Load(); got != 2 {
+		t.Fatalf("safety calls after retry = %d, want 2", got)
 	}
 }
 
-func assertAdmissionDeadlineLeavesNoState(t *testing.T, svc *app.SessionService, transport *trackingTransport, auditStore *audit.Store, sd *statedir.StateDir, params app.SessionOpenParams) {
+func assertAdmissionOwnsLease(t *testing.T, sd *statedir.StateDir, target string) {
 	t.Helper()
-	obs, rcpt, err := svc.OpenSession(context.Background(), params)
+	raw, err := os.ReadFile(filepath.Join(sd.LeasesDir(), target+".lease.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var owned lease.Lease
+	if err := json.Unmarshal(raw, &owned); err != nil {
+		t.Fatal(err)
+	}
+	if owned.MachineID != target || owned.PID != os.Getpid() || owned.OperationKind != "session.open" || owned.Fingerprint == "" {
+		t.Fatalf("safety entered without the expected owned lease: %+v", owned)
+	}
+}
+
+func assertAdmissionDeadlineLeavesNoState(ctx context.Context, t *testing.T, svc *app.SessionService, transport *trackingTransport, auditStore *audit.Store, sd *statedir.StateDir, params app.SessionOpenParams) {
+	t.Helper()
+	obs, rcpt, err := svc.OpenSession(ctx, params)
 	if obs != nil || rcpt != nil || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expired admission = obs %+v receipt %+v err %v", obs, rcpt, err)
 	}
 	if got := atomic.LoadInt32(&transport.dialCalls); got != 0 {
 		t.Fatalf("transport dial calls after expired admission = %d, want 0", got)
 	}
-	assertLookupDeadlineLeftNoDurableState(t, sd)
+	assertAdmissionNoMutationState(t, sd, params.Target)
 	if events, err := auditStore.Tail(10); err != nil || len(events) != 0 {
 		t.Fatalf("audit after expired admission = %v err %v", events, err)
 	}
 	if entries, err := os.ReadDir(sd.ApprovalsDir()); err != nil || len(entries) != 0 {
 		t.Fatalf("approval state after expired admission = %v err %v", entries, err)
+	}
+}
+
+func assertAdmissionNoMutationState(t *testing.T, sd *statedir.StateDir, target string) {
+	t.Helper()
+	if entries, err := os.ReadDir(sd.ReceiptsDir()); err != nil || len(entries) != 0 {
+		t.Fatalf("receipt state after admission deadline = %v err %v", entries, err)
+	}
+	if _, err := os.Stat(filepath.Join(sd.SessionsDir(), "mutations")); !os.IsNotExist(err) {
+		t.Fatalf("mutation journal created during admission: %v", err)
+	}
+	// Lease release keeps its fencing generation, but no live lease or transition lock.
+	entries, err := os.ReadDir(sd.LeasesDir())
+	if err != nil || len(entries) != 1 || entries[0].Name() != target+".gen.json" {
+		t.Fatalf("unexpected lease state after admission deadline = %v err %v", entries, err)
 	}
 }
 
