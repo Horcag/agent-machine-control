@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"sync"
 	"time"
 
@@ -140,7 +139,7 @@ func (s *Store) validateIssuedLocked(ctx context.Context, a domain.Approval) err
 	if err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(*issued, a) {
+	if !sameApprovalAuthority(*issued, a) {
 		return ErrApprovalNotIssued
 	}
 	return ctx.Err()
@@ -264,7 +263,7 @@ func (s *Store) ReleaseUnexecutedContext(ctx context.Context, a domain.Approval)
 	restored := consumed.Clone()
 	restored.Consumed = false
 	restored.ConsumedAt = nil
-	if !consumed.Consumed || !reflect.DeepEqual(restored, a) {
+	if !consumed.Consumed || !sameApprovalAuthority(restored, a) {
 		return ErrApprovalNotIssued
 	}
 	if err := ctx.Err(); err != nil {

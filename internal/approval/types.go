@@ -38,6 +38,21 @@ type DTO struct {
 	ConsumedAt      *string               `json:"consumed_at,omitempty"`
 }
 
+// sameApprovalAuthority compares authority exactly, with timestamps identified by
+// their instants rather than locations or monotonic clock metadata lost on disk.
+func sameApprovalAuthority(left, right domain.Approval) bool {
+	if left.ID != right.ID || left.Actor != right.Actor || left.Target != right.Target ||
+		left.AuthorizedClass != right.AuthorizedClass || left.Fingerprint != right.Fingerprint ||
+		left.IdempotencyKey != right.IdempotencyKey || left.Consumed != right.Consumed ||
+		!left.IssuedAt.Equal(right.IssuedAt) || !left.ExpiresAt.Equal(right.ExpiresAt) {
+		return false
+	}
+	if left.ConsumedAt == nil || right.ConsumedAt == nil {
+		return left.ConsumedAt == nil && right.ConsumedAt == nil
+	}
+	return left.ConsumedAt.Equal(*right.ConsumedAt)
+}
+
 // ConvertToDTO converts a domain.Approval to a DTO.
 func ConvertToDTO(a domain.Approval) DTO {
 	dto := DTO{
