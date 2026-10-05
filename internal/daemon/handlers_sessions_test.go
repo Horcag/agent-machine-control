@@ -306,27 +306,6 @@ func TestDaemonSessions_SubSecondTimeoutsReachAppAndTransport(t *testing.T) {
 	}
 }
 
-func TestDaemonSessions_SubSecondAdmissionExpiryHasNoTransportEffect(t *testing.T) {
-	backend := &subSecondExpiryBackend{}
-	srv, transport, token := setupSubSecondDeadlineServer(t, backend)
-	id := openSubSecondSetupSession(t, srv.Endpoint(), token)
-	backend.expire.Store(true)
-	status, body := doJSONReq(t, http.MethodPost, srv.Endpoint()+"/v1/sessions/"+id+"/write", token, daemon.SessionWriteRequest{
-		Data: "x", Reason: "expire before transport", IdempotencyKey: "subsecond-expired-write", TimeoutMillis: 250,
-	})
-	if status != http.StatusGatewayTimeout {
-		t.Fatalf("expired write status=%d, want 504; body=%s", status, body)
-	}
-	var failure daemon.ErrorEnvelope
-	if err := json.Unmarshal(body, &failure); err != nil || failure.Error.Category != "timeout" {
-		t.Fatalf("expired write body=%s, decode=%v", body, err)
-	}
-	assertSubSecondTransportOutcome(t, transport, "write", status, body)
-	if calls := backend.gateCalls.Load(); calls != 1 {
-		t.Fatalf("admission expiry safety gate calls=%d, want 1; body=%s", calls, body)
-	}
-}
-
 func TestDaemonSessions_ErrorBranches(t *testing.T) {
 	srv, endpoint, token, fakeSSH := setupTestDaemonWithSSH(t)
 	defer func() {

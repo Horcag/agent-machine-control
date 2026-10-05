@@ -5,12 +5,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/app"
+	"github.com/Horcag/agent-machine-control/internal/daemon"
 )
 
 func TestRecordingStatusHTTPDisconnectRetainsInFlightThenTerminal(t *testing.T) {
@@ -91,20 +96,73 @@ func TestRecordingStatusHTTPDisconnectRetainsInFlightThenTerminal(t *testing.T) 
 
 func awaitRecordingTerminal(t *testing.T, endpoint, agent string, statusReq app.ConsoleRecordStatusRequest) app.ConsoleRecordStatus {
 	t.Helper()
-	var terminal app.ConsoleRecordStatus
-	for range 100 {
-		status, body := doJSONReq(t, http.MethodPost, endpoint+"/v1/console/record/status", agent, statusReq)
-		if status != http.StatusOK {
-			continue
-		}
-		if json.Unmarshal(body, &terminal) != nil {
-			t.Fatalf("invalid terminal status %s", body)
-		}
-		if terminal.Terminal {
-			break
-		}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	terminal, err := pollRecordingTerminal(ctx, endpoint, agent, statusReq)
+	if err != nil {
+		t.Fatal(err)
 	}
 	return terminal
+}
+
+func pollRecordingTerminal(ctx context.Context, endpoint, agent string, statusReq app.ConsoleRecordStatusRequest) (app.ConsoleRecordStatus, error) {
+	data, err := json.Marshal(statusReq)
+	if err != nil {
+		return app.ConsoleRecordStatus{}, err
+	}
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	var last app.ConsoleRecordStatus
+	for {
+		next, err := queryRecordingTerminalStatus(ctx, endpoint, agent, data)
+		if err != nil {
+			return last, fmt.Errorf("terminal status read (last %+v): %w", last, err)
+		}
+		if next != nil {
+			last = *next
+		}
+		if last.Terminal {
+			return last, nil
+		}
+		select {
+		case <-ctx.Done():
+			return last, fmt.Errorf("terminal status did not settle (last %+v): %w", last, ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+// A nil status means the endpoint explicitly reported inconclusive metadata.
+func queryRecordingTerminalStatus(ctx context.Context, endpoint, agent string, data []byte) (*app.ConsoleRecordStatus, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/v1/console/record/status", bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+agent)
+	req.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	body, readErr := io.ReadAll(response.Body)
+	closeErr := response.Body.Close()
+	if err := errors.Join(readErr, closeErr); err != nil {
+		return nil, fmt.Errorf("terminal status body: %w", err)
+	}
+	if response.StatusCode == http.StatusOK {
+		var status app.ConsoleRecordStatus
+		if err := json.Unmarshal(body, &status); err != nil {
+			return nil, fmt.Errorf("invalid terminal status %s: %w", body, err)
+		}
+		return &status, nil
+	}
+	if response.StatusCode == http.StatusConflict {
+		var failure daemon.ErrorEnvelope
+		if json.Unmarshal(body, &failure) == nil && failure.Error.Category == "recording_status_inconclusive" && failure.Error.Message == "recording status is inconclusive" {
+			return nil, nil
+		}
+	}
+	return nil, fmt.Errorf("unexpected terminal status %d: %s", response.StatusCode, body)
 }
 
 func readHTTPRecordingStatus(t *testing.T, endpoint, agent string, req app.ConsoleRecordStatusRequest) app.ConsoleRecordStatus {
@@ -180,4 +238,99 @@ func awaitHTTPRecordingResult(t *testing.T, done <-chan error) error {
 		t.Fatal("original caller did not stop")
 		return nil
 	}
+}
+
+func TestPollRecordingTerminal(t *testing.T) {
+	t.Run("inconclusive then in-flight then terminal", testRecordingTerminalTransition)
+	testRecordingTerminalFailures(t)
+	testRecordingTerminalBounds(t)
+}
+
+func testRecordingTerminalTransition(t *testing.T) {
+	var reads atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/console/record/status" || r.Method != http.MethodPost {
+			t.Errorf("unexpected recording replay: %s %s", r.Method, r.URL.Path)
+		}
+		read := reads.Add(1)
+		switch {
+		case read == 1:
+			w.WriteHeader(http.StatusConflict)
+			_, _ = io.WriteString(w, `{"error":{"category":"recording_status_inconclusive","message":"recording status is inconclusive"}}`)
+		case read <= 102:
+			_ = json.NewEncoder(w).Encode(app.ConsoleRecordStatus{CaptureInFlight: true, AttemptedCaptures: 1})
+		default:
+			_ = json.NewEncoder(w).Encode(app.ConsoleRecordStatus{Terminal: true, TerminalReason: "canceled", AttemptedCaptures: 1})
+		}
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	status, err := pollRecordingTerminal(ctx, server.URL, "synthetic", app.ConsoleRecordStatusRequest{})
+	if err != nil || !status.Terminal || status.TerminalReason != "canceled" || status.AttemptedCaptures != 1 {
+		t.Fatalf("terminal %+v, error %v", status, err)
+	}
+}
+
+func testRecordingTerminalFailures(t *testing.T) {
+	t.Helper()
+	for _, test := range []struct {
+		name string
+		code int
+		body string
+	}{
+		{"authorization failure", http.StatusForbidden, `{"error":{"category":"forbidden"}}`},
+		{"unrelated conflict", http.StatusConflict, `{"error":{"category":"conflict"}}`},
+		{"malformed metadata", http.StatusOK, `{`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var reads atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				reads.Add(1)
+				w.WriteHeader(test.code)
+				_, _ = io.WriteString(w, test.body)
+			}))
+			defer server.Close()
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			if _, err := pollRecordingTerminal(ctx, server.URL, "synthetic", app.ConsoleRecordStatusRequest{}); err == nil {
+				t.Fatal("invalid response was accepted")
+			}
+			if reads.Load() != 1 {
+				t.Fatalf("unexpected response was retried %d times", reads.Load())
+			}
+		})
+	}
+}
+
+func testRecordingTerminalBounds(t *testing.T) {
+	t.Helper()
+	t.Run("deadline bounds a blocked status read", func(t *testing.T) {
+		release := make(chan struct{})
+		server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			select {
+			case <-r.Context().Done():
+			case <-release:
+			}
+		}))
+		defer server.Close()
+		defer close(release)
+		ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+		defer cancel()
+		if _, err := pollRecordingTerminal(ctx, server.URL, "synthetic", app.ConsoleRecordStatusRequest{}); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("blocked status read error %v, want deadline exceeded", err)
+		}
+	})
+	t.Run("cancellation bounds an in-flight producer", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).Encode(app.ConsoleRecordStatus{CaptureInFlight: true, AttemptedCaptures: 1})
+			cancel()
+		}))
+		defer server.Close()
+		if _, err := pollRecordingTerminal(ctx, server.URL, "synthetic", app.ConsoleRecordStatusRequest{}); !errors.Is(err, context.Canceled) {
+			t.Fatalf("unsettled producer error %v, want cancellation", err)
+		}
+	})
 }

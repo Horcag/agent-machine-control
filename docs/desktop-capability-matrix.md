@@ -147,6 +147,28 @@ protected clipboard state and unverified secure-desktop/layout cases retain thei
 declared scope; successful recording or readiness recovery does not reattribute them
 to this build.
 
+## Elevated graphical terminal on the current core
+
+A separate current-core case launched an owned graphical PowerShell window in the
+interactive guest session. Its visible window belonged to the independently verified
+PowerShell process itself; a console host image name alone is not an ownership proof.
+The case bound the window, PID and process creation time to a nonce and trusted
+executable hash before focusing or typing.
+
+Native VM keyboard input typed and submitted an owned synthetic command. Independent
+before/after PNG inspection showed the invocation, matching output nonce with `EXIT_7`,
+and returned prompt. Independent guest files bound the native child to the GUI process
+and confirmed exit code 7, Administrator membership, High integrity and session 1.
+Both exact process lifetimes were absent afterward; the owned root contained zero
+files and bytes, and the owned terminal session closed normally. Independent code/security
+and architecture reviews cleared this declared case. The private acceptance digest is
+`f5b97c3db4b7b6966422c2d588598fb89c15225bf8161b36014d396784e6f6bd`.
+
+This establishes one native elevated graphical-terminal workflow without host desktop
+control or clipboard use. Foreground observation and later input are separate actions;
+the case does not establish an atomic focus lock, shared-terminal control, secure-desktop
+access, or general acceptance of every Windows application.
+
 ## Validation gates and stop condition
 
 1. Unit and contract tests prove parameter validation, capability refusal, provider decoding, idempotency/deadlines and cleanup. They do not prove guest effects.
