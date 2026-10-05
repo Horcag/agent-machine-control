@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"regexp"
 	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/domain"
@@ -55,24 +56,16 @@ func (s *ConsoleService) recordingDirectory() string {
 	return filepath.Join(filepath.Dir(s.framesDir), "console-recordings")
 }
 
-func validRecordingID(id string) bool { return validFrameID(id) && id == lowerRecordingID(id) }
+var recordingIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
+
+func validRecordingID(id string) bool { return recordingIDPattern.MatchString(id) }
 
 func (s *ConsoleService) recordingPath(id string) (string, error) {
-	if !validRecordingID(id) {
+	// Validate the component at the filesystem boundary, before joining or access.
+	if !recordingIDPattern.MatchString(id) {
 		return "", ErrRecordingStatusInconclusive
 	}
-	// Use the checked single component at every pathname security boundary.
-	return filepath.Join(s.recordingDirectory(), filepath.Base(id)), nil
-}
-
-func lowerRecordingID(id string) string {
-	// Hex IDs are canonical; reject aliases that could collide on Windows.
-	for _, c := range id {
-		if c >= 'A' && c <= 'F' {
-			return ""
-		}
-	}
-	return id
+	return filepath.Join(s.recordingDirectory(), id), nil
 }
 
 func (s *ConsoleService) RecordStatus(ctx context.Context, actor domain.ActorContext, req ConsoleRecordStatusRequest) (ConsoleRecordStatus, error) {

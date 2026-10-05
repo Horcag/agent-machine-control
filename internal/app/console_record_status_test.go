@@ -158,13 +158,19 @@ func TestRecordingStatusCorruptMissingAndWriteFailure(t *testing.T) {
 func TestRecordingStatusProviderFailureAndIDValidation(t *testing.T) {
 	provider := &boundsRecordingProviderFake{onCapture: func(int) error { return errors.New("guest secret") }}
 	f := newBoundsRecordingFixture(t, provider)
-	for _, id := range []string{"../escape", strings.ToUpper(statusRecordingID), "short"} {
-		req := statusRecordRequest()
-		req.RecordingID = id
-		if _, err := f.service.Record(t.Context(), f.actor, req); err == nil {
-			t.Fatal("invalid ID accepted")
-		}
+	for _, id := range []string{"../escape", strings.ToUpper(statusRecordingID), "short", strings.Repeat("a", 31), strings.Repeat("a", 33), statusRecordingID + "\n", "C:\\escape", strings.Repeat("a", 31) + "/"} {
+		t.Run(id, func(t *testing.T) {
+			req := statusRecordRequest()
+			req.RecordingID = id
+			if _, err := f.service.Record(t.Context(), f.actor, req); err == nil {
+				t.Fatal("invalid ID accepted")
+			}
+		})
 	}
+	if provider.captures != 0 {
+		t.Fatal("invalid ID dispatched a capture")
+	}
+
 	out, err := f.service.Record(t.Context(), f.actor, statusRecordRequest())
 	if err == nil || len(out.Data) != 0 || strings.Contains(err.Error(), "guest secret") {
 		t.Fatalf("failure result: %v", err)
