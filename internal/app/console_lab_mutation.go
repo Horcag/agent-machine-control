@@ -15,6 +15,12 @@ import (
 // ExecuteLabMutation verifies live grant authority, then uses normal approval, policy,
 // idempotency, host lease, audit, and receipt admission for a guest-only action.
 func (s *ConsoleService) ExecuteLabMutation(ctx context.Context, actor domain.ActorContext, id string, op domain.Operation, req MutationRequest, providerID string, execFn func(context.Context) error) (result domain.Receipt, resultErr error) {
+	return s.executeLabMutation(ctx, actor, id, op, req, providerID, execFn, nil)
+}
+
+// resolution is only the fresh server resolution from this desktop action. The final
+// fenced authority check always resolves again, including enrollment and rollback.
+func (s *ConsoleService) executeLabMutation(ctx context.Context, actor domain.ActorContext, id string, op domain.Operation, req MutationRequest, providerID string, execFn func(context.Context) error, resolution *TargetResolution) (result domain.Receipt, resultErr error) {
 	if err := validateLabMutation(actor, op, req, execFn); err != nil {
 		return result, err
 	}
@@ -30,14 +36,17 @@ func (s *ConsoleService) ExecuteLabMutation(ctx context.Context, actor domain.Ac
 	if err != nil || grant.Beneficiary != actor.EffectiveActor || op.Target != grant.Target {
 		return result, ErrInvalidConsoleLabGrant
 	}
-	resolution, err := s.resolveActiveLabGrant(ctx, grant)
+	binding, err := s.resolveLabBindingWithResolution(ctx, grant, resolution)
+	if err == nil {
+		err = s.labActivation(ctx, grant.GrantID)
+	}
 	if err != nil {
 		return result, err
 	}
 	if !op.Deadline.After(s.recovery.now()) || op.Deadline.After(grant.ExpiresAt) {
 		return result, ErrInvalidConsoleLabGrant
 	}
-	if resolution.ProviderVMID != providerID {
+	if binding.ProviderVMID != providerID {
 		return result, ErrInvalidConsoleLabGrant
 	}
 	issued, err := s.deriveLabApproval(ctx, grant, op)

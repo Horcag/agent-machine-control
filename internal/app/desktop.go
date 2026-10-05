@@ -66,14 +66,31 @@ func (s *DesktopService) Action(ctx context.Context, actor domain.ActorContext, 
 	}
 	ctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
-	canonical, providerID, err := s.console.recovery.resolveTargetReference(ctx, req.Target)
+	canonical, providerID, resolution, err := s.resolveActionTarget(ctx, req)
 	if err != nil {
 		return out, err
 	}
 	if req.Request.ObserveOnly() {
 		return s.observe(ctx, actor, providerID, req.Request)
 	}
-	return s.mutate(ctx, actor, req, canonical, providerID, deadline)
+	return s.mutate(ctx, actor, req, canonical, providerID, deadline, resolution)
+}
+
+// resolveActionTarget retains a validated server observation only for admission
+// within this desktop lab request. Other actions keep normal reference resolution.
+func (s *DesktopService) resolveActionTarget(ctx context.Context, req DesktopActionRequest) (string, string, *TargetResolution, error) {
+	if req.LabGrantID == "" || req.Request.ObserveOnly() || s.console.recovery.targetResolver == nil {
+		canonical, providerID, err := s.console.recovery.resolveTargetReference(ctx, req.Target)
+		return canonical, providerID, nil, err
+	}
+	resolution, err := s.console.recovery.targetResolver.ResolveTarget(ctx, req.Target)
+	if err != nil {
+		return "", "", nil, err
+	}
+	if err := resolution.Validate(); err != nil {
+		return "", "", nil, err
+	}
+	return resolution.Locator.String(), resolution.ProviderVMID, &resolution, nil
 }
 
 func (s *DesktopService) observe(ctx context.Context, actor domain.ActorContext, canonical string, req domain.DesktopRequest) (DesktopActionResult, error) {
@@ -92,7 +109,7 @@ func (s *DesktopService) observe(ctx context.Context, actor domain.ActorContext,
 	return out, nil
 }
 
-func (s *DesktopService) mutate(ctx context.Context, actor domain.ActorContext, req DesktopActionRequest, canonical, providerID string, deadline time.Time) (DesktopActionResult, error) {
+func (s *DesktopService) mutate(ctx context.Context, actor domain.ActorContext, req DesktopActionRequest, canonical, providerID string, deadline time.Time, resolution *TargetResolution) (DesktopActionResult, error) {
 	var out DesktopActionResult
 	mut := MutationRequest{TargetID: canonical, Actor: actor, Reason: req.Reason, IdempotencyKey: req.IdempotencyKey, Deadline: deadline, ApprovalID: req.ApprovalID, Timeout: time.Minute}
 	mut.cachedReceipt = &out.CachedReceipt
@@ -109,7 +126,7 @@ func (s *DesktopService) mutate(ctx context.Context, actor domain.ActorContext, 
 	}
 	var rcpt domain.Receipt
 	if req.LabGrantID != "" {
-		rcpt, err = s.console.ExecuteLabMutation(ctx, actor, req.LabGrantID, op, mut, providerID, dispatch)
+		rcpt, err = s.console.executeLabMutation(ctx, actor, req.LabGrantID, op, mut, providerID, dispatch, resolution)
 	} else {
 		if req.ApprovalID != "" {
 			mut.Approval, mut.ApprovalError = s.console.recovery.LoadOperationApprovalReference(ctx, op, req.ApprovalID)
