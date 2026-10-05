@@ -114,6 +114,7 @@ func TestToolList(t *testing.T) {
 		"operation_show":     true,
 		"operation_wait":     true,
 		"receipt_show":       true,
+		"receipt_list":       true,
 		// Session tools
 		"session_open":    true,
 		"session_read":    true,
@@ -139,8 +140,8 @@ func TestToolList(t *testing.T) {
 		}
 	}
 
-	if len(toolsResult.Tools) != 25 {
-		t.Errorf("expected exactly 25 tools, got %d", len(toolsResult.Tools))
+	if len(toolsResult.Tools) != 26 {
+		t.Errorf("expected exactly 26 tools, got %d", len(toolsResult.Tools))
 	}
 }
 

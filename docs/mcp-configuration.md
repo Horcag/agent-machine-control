@@ -57,3 +57,18 @@ Accept: application/json, text/event-stream
 
 > [!NOTE]
 > For browser safety, the adapter rejects all requests containing a non-empty `Origin` header.
+
+## Receipt discovery after an interrupted reply
+
+Use `receipt_list` to read recent receipts visible to the authenticated caller. Agent
+credentials return that agent's receipts; existing operator permissions retain their broader
+scope. `limit` defaults to 50 and accepts at most 1000. An optional `idempotency_key` matches
+exactly within those recent results, after the limit is applied. For example:
+
+```json
+{"name":"receipt_list","arguments":{"limit":50,"idempotency_key":"synthetic-cancel-key"}}
+```
+
+Use a returned `receipt_id` with `receipt_show` and verify its actor, target, key, and outcome.
+An empty list is inconclusive: it does not prove no effect or lack of admission. Do not replay
+input to discover a receipt; a missing reply and receipt discovery are separate observations.

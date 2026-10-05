@@ -243,6 +243,11 @@ func (a *Adapter) BuildServer() *mcp.Server {
 	}, a.OperationWait)
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "receipt_list",
+		Description: "List recent receipts visible to the authenticated caller, optionally matching an exact idempotency key. Missing entries do not prove no effect or lack of admission.",
+	}, a.ReceiptList)
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "receipt_show",
 		Description: "Show execution receipt details",
 	}, a.ReceiptShow)
