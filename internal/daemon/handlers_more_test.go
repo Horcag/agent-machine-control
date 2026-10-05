@@ -314,3 +314,42 @@ func TestServer_OperationRetryAndConflict(t *testing.T) {
 		t.Errorf("expected 409 Conflict for cross-actor idempotency collision, got %d", respC.StatusCode)
 	}
 }
+
+func TestReceiptListCallerScope(t *testing.T) {
+	srv, endpoint, opToken, agToken := setupTestServer(t)
+	defer func() { _ = srv.Shutdown(t.Context()) }()
+	agent, operator := client.New(endpoint, agToken), client.New(endpoint, opToken)
+	ids := make([]string, 0, 2)
+	for i, cl := range []*client.Client{agent, operator} {
+		op, err := cl.CreateOperation(t.Context(), daemon.CreateOperationRequest{
+			Kind: "machine.start", Target: "c4a523d4-6b99-4d62-a5e2-4752c0f20001",
+			Reason: "receipt list scope fixture", IdempotencyKey: fmt.Sprintf("scope-key-%d", i),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		terminal, err := cl.WaitOperation(t.Context(), op.OperationID, 0, 0)
+		if err != nil || terminal.ReceiptID == "" {
+			t.Fatalf("terminal=%+v err=%v", terminal, err)
+		}
+		ids = append(ids, terminal.ReceiptID)
+	}
+	own, err := agent.ListReceipts(t.Context(), 5)
+	if err != nil || len(own) != 1 {
+		t.Fatalf("agent list=%+v err=%v", own, err)
+	}
+	if own[0].ReceiptID != ids[0] || own[0].Actor != "agent:mcp-local" {
+		t.Fatalf("agent sees foreign receipt: %+v", own)
+	}
+	visible, err := operator.ListReceipts(t.Context(), 5)
+	if err != nil || len(visible) != 2 {
+		t.Fatalf("operator list=%+v err=%v", visible, err)
+	}
+	seen := map[string]bool{}
+	for _, rcpt := range visible {
+		seen[rcpt.ReceiptID] = true
+	}
+	if !seen[ids[0]] || !seen[ids[1]] {
+		t.Fatalf("operator missing known receipts: %+v", visible)
+	}
+}

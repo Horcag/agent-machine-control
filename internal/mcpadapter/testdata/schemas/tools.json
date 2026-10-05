@@ -3402,6 +3402,136 @@
     }
   },
   {
+    "description": "List recent receipts visible to the authenticated caller, optionally matching an exact idempotency key. Missing entries do not prove no effect or lack of admission.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "idempotency_key": {
+          "description": "Optional exact idempotency key within the bounded recent results; missing entries do not prove no effect or lack of admission",
+          "type": "string"
+        },
+        "limit": {
+          "description": "Recent receipts to search before filtering (default 50, maximum 1000)",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "name": "receipt_list",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "receipts": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "actor": {
+                "type": "string"
+              },
+              "class": {
+                "type": "string"
+              },
+              "completed_at": {
+                "type": "string"
+              },
+              "effective_backend": {
+                "type": "string"
+              },
+              "evidence_refs": {
+                "items": {
+                  "type": "string"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
+              "fingerprint": {
+                "type": "string"
+              },
+              "idempotency_fingerprint": {
+                "type": "string"
+              },
+              "idempotency_key": {
+                "type": "string"
+              },
+              "observation_type": {
+                "type": "string"
+              },
+              "operation_kind": {
+                "type": "string"
+              },
+              "outcome": {
+                "additionalProperties": false,
+                "properties": {
+                  "error_category": {
+                    "type": "string"
+                  },
+                  "error_message": {
+                    "type": "string"
+                  },
+                  "exit_code": {
+                    "type": "integer"
+                  },
+                  "status": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "status",
+                  "exit_code"
+                ],
+                "type": "object"
+              },
+              "receipt_id": {
+                "type": "string"
+              },
+              "redaction_status": {
+                "type": "string"
+              },
+              "rollback_ref": {
+                "type": "string"
+              },
+              "started_at": {
+                "type": "string"
+              },
+              "target": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "receipt_id",
+              "operation_kind",
+              "fingerprint",
+              "actor",
+              "target",
+              "class",
+              "effective_backend",
+              "started_at",
+              "completed_at",
+              "outcome",
+              "observation_type",
+              "redaction_status"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "schema_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "receipts"
+      ],
+      "type": "object"
+    }
+  },
+  {
     "description": "Show execution receipt details",
     "inputSchema": {
       "additionalProperties": false,

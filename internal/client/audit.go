@@ -39,6 +39,25 @@ func (c *Client) GetAudit(ctx context.Context, limit int) ([]audit.Event, error)
 	return resp.Events, nil
 }
 
+// ListReceipts retrieves recent receipts within the authenticated caller's scope.
+// A missing receipt does not establish whether an operation had effects.
+func (c *Client) ListReceipts(ctx context.Context, limit int) ([]receipt.DTO, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	var resp struct {
+		SchemaVersion string        `json:"schema_version"`
+		Receipts      []receipt.DTO `json:"receipts"`
+	}
+	if err := c.doRequest(ctx, http.MethodGet, "/v1/receipts?limit="+strconv.Itoa(limit), nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Receipts, nil
+}
+
 // GetReceipt retrieves an execution receipt by ID.
 func (c *Client) GetReceipt(ctx context.Context, receiptID string) (*receipt.DTO, error) {
 	if err := domain.ValidateReceiptID(receiptID); err != nil {
