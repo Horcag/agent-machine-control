@@ -81,6 +81,8 @@ var knownValueFlags = map[string]bool{
 	"-name":             true,
 	"--state-dir":       true,
 	"-state-dir":        true,
+	"--input-file":      true,
+	"-input-file":       true,
 	"--approval-file":   true,
 	"-approval-file":    true,
 	"--approval-id":     true,
