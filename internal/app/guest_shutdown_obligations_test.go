@@ -68,38 +68,8 @@ func TestGuestRestartShutdownFailsClosedOnDamagedRecords(t *testing.T) {
 			h := newGuestHarness(t)
 			h.prepare(t)
 			worker := originalGuestEpoch(t, h)
-			path := func(suffix string) string { return filepath.Join(h.service.store.directory, worker.RecordID+suffix) }
-			switch damage {
-			case "corrupt-launch":
-				if err := os.WriteFile(path(".launch"), []byte("{broken"), 0600); err != nil {
-					t.Fatal(err)
-				}
-			case "missing-launch":
-				if err := os.Remove(path(".launch")); err != nil {
-					t.Fatal(err)
-				}
-			case "missing-identity":
-				for _, suffix := range []string{".worker", ".ready"} {
-					if err := os.Remove(path(suffix)); err != nil {
-						t.Fatal(err)
-					}
-				}
-			case "changed-ready-identity":
-				var altered guestWorkerRecord
-				if err := h.service.store.read(context.Background(), worker.RecordID, ".ready", &altered); err != nil {
-					t.Fatal(err)
-				}
-				altered.Identity.PID++
-				if err := os.Remove(path(".ready")); err != nil {
-					t.Fatal(err)
-				}
-				if err := h.service.store.write(context.Background(), worker.RecordID, ".ready", altered); err != nil {
-					t.Fatal(err)
-				}
-			case "unknown-name":
-				if err := os.WriteFile(filepath.Join(h.service.store.directory, "foreign.launch"), []byte("{}"), 0600); err != nil {
-					t.Fatal(err)
-				}
+			if err := damageGuestObligation(h, worker, damage); err != nil {
+				t.Fatal(err)
 			}
 			restartGuestService(h, &guestVerifiedConfig{guestTestConfig: h.config, absent: true})
 			if err := h.service.Shutdown(context.Background()); !errors.Is(err, ErrGuestUncertain) || h.service.shutdownDone {
@@ -112,48 +82,50 @@ func TestGuestRestartShutdownFailsClosedOnDamagedRecords(t *testing.T) {
 	}
 }
 
-func TestGuestRestartShutdownCancellationAndConcurrency(t *testing.T) {
-	for _, cancelled := range []bool{false, true} {
-		t.Run(map[bool]string{false: "concurrent", true: "cancelled"}[cancelled], func(t *testing.T) {
-			h := newGuestHarness(t)
-			h.prepare(t)
-			verifier := &guestBlockingVerifier{guestTestConfig: h.config, entered: make(chan struct{}), release: make(chan struct{})}
-			restartGuestService(h, verifier)
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			first := make(chan error, 1)
-			go func() { first <- h.service.Shutdown(ctx) }()
-			select {
-			case <-verifier.entered:
-			case <-time.After(5 * time.Second):
-				t.Fatal("original absence verification did not start")
-			}
-			if cancelled {
-				cancel()
-				if err := <-first; !errors.Is(err, context.Canceled) || h.service.shutdownDone {
-					t.Fatalf("cancellation discarded: %v", err)
-				}
-				close(verifier.release)
-			} else {
-				second := make(chan error, 1)
-				go func() { second <- h.service.Shutdown(context.Background()) }()
-				close(verifier.release)
-				for _, result := range []chan error{first, second} {
-					if err := <-result; err != nil {
-						t.Fatal(err)
-					}
-				}
-				verifier.mu.Lock()
-				calls := verifier.calls
-				verifier.mu.Unlock()
-				if calls != 1 {
-					t.Fatalf("duplicate confirmation: %d", calls)
-				}
-			}
-			if h.transport.retired != 0 {
-				t.Fatal("restart retired a foreign channel")
-			}
-		})
+func restartShutdownTest(t *testing.T) (*guestHarness, *guestBlockingVerifier, chan error, context.CancelFunc) {
+	t.Helper()
+	h := newGuestHarness(t)
+	h.prepare(t)
+	verifier := &guestBlockingVerifier{guestTestConfig: h.config, entered: make(chan struct{}), release: make(chan struct{})}
+	restartGuestService(h, verifier)
+	ctx, cancel := context.WithCancel(context.Background())
+	first := make(chan error, 1)
+	go func() { first <- h.service.Shutdown(ctx) }()
+	select {
+	case <-verifier.entered:
+	case <-time.After(5 * time.Second):
+		cancel()
+		t.Fatal("original absence verification did not start")
+	}
+	return h, verifier, first, cancel
+}
+func TestGuestRestartShutdownCancellation(t *testing.T) {
+	h, verifier, first, cancel := restartShutdownTest(t)
+	cancel()
+	if err := <-first; !errors.Is(err, context.Canceled) || h.service.shutdownDone {
+		t.Fatalf("cancellation discarded: %v", err)
+	}
+	close(verifier.release)
+	if h.transport.retired != 0 {
+		t.Fatal("restart retired a foreign channel")
+	}
+}
+func TestGuestRestartShutdownConcurrency(t *testing.T) {
+	h, verifier, first, cancel := restartShutdownTest(t)
+	defer cancel()
+	second := make(chan error, 1)
+	go func() { second <- h.service.Shutdown(context.Background()) }()
+	close(verifier.release)
+	for _, result := range []chan error{first, second} {
+		if err := <-result; err != nil {
+			t.Fatal(err)
+		}
+	}
+	verifier.mu.Lock()
+	calls := verifier.calls
+	verifier.mu.Unlock()
+	if calls != 1 || h.transport.retired != 0 {
+		t.Fatalf("duplicate or foreign effects: confirms=%d retired=%d", calls, h.transport.retired)
 	}
 }
 
@@ -179,7 +151,7 @@ func TestGuestShutdownRescansAfterEarlierSuccess(t *testing.T) {
 
 func TestGuestShutdownObligationScanBounds(t *testing.T) {
 	records := map[string][]string{}
-	for i := 0; i < maxGuestShutdownObligations; i++ {
+	for i := range maxGuestShutdownObligations {
 		id := guestDigest(i)
 		if err := collectGuestObligationEntry(records, id+".launch"); err != nil {
 			t.Fatal(err)
@@ -187,5 +159,31 @@ func TestGuestShutdownObligationScanBounds(t *testing.T) {
 	}
 	if err := collectGuestObligationEntry(records, guestDigest("overflow")+".launch"); !errors.Is(err, ErrGuestUncertain) {
 		t.Fatal("unbounded obligation scan")
+	}
+}
+
+func damageGuestObligation(h *guestHarness, worker guestWorkerRecord, damage string) error {
+	path := func(suffix string) string { return filepath.Join(h.service.store.directory, worker.RecordID+suffix) }
+	switch damage {
+	case "corrupt-launch":
+		return os.WriteFile(path(".launch"), []byte("{broken"), 0600)
+	case "missing-launch":
+		return os.Remove(path(".launch"))
+	case "missing-identity":
+		return errors.Join(os.Remove(path(".worker")), os.Remove(path(".ready")))
+	case "changed-ready-identity":
+		var altered guestWorkerRecord
+		if err := h.service.store.read(context.Background(), worker.RecordID, ".ready", &altered); err != nil {
+			return err
+		}
+		altered.Identity.PID++
+		if err := os.Remove(path(".ready")); err != nil {
+			return err
+		}
+		return h.service.store.write(context.Background(), worker.RecordID, ".ready", altered)
+	case "unknown-name":
+		return os.WriteFile(filepath.Join(h.service.store.directory, "foreign.launch"), []byte("{}"), 0600)
+	default:
+		return errors.New("unknown synthetic damage")
 	}
 }
