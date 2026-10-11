@@ -76,6 +76,22 @@ namespace AMCStream {
    foreach(var key in keys){b[key]="changed";if(Native.Same(a,b))throw new System.Exception("changed identity accepted "+key);b[key]="original";}
    b.Remove("owner");if(Native.Same(a,b))throw new System.Exception("incomplete identity accepted");
 
+   foreach(uint mode in new uint[]{0,1,2,4,8,64})if(!Lifetime.CheckedAsyncMode(0,4,mode))throw new System.Exception("async mode rejected");
+   foreach(uint mode in new uint[]{0x10,0x20,0x11,0x22})if(Lifetime.CheckedAsyncMode(0,4,mode))throw new System.Exception("sync mode accepted as async");
+   foreach(var item in new[]{new object[]{-1,4UL,0u,211u},new object[]{0x103,4UL,0u,214u},new object[]{1,4UL,0u,211u},new object[]{0,3UL,0u,212u},new object[]{0,5UL,0u,212u},new object[]{0,4UL,0x30u,211u}}){
+    uint marker=0;int closedMode=0;
+    var owned=new Lifetime.OwnTermination(delegate(uint code){marker=code;return false;},delegate{closedMode++;});
+    try{Lifetime.RunWorker(delegate{Lifetime.CheckedAsyncMode((int)item[0],(ulong)item[1],(uint)item[2]);},owned);throw new System.Exception("invalid mode accepted");}
+    catch(Lifetime.PipeFailure error){if(error.ExitCode!=(uint)item[3])throw;}
+    owned.Stop(219);if(marker!=(uint)item[3]||closedMode!=1)throw new System.Exception("mode refusal marker overwritten");
+   }
+   // Real managed buffering must preserve adjacent binary frames and exact EOF.
+   using(var raw=new System.IO.MemoryStream(new byte[]{0,0,0,1,65,0,0,0,1,66,0,0,0,2,67}))
+   using(var buffered=new System.IO.BufferedStream(raw,65536)){
+    if((string)Worker.ReadControl(buffered,decoded)["id"]!="A"||(string)Worker.ReadControl(buffered,decoded)["id"]!="B")throw new System.Exception("buffered framing changed");
+    ControlRefusal(buffered,"control_eof",decoded);
+    if(raw.Position!=raw.Length)throw new System.Exception("partial frame replayed");
+   }
    if(Lifetime.CheckedPipeState(0,40,3)!=3)throw new System.Exception("connected pipe rejected");
    foreach(var item in new[]{new object[]{-1,40UL,211u},new object[]{0,39UL,212u},new object[]{0x103,40UL,214u}}){
     try{Lifetime.CheckedPipeState((int)item[0],(ulong)item[1],3);throw new System.Exception("invalid query accepted");}
