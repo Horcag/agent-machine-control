@@ -24,7 +24,7 @@ func validGuestFile(file stream.FileIdentity, root stream.RootIdentity) bool {
 	return guestFileRoot(file) == root && file.Volume == root.Volume && len(file.FileID) == 32 && validLabDigest(file.FileID+file.FileID) && file.CreationTime > 0 && file.Owner == root.Owner && validLabDigest(file.SDDLHash) && file.Size >= 0 && validLabDigest(file.SHA256)
 }
 
-func (s *GuestService) run(ctx context.Context, p GuestOperationParams, op domain.Operation, config GuestConfiguration, key, id string, input io.Reader, output io.Writer, effect *bool) (out GuestOperationResult, runErr error) {
+func (s *GuestService) run(ctx context.Context, p GuestOperationParams, op domain.Operation, config GuestConfiguration, key, id string, input io.Reader, output io.Writer, effect *bool, safety SafetyResolution) (out GuestOperationResult, runErr error) {
 	attempted := false
 	defer func() {
 		if runErr != nil && attempted {
@@ -43,7 +43,7 @@ func (s *GuestService) run(ctx context.Context, p GuestOperationParams, op domai
 			return out, ErrGuestUncertain
 		}
 		worker = guestWorkerRecord{Target: op.Target, Caller: op.Actor.AuthenticatedCaller, Actor: op.Actor.EffectiveActor, Generation: config.Generation, Identity: identity, Root: config.WorkspaceIdentity, RecordID: id}
-		if !validGuestWorker(identity) {
+		if !validGuestWorker(identity) || identity.SID != config.WorkspaceIdentity.Owner {
 			return out, guestProtocolError()
 		}
 		if err = s.store.write(ctx, id, ".worker", worker); err != nil {
@@ -71,7 +71,7 @@ func (s *GuestService) run(ctx context.Context, p GuestOperationParams, op domai
 	// Prepare and ownership reads can take time. Refresh the exact server authority
 	// again after their durable writes, immediately before the transport effect.
 	_, fresh, err := s.resolve(ctx, p)
-	if err != nil || !reflect.DeepEqual(fresh, config) || ctx.Err() != nil {
+	if err != nil || !reflect.DeepEqual(fresh, config) || !reflect.DeepEqual(s.session.resolveSafety(ctx, op.Target), safety) || ctx.Err() != nil {
 		return out, ErrGuestAuthority
 	}
 	if p.Operation != "get" {

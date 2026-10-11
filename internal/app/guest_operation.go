@@ -121,7 +121,7 @@ func (s *GuestService) Execute(ctx context.Context, p GuestOperationParams, inpu
 			return sessionMutationResult{}, err
 		}
 		dispatched = true
-		result, runErr := s.run(execCtx, p, op, config, key, recordID, input, output, &effectApplied)
+		result, runErr := s.run(execCtx, p, op, config, key, recordID, input, output, &effectApplied, safety)
 		out = result
 		if runErr == nil {
 			if persistErr := s.store.write(execCtx, recordID, ".result", out); persistErr != nil {
