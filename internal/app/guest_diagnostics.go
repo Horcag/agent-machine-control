@@ -18,6 +18,9 @@ func safeGuestTransportError(err error) error {
 	if errors.As(err, &failure) && failure.Valid() {
 		return errors.Join(ErrGuestUncertain, &stream.WorkerFailure{Stage: failure.Stage, NativeError: failure.NativeError})
 	}
+	if exit, ok := errors.AsType[*stream.RemoteExit](err); ok && exit.Valid() {
+		return errors.Join(ErrGuestUncertain, &stream.RemoteExit{Code: exit.Code})
+	}
 	for _, known := range guestTransportDiagnostics {
 		if errors.Is(err, known.err) {
 			return errors.Join(ErrGuestUncertain, known.err)
@@ -64,6 +67,9 @@ func verifyGuestRoot(actual *stream.RootIdentity, original stream.RootIdentity) 
 }
 
 func guestFailureEvidence(err error) string {
+	if exit, ok := errors.AsType[*stream.RemoteExit](err); ok && exit.Valid() {
+		return fmt.Sprintf("guest-remote-exit:%d", exit.Code)
+	}
 	if fatal, ok := errors.AsType[*stream.ControlFailure](err); ok && fatal.Valid() {
 		return "guest-control-failure:" + fatal.Stage
 	}

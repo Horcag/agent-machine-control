@@ -3,9 +3,17 @@ package stream
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"time"
 )
+
+// RemoteExit is the numeric status reported by this SSH channel. It is only
+// diagnostic evidence; it does not establish native process absence.
+type RemoteExit struct{ Code int }
+
+func (e *RemoteExit) Valid() bool   { return e != nil && e.Code >= 0 && uint64(e.Code) <= 0xffffffff }
+func (e *RemoteExit) Error() string { return fmt.Sprintf("guest stream: remote exit %d", e.Code) }
 
 var (
 	ErrLifetimePending      = errors.New("guest stream: lifetime query pending")
@@ -41,7 +49,11 @@ func observeLifetimeExit(ctx context.Context, channel io.ReadWriteCloser, err er
 	case 214:
 		marker = ErrLifetimePending
 	default:
-		return err
+		exit := &RemoteExit{Code: code}
+		if !exit.Valid() {
+			return err
+		}
+		return errors.Join(err, exit)
 	}
 	return errors.Join(err, marker)
 }

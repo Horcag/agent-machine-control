@@ -156,6 +156,9 @@ func (s *GuestService) checkPriorGuestLaunch(ctx context.Context, key, priorKey 
 	if allowCurrent && active.RecordID == priorKey {
 		return nil
 	}
+	if !allowCurrent && active.RecordID == priorKey {
+		return s.validateCurrentGuestLaunch(ctx, key, priorKey, active, launch)
+	}
 	var ready guestWorkerRecord
 	if err = s.store.read(ctx, priorKey, ".ready", &ready); err != nil {
 		return ErrGuestUncertain
@@ -171,4 +174,20 @@ func (s *GuestService) checkPriorGuestLaunch(ctx context.Context, key, priorKey 
 
 func sameGuestLaunch(record, launch guestWorkerRecord) bool {
 	return record.RecordID == launch.RecordID && record.Target == launch.Target && record.Caller == launch.Caller && record.Actor == launch.Actor && record.Generation == launch.Generation && record.Root == launch.Root
+}
+
+// A fresh explicit prepare may retire only its admitted in-memory original.
+// The actual close and native absence barrier remain in prepareGuestWorker.
+func (s *GuestService) validateCurrentGuestLaunch(ctx context.Context, key, id string, active, launch guestWorkerRecord) error {
+	expectedKey := guestDigest([]string{string(active.Target), string(active.Caller), string(active.Actor), active.Generation})
+	if expectedKey != key || !sameGuestLaunch(active, launch) || !validGuestWorker(active.Identity) || !validGuestRoot(active.Root) || active.Identity.SID != active.Root.Owner {
+		return ErrGuestUncertain
+	}
+	for _, suffix := range []string{".worker", ".ready"} {
+		var original guestWorkerRecord
+		if err := s.store.read(ctx, id, suffix, &original); err != nil || !reflect.DeepEqual(original, active) {
+			return ErrGuestUncertain
+		}
+	}
+	return ctx.Err()
 }
