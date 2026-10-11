@@ -119,7 +119,7 @@ func writeGuestFixtureClientKey(t *testing.T, sd *statedir.StateDir) gossh.Signe
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = writeGuestPrivateFixture(t, filepath.Join(sd.KeysDir(), "default.key"), pem.EncodeToMemory(block)); err != nil {
+	if err = writeGuestFixtureKeyMaterial(t, sd, pem.EncodeToMemory(block)); err != nil {
 		t.Fatal(err)
 	}
 
