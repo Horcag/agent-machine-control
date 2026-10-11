@@ -49,6 +49,14 @@ func (p *guestConfigurationProvider) Current(ctx context.Context, targetRef doma
 	if err != nil {
 		return zero, err
 	}
+	user, err := p.keys.GetGuestUser(ctx, targetRef)
+	if err != nil {
+		return zero, err
+	}
+	endpoint, err := p.keys.GetGuestEndpoint(ctx, targetRef)
+	if err != nil {
+		return zero, err
+	}
 	signer, err := p.keys.GetClientSigner(ctx, targetRef)
 	if err != nil {
 		return zero, err
@@ -61,13 +69,14 @@ func (p *guestConfigurationProvider) Current(ctx context.Context, targetRef doma
 		return zero, err
 	}
 	authority, err := json.Marshal(struct {
-		Record     GuestWorkspaceRecord
-		Config     *guestssh.MachineSSHConfig
-		Actor      domain.ActorContext
-		Key        []byte
-		TokenState [][]byte
-		Enrollment string
-	}{record, config, *current, signer.PublicKey().Marshal(), p.server.authStore.ActiveBearerSecrets(), enrollment})
+		Record         GuestWorkspaceRecord
+		Config         *guestssh.MachineSSHConfig
+		User, Endpoint string
+		Actor          domain.ActorContext
+		Key            []byte
+		TokenState     [][]byte
+		Enrollment     string
+	}{record, config, user, endpoint, *current, signer.PublicKey().Marshal(), p.server.authStore.ActiveBearerSecrets(), enrollment})
 	if err != nil {
 		return zero, err
 	}

@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/Horcag/agent-machine-control/internal/auth"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -96,4 +99,43 @@ func retirementFixtureResponse(t *testing.T, input []byte, original stream.Worke
 	}
 	return json.Marshal(guestRetirementObservation{Original: original, Status: nativeStatus, Observed: observed})
 
+}
+
+func TestGuestRetirementUsesFreshOperatorAndAgentAuthority(t *testing.T) {
+	provider, _, caller, _ := newGuestConfigurationFixture(t)
+	ref := domain.MachineRef("local:11111111-1111-4111-8111-111111111111")
+	configuration, err := provider.Current(t.Context(), ref, *caller)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = provider.retirementCommandRunner(t.Context(), ref, *caller, configuration.Generation); err != nil {
+		t.Fatalf("effective default snapshot rejected: %v", err)
+	}
+	original := stream.WorkerIdentity{PID: 1234, BirthTicks: 638000000000000001, Image: "synthetic-image", SID: "synthetic-sid"}
+	runner := &retirementFakeRunner{t: t, run: func(input []byte) ([]byte, error) { return retirementFixtureResponse(t, input, original, "missing") }}
+	provider.retirementRunner = runner
+	absent, err := provider.ConfirmGuestRetirement(t.Context(), ref, caller.EffectiveActor, configuration.Generation, original)
+	if !absent || err != nil || runner.calls != 1 {
+		t.Fatalf("fresh original authority: %v %v calls=%d", absent, err, runner.calls)
+	}
+	agent, err := provider.retirementActor(t.Context(), auth.AgentMCPPrincipal)
+	if err != nil || agent.EffectiveActor != auth.AgentMCPPrincipal {
+		t.Fatalf("agent principal resolution: %+v %v", agent, err)
+	}
+	if _, err = provider.retirementActor(t.Context(), "operator:foreign"); !errors.Is(err, app.ErrGuestAuthority) {
+		t.Fatalf("foreign actor adopted: %v", err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err = provider.retirementActor(ctx, caller.EffectiveActor); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled authority resolved: %v", err)
+	}
+	path := filepath.Join(provider.server.stateDir.AuthDir(), auth.OperatorTokenFileName)
+	if err = os.WriteFile(path, []byte(strings.Repeat("a", 64)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	absent, err = provider.ConfirmGuestRetirement(t.Context(), ref, caller.EffectiveActor, configuration.Generation, original)
+	if absent || !errors.Is(err, app.ErrGuestAuthority) || runner.calls != 1 {
+		t.Fatalf("revocation did not block observation: %v %v calls=%d", absent, err, runner.calls)
+	}
 }

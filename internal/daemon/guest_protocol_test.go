@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/Horcag/agent-machine-control/internal/app"
+	"github.com/Horcag/agent-machine-control/internal/auth"
+	"github.com/Horcag/agent-machine-control/internal/domain"
 	"io"
 	"net"
 	"net/http"
@@ -98,5 +100,88 @@ func TestGuestInboundCancellationUnblocksRead(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("inbound cancellation did not interrupt body read")
+	}
+}
+
+func TestGuestHTTPRejectsUnsupportedConnectionAndMethods(t *testing.T) {
+	server := &Server{}
+	for _, tc := range []struct {
+		method string
+		status int
+	}{{http.MethodGet, 405}, {http.MethodPost, 400}} {
+		request := httptest.NewRequest(tc.method, "/v1/guest/operations", strings.NewReader("untrusted"))
+		response := httptest.NewRecorder()
+		server.handleGuestOperation(response, request)
+		if response.Code != tc.status {
+			t.Fatalf("method=%s status=%d", tc.method, response.Code)
+		}
+	}
+	response := httptest.NewRecorder()
+	server.handleGuestApproval(response, httptest.NewRequest(http.MethodGet, "/v1/guest/approvals", nil))
+	if response.Code != 405 {
+		t.Fatal("approval method admitted")
+	}
+}
+func TestGuestApprovalRejectsUntrustedAuthorityAndEnvelope(t *testing.T) {
+	server := &Server{}
+	operator := domain.ActorContext{AuthenticatedCaller: "operator:synthetic", EffectiveActor: "operator:synthetic", CallerPermissions: domain.NewScopeSet(domain.ScopeSessionAdmin), EffectivePermissions: domain.NewScopeSet(domain.ScopeSessionAdmin)}
+	delegated := operator.Clone()
+	delegated.EffectiveActor = auth.AgentMCPPrincipal
+	for _, tc := range []struct {
+		name, body string
+		caller     *domain.ActorContext
+		status     int
+	}{
+		{"anonymous", `{}`, nil, 403}, {"delegated", `{}`, &delegated, 403}, {"unknown", `{"valid_for_millis":1000,"path":"untrusted"}`, &operator, 400}, {"duplicate", `{"valid_for_millis":1000,"valid_for_millis":300000}`, &operator, 400}, {"overflow", `{"valid_for_millis":9223372036854775807}`, &operator, 400}, {"too-short", `{"valid_for_millis":999}`, &operator, 400},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "/v1/guest/approvals", strings.NewReader(tc.body))
+			if tc.caller != nil {
+				r = r.WithContext(context.WithValue(r.Context(), callerContextKey, *tc.caller))
+			}
+			w := httptest.NewRecorder()
+			server.handleGuestApproval(w, r)
+			if w.Code != tc.status {
+				t.Fatalf("authority/envelope status=%d", w.Code)
+			}
+		})
+	}
+}
+func TestGuestHTTPFramingRejectsWholeBodyMismatch(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		contentType string
+		length      int64
+		deadline    time.Time
+	}{
+		{"wrong-type", "application/json", 0, time.Now().Add(time.Minute)}, {"unknown-length", GuestContentType, -1, time.Now().Add(time.Minute)}, {"unbound-payload", GuestContentType, 0, time.Now().Add(time.Minute)}, {"missing-deadline", GuestContentType, 0, time.Time{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := app.GuestOperationParams{Operation: "put", Size: 3, Deadline: tc.deadline}
+			if tc.name == "missing-deadline" {
+				p.Size = 0
+			}
+			data, _ := json.Marshal(p)
+			var body bytes.Buffer
+			_ = binary.Write(&body, binary.BigEndian, uint32(len(data)))
+			body.Write(data)
+			r := httptest.NewRequest(http.MethodPost, "/", &body)
+			r.Header.Set("Content-Type", tc.contentType)
+			if tc.length < 0 {
+				r.ContentLength = tc.length
+			}
+			if _, err := readGuestHTTPRequest(r); err == nil {
+				t.Fatal("whole-body framing admitted")
+			}
+		})
+	}
+}
+func TestGuestHTTPServiceFailureHasBoundedTrailer(t *testing.T) {
+	server, token, fixture := newGuestHTTPServiceFixture(t)
+	p, _ := guestHTTPCase("prepare", "")
+	p.Operation = "adopt-arbitrary-root"
+	final, body := invokeGuestHTTPFixture(t, server.URL, token, p, nil)
+	if final.Error == "" || len(body) != 0 || len(fixture.operations) != 0 {
+		t.Fatalf("invalid operation escaped shared admission: %+v %q %v", final, body, fixture.operations)
 	}
 }

@@ -146,13 +146,22 @@ func decodeGuestRetirement(data []byte, original stream.WorkerIdentity) (bool, e
 // frozenGuestKeys retains the exact enrollment-approved route across a single
 // observation. It is not a reusable credential cache or a revocation fallback.
 type frozenGuestKeys struct {
-	config   guestssh.MachineSSHConfig
-	signer   gossh.Signer
-	callback gossh.HostKeyCallback
+	config         guestssh.MachineSSHConfig
+	user, endpoint string
+	signer         gossh.Signer
+	callback       gossh.HostKeyCallback
 }
 
 func freezeGuestKeys(ctx context.Context, keys guestssh.KeyProvider, target domain.MachineRef) (*frozenGuestKeys, error) {
 	config, err := guestMachineConfig(ctx, keys, target)
+	if err != nil {
+		return nil, err
+	}
+	user, err := keys.GetGuestUser(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	endpoint, err := keys.GetGuestEndpoint(ctx, target)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +173,7 @@ func freezeGuestKeys(ctx context.Context, keys guestssh.KeyProvider, target doma
 	if err != nil {
 		return nil, err
 	}
-	return &frozenGuestKeys{*config, signer, callback}, nil
+	return &frozenGuestKeys{config: *config, user: user, endpoint: endpoint, signer: signer, callback: callback}, nil
 }
 func (k *frozenGuestKeys) GetMachineConfig(domain.MachineRef) (*guestssh.MachineSSHConfig, error) {
 	configuration := k.config
@@ -177,8 +186,8 @@ func (k *frozenGuestKeys) GetHostKeyCallback(context.Context, domain.MachineRef)
 	return k.callback, nil
 }
 func (k *frozenGuestKeys) GetGuestUser(context.Context, domain.MachineRef) (string, error) {
-	return k.config.User, nil
+	return k.user, nil
 }
 func (k *frozenGuestKeys) GetGuestEndpoint(context.Context, domain.MachineRef) (string, error) {
-	return k.config.Endpoint, nil
+	return k.endpoint, nil
 }
