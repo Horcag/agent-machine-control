@@ -60,6 +60,10 @@ func (s *GuestService) run(ctx context.Context, p GuestOperationParams, op domai
 	attempted = true
 	result, err := s.transport.Execute(ctx, op.Target, key, config.Generation, request, input, output)
 	if err != nil {
+		var failure *stream.WorkerFailure
+		if errors.As(err, &failure) && failure.Valid() {
+			return out, errors.Join(ErrGuestUncertain, &stream.WorkerFailure{Stage: failure.Stage, NativeError: failure.NativeError})
+		}
 		return out, ErrGuestUncertain
 	}
 	out, err = verifiedGuestResult(id, worker.Identity, result, input, output)

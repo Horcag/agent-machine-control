@@ -17,7 +17,7 @@ internal static class Native {
     [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetFileInformationByHandle(SafeFileHandle handle,out Info info);
     [StructLayout(LayoutKind.Sequential)] struct FileIDInfo { public ulong Volume;[MarshalAs(UnmanagedType.ByValArray,SizeConst=16)]public byte[] ID; }
     [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetFileInformationByHandleEx(SafeFileHandle handle,int type,out FileIDInfo info,uint size);
-    static FileIDInfo FileID(SafeFileHandle handle){FileIDInfo info;if(!GetFileInformationByHandleEx(handle,18,out info,24))throw new IOException("file_id_unavailable");return info;}
+    static FileIDInfo FileID(SafeFileHandle handle){FileIDInfo info;if(!GetFileInformationByHandleEx(handle,18,out info,24))throw Failure.LastError("file_id_read");return info;}
     [DllImport("kernel32.dll",SetLastError=true)] static extern bool SetFileInformationByHandle(SafeFileHandle handle,int type,byte[] data,uint size);
     [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern uint GetFileAttributes(string path);
     [DllImport("advapi32.dll",SetLastError=true)] static extern bool GetKernelObjectSecurity(SafeFileHandle handle,uint requested,byte[] descriptor,uint length,out uint needed);
@@ -25,21 +25,22 @@ internal static class Native {
         if(String.IsNullOrEmpty(path)||path.IndexOfAny(new char[]{'*','?','\0'})>=0||!Path.IsPathRooted(path)||path.StartsWith(@"\\")||path.IndexOf(':',2)>=0)throw new InvalidDataException();
         string full=Path.GetFullPath(path);if(full.Length>240||full.Length<4)throw new InvalidDataException();return full;
     }
-    static SafeFileHandle Handle(string path,uint access,uint share,uint creation,uint flags=0) {
-        SafeFileHandle handle=null;try{using(var privilege=new SecurityPrivilege())handle=CreateFile(path,access,share,IntPtr.Zero,creation,0x02200000|flags,IntPtr.Zero);}catch{if(handle!=null)handle.Dispose();throw;} // OPEN_REPARSE_POINT | BACKUP_SEMANTICS
+    static SafeFileHandle Handle(string path,uint access,uint share,uint creation,uint flags=0,string stage="file_open") {
+        SafeFileHandle handle=null;try{using(var privilege=new SecurityPrivilege()){handle=CreateFile(path,access,share,IntPtr.Zero,creation,0x02200000|flags,IntPtr.Zero);if(handle.IsInvalid)throw Failure.LastError(stage);}}catch{if(handle!=null)handle.Dispose();throw;} // OPEN_REPARSE_POINT | BACKUP_SEMANTICS
         if(handle.IsInvalid){handle.Dispose();throw new IOException("file_unavailable");}
         try {Info info=Metadata(handle);if((info.Attributes&0x400)!=0)throw new IOException("reparse_point");return handle;}catch{handle.Dispose();throw;}
     }
-    static Info Metadata(SafeFileHandle handle){Info info;if(!GetFileInformationByHandle(handle,out info))throw new IOException("identity_unavailable");return info;}
+    static Info Metadata(SafeFileHandle handle){Info info;if(!GetFileInformationByHandle(handle,out info))throw Failure.LastError("metadata_read");return info;}
     static long Birth(Info info){return ((long)info.Creation.dwHighDateTime<<32)|(uint)info.Creation.dwLowDateTime;}
 
     static RawSecurityDescriptor Security(SafeFileHandle handle) {
         // Require all SDDL sections, including SACL. Missing privilege is a
         // preserved/inaccessible result, never a weakened identity fallback.
         uint needed;GetKernelObjectSecurity(handle,15,null,0,out needed);
-        if(needed==0||needed>65536)throw new IOException("security_identity_unavailable");
-        byte[] bytes=new byte[needed];if(!GetKernelObjectSecurity(handle,15,bytes,needed,out needed))throw new IOException("security_identity_unavailable");
-        return new RawSecurityDescriptor(bytes,0);
+        if(needed==0)throw Failure.LastError("security_size");
+        if(needed>65536)throw new NativeFailure("security_size",0);
+        byte[] bytes=new byte[needed];if(!GetKernelObjectSecurity(handle,15,bytes,needed,out needed))throw Failure.LastError("security_read");
+        try{return new RawSecurityDescriptor(bytes,0);}catch{throw new NativeFailure("security_parse",0);}
     }
     static string SecurityHash(RawSecurityDescriptor descriptor) {
         using(var sha=SHA256.Create())return Worker.Hex(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(descriptor.GetSddlForm(AccessControlSections.All))));
@@ -55,10 +56,10 @@ internal static class Native {
         var parents=new Parents();try {
             string root=Path.GetPathRoot(path);string parent=System.IO.Path.GetDirectoryName(path);
             parents.Path=parent;string current=root;
-            parents.Handles.Add(Handle(current,0x01020080,1,3)); // full security read; sharing read only excludes rename/write
+            parents.Handles.Add(Handle(current,0x01020080,1,3,0,"ancestor_open")); // full security read; sharing read only excludes rename/write
             string remainder=parent.Substring(root.Length);
             foreach(string component in remainder.Split(new char[]{'\\'},StringSplitOptions.RemoveEmptyEntries)) {
-                current=System.IO.Path.Combine(current,component);parents.Handles.Add(Handle(current,0x01020080,1,3));
+                current=System.IO.Path.Combine(current,component);parents.Handles.Add(Handle(current,0x01020080,1,3,0,current==parent?"workspace_open":"ancestor_open"));
             }
             return parents;
         }catch{parents.Dispose();throw;}
@@ -79,8 +80,8 @@ internal static class Native {
         internal void Delete(){Disposition(true);}
         // ON_CLOSE | DO_NOT_DELETE clears atomic FILE_FLAG_DELETE_ON_CLOSE.
         // Legacy FileDispositionInfo cannot clear a create-time delete-on-close flag.
-        internal void Commit(){byte[] flags=BitConverter.GetBytes(8u);if(!SetFileInformationByHandle(Handle,21,flags,4))throw new IOException("atomic_commit_unsupported");}
-        void Disposition(bool delete){byte[] disposition=new byte[]{delete?(byte)1:(byte)0};if(!SetFileInformationByHandle(Handle,4,disposition,1))throw new IOException("disposition_failed");}
+        internal void Commit(){byte[] flags=BitConverter.GetBytes(8u);if(!SetFileInformationByHandle(Handle,21,flags,4))throw Failure.LastError("file_commit");}
+        void Disposition(bool delete){byte[] disposition=new byte[]{delete?(byte)1:(byte)0};if(!SetFileInformationByHandle(Handle,4,disposition,1))throw Failure.LastError("file_delete");}
         public void Dispose(){Stream.Dispose();}
     }
     internal static File Create(string path){

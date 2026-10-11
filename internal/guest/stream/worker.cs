@@ -15,6 +15,7 @@ public static class Worker {
     static Stream input, output;
     static Dictionary<string,object> identity;
     static Runspace runspace;
+    static bool responseStarted;
     static byte[] Exact(int count) {
         byte[] data = new byte[count]; int position = 0;
         while (position < count) { int n = input.Read(data, position, count-position); if (n == 0) throw new EndOfStreamException(); position += n; }
@@ -27,6 +28,7 @@ public static class Worker {
     }
     static void Control(object value) {
         byte[] body = Encoding.UTF8.GetBytes(JSON.Serialize(value)); if (body.Length > 262144) throw new InvalidDataException();
+        responseStarted=true;
         byte[] h = BitConverter.GetBytes((uint)body.Length); Array.Reverse(h); output.Write(h,0,4); output.Write(body,0,body.Length); output.Flush();
     }
     static string Text(Dictionary<string,object> value,string key) { object v; return value.TryGetValue(key,out v) ? Convert.ToString(v,System.Globalization.CultureInfo.InvariantCulture) : ""; }
@@ -54,21 +56,33 @@ public static class Worker {
         input=stdin;output=stdout;var process=Process.GetCurrentProcess();
         identity=new Dictionary<string,object>{{"pid",process.Id},{"birthTicks",process.StartTime.ToUniversalTime().Ticks},{"image",process.MainModule.FileName},{"sid",WindowsIdentity.GetCurrent().User.Value}};
         Control(identity);
-        using(runspace=RunspaceFactory.CreateRunspace()) { runspace.Open();
+        try {
             for(;;) {
                 Dictionary<string,object> request;try {request=ReadControl();} catch(EndOfStreamException){return;}
                 // Malformed or interrupted requests terminate the channel, never replay.
-                DateTime deadline=Deadline(request);Fresh(deadline);
-                string id=Text(request,"id"),operation=Text(request,"operation");long size=Number(request,"size"),limit=Number(request,"maxOutput");
-                if(id.Length==0||id.Length>128||size<0||size>(1L<<40)||limit<0||limit>(1L<<40)) throw new InvalidDataException();
-                if(operation=="observe") Observe(request,id,deadline);
-                else if(operation=="put") Put(request,id,size,deadline);
-                else if(operation=="get") Get(request,id,limit,deadline);
-                else if(operation=="exec") Exec(request,id,size,limit,deadline);
-                else if(operation=="remove-owned") Remove(request,id,deadline);
-                else throw new InvalidDataException();
+                string id=Text(request,"id");if(id.Length==0||id.Length>128)throw new InvalidDataException();
+                responseStarted=false;string stage="request";
+                try {
+                    DateTime deadline=Deadline(request);Fresh(deadline);
+                    string operation=Text(request,"operation");long size=Number(request,"size"),limit=Number(request,"maxOutput");
+                    if(size<0||size>(1L<<40)||limit<0||limit>(1L<<40))throw new InvalidDataException();
+                    if(operation!="observe"&&operation!="put"&&operation!="get"&&operation!="exec"&&operation!="remove-owned")throw new InvalidDataException();
+                    stage="runspace_open";
+                    if(runspace==null){runspace=RunspaceFactory.CreateRunspace();runspace.Open();}
+                    stage=operation=="remove-owned"?"remove_owned":operation;
+                    if(operation=="observe") Observe(request,id,deadline);
+                    else if(operation=="put") Put(request,id,size,deadline);
+                    else if(operation=="get") Get(request,id,limit,deadline);
+                    else if(operation=="exec") Exec(request,id,size,limit,deadline);
+                    else Remove(request,id,deadline);
+                } catch(Exception error) {
+                    // A partial response cannot safely become a new control frame.
+                    if(responseStarted)throw;
+                    var result=Result(id,"failed",0,Digest(new byte[0]),1);
+                    result["failure"]=Failure.Metadata(error,stage);Empty(result);return;
+                }
             }
-        }
+        } finally {if(runspace!=null)runspace.Dispose();}
     }
     static void Observe(Dictionary<string,object> request,string id,DateTime deadline) {
         string path=Native.FullPath(Text(request,"path"));

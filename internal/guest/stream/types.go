@@ -86,4 +86,5 @@ type Result struct {
 	Root     *RootIdentity  `json:"root,omitempty"`
 	Files    []FileIdentity `json:"files,omitempty"`
 	Removed  []Removal      `json:"removed,omitempty"`
+	Failure  *WorkerFailure `json:"failure,omitempty"`
 }

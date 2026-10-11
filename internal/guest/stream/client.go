@@ -115,6 +115,9 @@ func receiveResult(ch io.Reader, req Request, output io.Writer, identity WorkerI
 	if header.ID != req.ID || header.Size < 0 || header.Size > req.MaxOutput || header.Worker != identity {
 		return Result{}, ErrProtocol
 	}
+	if invalidFailureHeader(header) {
+		return Result{}, ErrProtocol
+	}
 	if output == nil {
 		output = io.Discard
 	}
@@ -129,7 +132,7 @@ func receiveResult(ch io.Reader, req Request, output io.Writer, identity WorkerI
 	if result.ID != req.ID || result.Worker != identity || result.Size != header.Size || !validDigest(result.SHA256) || digest != result.SHA256 {
 		return result, ErrIntegrity
 	}
-	return result, nil
+	return result, verifyWorkerFailure(header, result)
 }
 
 func sendPayload(ch io.Writer, req Request, input io.Reader) error {

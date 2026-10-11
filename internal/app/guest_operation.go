@@ -128,9 +128,18 @@ func (s *GuestService) Execute(ctx context.Context, p GuestOperationParams, inpu
 		dispatched = true
 		var runErr error
 		out, effectApplied, runErr = s.dispatchGuest(execCtx, p, op, config, key, recordID, input, transportOutput)
-		return sessionMutationResult{EffectApplied: effectApplied, ExitCode: out.ExitCode, EvidenceRefs: []string{"guest-operation-dispatched"}}, runErr
+		return sessionMutationResult{EffectApplied: effectApplied, ExitCode: out.ExitCode, EvidenceRefs: guestEvidenceRefs(runErr)}, runErr
 	})
 	return s.finishGuest(ctx, p, config, out, rcpt, err, dispatched, effectApplied, recordID, spool, sink)
+}
+
+func guestEvidenceRefs(err error) []string {
+	refs := []string{"guest-operation-dispatched"}
+	var failure *stream.WorkerFailure
+	if errors.As(err, &failure) && failure.Valid() {
+		refs = append(refs, fmt.Sprintf("guest-worker-failure:%s:%d", failure.Stage, failure.NativeError))
+	}
+	return refs
 }
 
 func (s *GuestService) dispatchGuest(ctx context.Context, p GuestOperationParams, op domain.Operation, config GuestConfiguration, key, id string, input io.Reader, output io.Writer) (GuestOperationResult, bool, error) {

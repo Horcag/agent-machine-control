@@ -29,6 +29,10 @@ namespace System.Web.Script.Serialization {
 namespace AMCStream {
  public static class IdentityRegression {
   public static void Check(){
+   var failure=Failure.Metadata(new System.Exception(@"C:\private\secret SDDL token"),"observe");
+   if(failure.Count!=2||(string)failure["stage"]!="observe"||(uint)failure["nativeError"]!=0)throw new System.Exception("exception text retained");
+   failure=Failure.Metadata(new NativeFailure("security_enable",1300),"observe");
+   if(failure.Count!=2||(string)failure["stage"]!="security_enable"||(uint)failure["nativeError"]!=1300)throw new System.Exception("native diagnostic lost");
    var a=new System.Collections.Generic.Dictionary<string,object>();var b=new System.Collections.Generic.Dictionary<string,object>();
    string[] keys={"path","volume","fileId","creationTime","owner","sddlHash","size","sha256","rootPath","rootVolume","rootFileId","rootCreationTime","rootOwner","rootSDDLHash"};
    foreach(var key in keys){a[key]="original";b[key]="original";}
