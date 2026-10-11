@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/Horcag/agent-machine-control/internal/domain"
+	"github.com/Horcag/agent-machine-control/internal/sessions"
 )
 
 func guestDigest(value any) string {
@@ -130,6 +132,7 @@ func (s *GuestService) Execute(ctx context.Context, p GuestOperationParams, inpu
 		return sessionMutationResult{EffectApplied: effect, ExitCode: out.ExitCode, EvidenceRefs: []string{"guest-operation-dispatched"}}, runErr
 	})
 	out.Receipt = rcpt
+	out.CachedReceipt = !dispatched && rcpt != nil
 	if !dispatched && err == nil && rcpt != nil {
 		var cached GuestOperationResult
 		if readErr := s.store.read(ctx, recordID, ".result", &cached); readErr != nil {
@@ -139,7 +142,7 @@ func (s *GuestService) Execute(ctx context.Context, p GuestOperationParams, inpu
 		cached.CachedReceipt = true
 		out = cached
 	}
-	if err != nil && effectApplied {
+	if err != nil && (effectApplied || errors.Is(err, sessions.ErrMutationEffectUnknown) || errors.Is(err, sessions.ErrMutationFinalizationPending) || (rcpt != nil && rcpt.Outcome.Status == domain.OutcomeFailed && slices.Contains(rcpt.EvidenceRefs, "guest-operation-dispatched"))) {
 		err = errors.Join(ErrGuestUncertain, err)
 	}
 	return out, err

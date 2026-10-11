@@ -259,7 +259,7 @@ func TestGuestUncertainOperationNeverReplays(t *testing.T) {
 	}
 	h.transport.fail = false
 	_, err = h.service.Execute(context.Background(), p, strings.NewReader("x"), io.Discard)
-	if err == nil || h.transport.executed != 2 {
+	if !errors.Is(err, ErrGuestUncertain) || h.transport.executed != 2 {
 		t.Fatalf("uncertain replay %v executions %d", err, h.transport.executed)
 	}
 }
