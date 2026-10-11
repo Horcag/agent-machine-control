@@ -19,6 +19,10 @@ func (s *SessionService) evaluatePolicy(ctx context.Context, op domain.Operation
 		return policy.Decision{}, err
 	}
 
+	capabilities := domain.SessionCapabilities()
+	if domain.IsGuestOperation(op.Kind) {
+		capabilities[domain.CapabilityGuestOperation] = struct{}{}
+	}
 	evalInput := policy.EvaluationInput{
 		Operation:               op,
 		Now:                     now,
@@ -26,7 +30,7 @@ func (s *SessionService) evaluatePolicy(ctx context.Context, op domain.Operation
 		RollbackState:           rollbackState,
 		Approval:                approval,
 		RollbackPolicy:          policy.RollbackPolicyEscalateToDestructive,
-		AvailableCapabilities:   domain.SessionCapabilities(),
+		AvailableCapabilities:   capabilities,
 		SensitiveEvidenceScopes: domain.NewScopeSet("evidence:sensitive", policy.DefaultSensitiveEvidenceScope),
 	}
 

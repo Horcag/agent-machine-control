@@ -202,6 +202,14 @@ func ValidateOperationParameters(kind OperationKind, params map[string]any) erro
 }
 
 func specialOperationParameterValidator(kind OperationKind) func(map[string]any) error {
+	if IsGuestOperation(kind) {
+		return func(params map[string]any) error {
+			if params["operation"] != strings.TrimPrefix(string(kind), "guest.") {
+				return ErrNonCanonicalParameter
+			}
+			return validateGuestOperationParams(params)
+		}
+	}
 	switch kind {
 	case "console.input":
 		return validateConsoleInputParams
