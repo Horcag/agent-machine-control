@@ -85,3 +85,17 @@ func TestObserveRequiresExactPathAndUploadPreflight(t *testing.T) {
 		t.Fatal("upload without original root")
 	}
 }
+
+func TestDownloadRequiresOneOriginalReferenceForExactPath(t *testing.T) {
+	req := Request{ID: "owned-download", Operation: "get", Path: `C:\synthetic\workspace\payload`, DeadlineUTC: time.Now().Add(time.Minute), MaxOutput: 64}
+	for _, refs := range [][]FileIdentity{nil, {{Path: `C:\synthetic\foreign\payload`}}, {{Path: req.Path}, {Path: req.Path}}} {
+		req.Owned = refs
+		if !errors.Is(validate(req), ErrRequest) {
+			t.Fatal("accepted missing, foreign or ambiguous ownership reference")
+		}
+	}
+	req.Owned = []FileIdentity{{Path: req.Path}}
+	if err := validate(req); err != nil {
+		t.Fatal(err)
+	}
+}

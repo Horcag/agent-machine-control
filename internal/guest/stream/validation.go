@@ -42,7 +42,7 @@ func validateReferences(req Request) error {
 			return ErrRequest
 		}
 	case "get":
-		if req.MaxOutput == 0 || req.Path == "" {
+		if req.MaxOutput == 0 || req.Path == "" || len(req.Owned) != 1 || req.Owned[0].Path != req.Path {
 			return ErrRequest
 		}
 	case "remove-owned":

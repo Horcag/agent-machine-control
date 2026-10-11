@@ -95,8 +95,16 @@ public static class Worker {
     }
     static void Get(Dictionary<string,object> request,string id,long limit,DateTime deadline) {
         string path=Native.FullPath(Text(request,"path"));
+        var owned=(System.Collections.IList)request["owned"];
+        if(owned.Count!=1)throw new InvalidDataException();
+        var expected=(Dictionary<string,object>)owned[0];
         using(var roots=Native.LockParents(path)) using(var file=Native.Open(path)) {
             long size=file.Stream.Length;if(size>limit)throw new InvalidDataException();
+            Fresh(deadline);
+            // Verify the held original file, root, security and contents before
+            // emitting any bytes. A substituted path must not disclose data.
+            var original=file.Identity(path,roots);
+            if(!Native.Same(expected,original))throw new InvalidDataException();
             Fresh(deadline);Control(Result(id,"payload",size,"",0));
             string hash=Transfer(file.Stream,output,size,deadline);Fresh(deadline);
             var result=Result(id,"ok",size,hash,0);result["files"]=new object[]{file.Identity(path,roots,hash)};Control(result);
