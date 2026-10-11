@@ -187,6 +187,7 @@ func (a *Adapter) BuildServer() *mcp.Server {
 		},
 	})
 
+	a.addGuestTools(server)
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "doctor",
 		Description: "Return host diagnostics and provider capabilities",

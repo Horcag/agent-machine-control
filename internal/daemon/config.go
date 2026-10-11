@@ -11,6 +11,8 @@ import (
 
 // Config holds runtime options for the amcd daemon server.
 type Config struct {
+	GuestConfigProvider    app.GuestConfigProvider
+	GuestTransport         app.GuestTransport
 	StateDir               string
 	ListenAddr             string
 	ShutdownTimeout        time.Duration
