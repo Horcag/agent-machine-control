@@ -49,10 +49,6 @@ func (s *GuestService) Shutdown(ctx context.Context) error {
 		return errors.Join(ErrGuestUncertain, err)
 	}
 	s.mu.Lock()
-	if s.shutdownDone {
-		s.mu.Unlock()
-		return nil
-	}
 	workers := maps.Clone(s.workers)
 	s.mu.Unlock()
 	var result error
@@ -60,16 +56,23 @@ func (s *GuestService) Shutdown(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return errors.Join(result, ErrGuestUncertain, err)
 		}
-		result = errors.Join(result, s.retireWorkerContext(ctx, key, worker, false))
+		err := s.retireWorkerContext(ctx, key, worker, false)
+		result = errors.Join(result, err)
+		if err == nil {
+			s.mu.Lock()
+			if s.workers[key].RecordID == worker.RecordID {
+				delete(s.workers, key)
+			}
+			s.mu.Unlock()
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return errors.Join(result, ErrGuestUncertain, err)
 	}
-	if result == nil {
-		s.mu.Lock()
-		s.shutdownDone = true
-		s.mu.Unlock()
-	}
+	result = errors.Join(result, s.reconcileShutdownObligations(ctx))
+	s.mu.Lock()
+	s.shutdownDone = result == nil
+	s.mu.Unlock()
 	return result
 }
 
