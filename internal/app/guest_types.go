@@ -98,13 +98,14 @@ type guestWorkerRecord struct {
 }
 
 type GuestService struct {
-	session   *SessionService
-	resolver  SessionTargetResolver
-	config    GuestConfigProvider
-	transport GuestTransport
-	store     *GuestStore
-	mu        sync.Mutex
-	workers   map[string]guestWorkerRecord
+	session    *SessionService
+	resolver   SessionTargetResolver
+	config     GuestConfigProvider
+	transport  GuestTransport
+	store      *GuestStore
+	mu         sync.Mutex
+	workers    map[string]guestWorkerRecord
+	spoolBytes int64
 }
 
 func NewGuestService(session *SessionService, resolver SessionTargetResolver, config GuestConfigProvider, transport GuestTransport, store *GuestStore) *GuestService {

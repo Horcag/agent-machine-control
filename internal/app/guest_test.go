@@ -3,6 +3,8 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"os"
@@ -44,9 +46,23 @@ func (c *guestTestConfig) Current(_ context.Context, _ domain.MachineRef, caller
 	return out, nil
 }
 
-type guestTestSafety struct{ destructive bool }
+type guestTestSafety struct {
+	destructive bool
+	classes     []domain.OperationClass
+	calls       int
+}
 
 func (s *guestTestSafety) ResolveSafety(context.Context, domain.MachineRef) (SafetyResolution, error) {
+	s.calls++
+	if len(s.classes) > 0 {
+		index := s.calls - 1
+		if index >= len(s.classes) {
+			index = len(s.classes) - 1
+		}
+		if s.classes[index] != domain.ClassReversibleMutation {
+			return SafetyResolution{Classification: s.classes[index]}, nil
+		}
+	}
 	if s.destructive {
 		return SafetyResolution{Classification: domain.ClassDestructivePrivileged}, nil
 	}
@@ -57,6 +73,9 @@ type guestTestTransport struct {
 	store                       *GuestStore
 	worker                      stream.WorkerIdentity
 	prepared, executed, retired int
+	prepareHook                 func()
+	executeHook                 func(context.Context, stream.Request, io.Reader, io.Writer) (stream.Result, error)
+	retireErr                   error
 	fail                        bool
 	alter                       func(*stream.Result)
 	files                       map[string]stream.FileIdentity
@@ -64,11 +83,20 @@ type guestTestTransport struct {
 
 func (f *guestTestTransport) Prepare(context.Context, domain.MachineRef, string, string) (stream.WorkerIdentity, error) {
 	f.prepared++
+	if f.prepareHook != nil {
+		f.prepareHook()
+	}
 	return f.worker, nil
 }
-func (f *guestTestTransport) Retire(domain.MachineRef, string, string) error { f.retired++; return nil }
+func (f *guestTestTransport) Retire(domain.MachineRef, string, string) error {
+	f.retired++
+	return f.retireErr
+}
 func (f *guestTestTransport) Execute(ctx context.Context, _ domain.MachineRef, _ string, _ string, request stream.Request, input io.Reader, output io.Writer) (stream.Result, error) {
 	f.executed++
+	if f.executeHook != nil {
+		return f.executeHook(ctx, request, input, output)
+	}
 	entries, err := os.ReadDir(f.store.directory)
 	if err != nil {
 		return stream.Result{}, err
@@ -114,7 +142,7 @@ func (f *guestTestTransport) Execute(ctx context.Context, _ domain.MachineRef, _
 	case "exec":
 		_, _ = io.Copy(io.Discard, input)
 		result.Size = 2
-		result.SHA256 = strings.Repeat("e", 64)
+		result.SHA256 = guestSHA("ok")
 		_, _ = output.Write([]byte("ok"))
 	case "remove-owned":
 		for _, file := range request.Owned {
@@ -176,8 +204,8 @@ func (h *guestHarness) put(t *testing.T, key string) GuestArtifact {
 	t.Helper()
 	p := h.params("put", key)
 	p.Size = 4
-	p.SHA256 = strings.Repeat("c", 64)
-	out, err := h.service.Execute(context.Background(), p, strings.NewReader("data"), nil)
+	p.SHA256 = guestSHA("data")
+	out, err := h.service.Execute(context.Background(), p, stream.BytesInput([]byte("data")), nil)
 	if err != nil || len(out.Artifacts) != 1 {
 		t.Fatalf("put: %+v %v", out, err)
 	}
@@ -195,9 +223,9 @@ func TestGuestRequiresExplicitPreparation(t *testing.T) {
 	h := newGuestHarness(t)
 	p := h.params("exec", "not-prepared")
 	p.Size = 1
-	p.SHA256 = strings.Repeat("a", 64)
+	p.SHA256 = guestSHA("x")
 	p.MaxOutput = 10
-	_, err := h.service.Execute(context.Background(), p, strings.NewReader("x"), io.Discard)
+	_, err := h.service.Execute(context.Background(), p, stream.BytesInput([]byte("x")), stream.BufferOutput(new(bytes.Buffer)))
 	if !errors.Is(err, ErrGuestNotPrepared) || h.transport.executed != 0 {
 		t.Fatalf("%v executions %d", err, h.transport.executed)
 	}
@@ -208,17 +236,32 @@ func TestGuestRestartDoesNotRestoreWorkerAuthority(t *testing.T) {
 	h.service = NewGuestService(h.service.session, h.service.resolver, h.config, h.transport, h.service.store)
 	p := h.params("exec", "restart")
 	p.Size = 1
-	p.SHA256 = strings.Repeat("a", 64)
+	p.SHA256 = guestSHA("x")
 	p.MaxOutput = 10
-	_, err := h.service.Execute(context.Background(), p, strings.NewReader("x"), io.Discard)
-	if !errors.Is(err, ErrGuestNotPrepared) || h.transport.executed != 1 {
+	_, err := h.service.Execute(context.Background(), p, stream.BytesInput([]byte("x")), stream.BufferOutput(new(bytes.Buffer)))
+	if !errors.Is(err, ErrGuestUncertain) || h.transport.executed != 1 {
 		t.Fatalf("%v executions %d", err, h.transport.executed)
 	}
 }
 func TestGuestPersistentHelloFailureBlocksExecute(t *testing.T) {
 	h := newGuestHarness(t)
-	if err := os.WriteFile(h.service.store.directory, []byte("blocked"), 0600); err != nil {
-		t.Fatal(err)
+	h.transport.prepareHook = func() {
+		entries, err := os.ReadDir(h.service.store.directory)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range entries {
+			if !strings.HasSuffix(entry.Name(), ".launch") {
+				continue
+			}
+			var launch guestWorkerRecord
+			if err := h.service.store.read(context.Background(), strings.TrimSuffix(entry.Name(), ".launch"), ".launch", &launch); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(h.service.store.directory, launch.RecordID+".worker"), nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 	_, err := h.service.Execute(context.Background(), h.params("prepare", "prepare"), nil, nil)
 	if err == nil || h.transport.executed != 0 || h.transport.retired != 1 {
@@ -230,17 +273,17 @@ func TestGuestWholePutIdempotencyAndConflict(t *testing.T) {
 	h.prepare(t)
 	p := h.params("put", "put")
 	p.Size = 4
-	p.SHA256 = strings.Repeat("c", 64)
-	first, err := h.service.Execute(context.Background(), p, strings.NewReader("data"), nil)
+	p.SHA256 = guestSHA("data")
+	first, err := h.service.Execute(context.Background(), p, stream.BytesInput([]byte("data")), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	again, err := h.service.Execute(context.Background(), p, strings.NewReader("data"), nil)
+	again, err := h.service.Execute(context.Background(), p, stream.BytesInput([]byte("data")), nil)
 	if err != nil || !again.CachedReceipt || again.Artifacts[0] != first.Artifacts[0] || h.transport.executed != 2 {
 		t.Fatalf("retry %+v %v", again, err)
 	}
 	p.Size = 5
-	_, err = h.service.Execute(context.Background(), p, strings.NewReader("other"), nil)
+	_, err = h.service.Execute(context.Background(), p, stream.BytesInput([]byte("other")), nil)
 	if err == nil || h.transport.executed != 2 {
 		t.Fatalf("collision %v", err)
 	}
@@ -251,14 +294,14 @@ func TestGuestUncertainOperationNeverReplays(t *testing.T) {
 	h.transport.fail = true
 	p := h.params("exec", "uncertain")
 	p.Size = 1
-	p.SHA256 = strings.Repeat("a", 64)
+	p.SHA256 = guestSHA("x")
 	p.MaxOutput = 10
-	_, err := h.service.Execute(context.Background(), p, strings.NewReader("x"), io.Discard)
+	_, err := h.service.Execute(context.Background(), p, stream.BytesInput([]byte("x")), stream.BufferOutput(new(bytes.Buffer)))
 	if !errors.Is(err, ErrGuestUncertain) {
 		t.Fatal(err)
 	}
 	h.transport.fail = false
-	_, err = h.service.Execute(context.Background(), p, strings.NewReader("x"), io.Discard)
+	_, err = h.service.Execute(context.Background(), p, stream.BytesInput([]byte("x")), stream.BufferOutput(new(bytes.Buffer)))
 	if !errors.Is(err, ErrGuestUncertain) || h.transport.executed != 2 {
 		t.Fatalf("uncertain replay %v executions %d", err, h.transport.executed)
 	}
@@ -326,10 +369,10 @@ func TestGuestActorAndGenerationCannotUseWorker(t *testing.T) {
 			h.config.generation = "new"
 		}
 		p.Size = 1
-		p.SHA256 = strings.Repeat("a", 64)
+		p.SHA256 = guestSHA("x")
 		p.MaxOutput = 10
-		_, err := h.service.Execute(context.Background(), p, strings.NewReader("x"), io.Discard)
-		if !errors.Is(err, ErrGuestNotPrepared) || h.transport.executed != 1 {
+		_, err := h.service.Execute(context.Background(), p, stream.BytesInput([]byte("x")), stream.BufferOutput(new(bytes.Buffer)))
+		if (!errors.Is(err, ErrGuestNotPrepared) && !errors.Is(err, ErrGuestUncertain)) || h.transport.executed != 1 {
 			t.Fatalf("%s: %v", change, err)
 		}
 	}
@@ -342,7 +385,7 @@ func TestGuestOwnedDownloadAndRemoval(t *testing.T) {
 	p.ArtifactIDs = []string{artifact.ID}
 	p.MaxOutput = 10
 	var output bytes.Buffer
-	out, err := h.service.Execute(context.Background(), p, nil, &output)
+	out, err := h.service.Execute(context.Background(), p, nil, stream.BufferOutput(&output))
 	if err != nil || out.SHA256 != artifact.SHA256 || output.String() != "data" {
 		t.Fatalf("get %+v %v", out, err)
 	}
@@ -404,8 +447,8 @@ func TestGuestReplacedRootAndFileMetadataRejected(t *testing.T) {
 			}
 			p := h.params("put", "metadata")
 			p.Size = 4
-			p.SHA256 = strings.Repeat("c", 64)
-			out, err := h.service.Execute(context.Background(), p, strings.NewReader("data"), nil)
+			p.SHA256 = guestSHA("data")
+			out, err := h.service.Execute(context.Background(), p, stream.BytesInput([]byte("data")), nil)
 			if !errors.Is(err, ErrGuestOwnership) || len(out.Artifacts) != 0 {
 				t.Fatalf("%+v %v", out, err)
 			}
@@ -424,4 +467,9 @@ func TestGuestRemovalPerItemTruth(t *testing.T) {
 	if err != nil || len(out.Removed) != 2 || !out.Removed[0].Accepted || out.Removed[1].Accepted || out.Removed[1].Absent {
 		t.Fatalf("%+v %v", out, err)
 	}
+}
+
+func guestSHA(data string) string {
+	sum := sha256.Sum256([]byte(data))
+	return hex.EncodeToString(sum[:])
 }

@@ -1,9 +1,9 @@
 package app
 
 import (
+	"bytes"
 	"context"
-	"io"
-	"strings"
+	"github.com/Horcag/agent-machine-control/internal/guest/stream"
 	"testing"
 	"time"
 
@@ -40,7 +40,7 @@ func TestGuestApprovalExactBeneficiaryAndPayload(t *testing.T) {
 	command := h.params("exec", "approved-command")
 	command.Caller = issuer
 	command.Size = 1
-	command.SHA256 = strings.Repeat("a", 64)
+	command.SHA256 = guestSHA("x")
 	command.MaxOutput = 10
 	commandGrant, _, err := h.service.IssueApproval(context.Background(), command, time.Minute)
 	if err != nil {
@@ -50,7 +50,7 @@ func TestGuestApprovalExactBeneficiaryAndPayload(t *testing.T) {
 	command.ApprovalID = commandGrant.ApprovalID
 	command.Deadline = commandGrant.Deadline
 	command.Size = 2
-	_, err = h.service.Execute(context.Background(), command, strings.NewReader("xx"), io.Discard)
+	_, err = h.service.Execute(context.Background(), command, stream.BytesInput([]byte("xx")), stream.BufferOutput(new(bytes.Buffer)))
 	if err == nil || h.transport.executed != 1 {
 		t.Fatalf("changed payload approved: %v", err)
 	}

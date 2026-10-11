@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/Horcag/agent-machine-control/internal/domain"
+	"github.com/Horcag/agent-machine-control/internal/guest/stream"
 	"github.com/Horcag/agent-machine-control/internal/sessions"
 )
 
@@ -77,8 +78,7 @@ func guestOperation(p GuestOperationParams, target domain.MachineRef, config Gue
 
 // Execute admits one complete request. A retry returns durable metadata only;
 // streamed output is never replayed or represented as a host-side durable file.
-func (s *GuestService) Execute(ctx context.Context, p GuestOperationParams, input io.Reader, output io.Writer) (GuestOperationResult, error) {
-	var out GuestOperationResult
+func (s *GuestService) Execute(ctx context.Context, p GuestOperationParams, input io.Reader, output io.Writer) (out GuestOperationResult, callErr error) {
 	resolution, config, err := s.resolve(ctx, p)
 	if err != nil {
 		return out, err
@@ -111,17 +111,42 @@ func (s *GuestService) Execute(ctx context.Context, p GuestOperationParams, inpu
 	key := guestPoolKey(op.Target, op.Actor, config.Generation)
 	dispatched := false
 	effectApplied := false
-	safety := s.session.resolveSafety(ctx, op.Target)
+	var checked *guestCheckedInput
+	if input != nil {
+		source, ok := input.(stream.ContextReader)
+		if !ok {
+			return out, domain.ErrNonCanonicalParameter
+		}
+		checked = &guestCheckedInput{source: source, size: p.Size, expected: p.SHA256, digest: sha256.New()}
+		input = checked
+	}
+	var spool *guestSpool
+	var sink stream.ContextWriter
+	if output != nil {
+		var ok bool
+		sink, ok = output.(stream.ContextWriter)
+		if !ok {
+			return out, domain.ErrNonCanonicalParameter
+		}
+		spool, err = s.spool(ctx, p)
+		if err != nil {
+			return out, err
+		}
+		defer func() { callErr = errors.Join(callErr, spool.cleanup()) }()
+	}
+	var transportOutput io.Writer
+	if spool != nil {
+		transportOutput = spool
+	}
 	_, rcpt, err := s.session.coordinateSessionMutation(ctx, op, "guest:"+guestDigest([]string{string(op.Actor.EffectiveActor), string(op.Target), p.IdempotencyKey}), nil, p.ApprovalID, timeout, func(execCtx context.Context) (sessionMutationResult, error) {
-		currentResolution, current, checkErr := s.resolve(execCtx, p)
-		if checkErr != nil || currentResolution.Locator != resolution.Locator || !reflect.DeepEqual(current, config) || !reflect.DeepEqual(s.session.resolveSafety(execCtx, op.Target), safety) {
-			return sessionMutationResult{}, ErrGuestAuthority
+		if err := s.validateEffectAuthority(execCtx, p, config); err != nil {
+			return sessionMutationResult{}, err
 		}
 		if err := checkGuestScopes(op); err != nil {
 			return sessionMutationResult{}, err
 		}
 		dispatched = true
-		result, runErr := s.run(execCtx, p, op, config, key, recordID, input, output, &effectApplied, safety)
+		result, runErr := s.run(execCtx, p, op, config, key, recordID, input, transportOutput, &effectApplied)
 		out = result
 		if runErr == nil {
 			if persistErr := s.store.write(execCtx, recordID, ".result", out); persistErr != nil {
@@ -144,6 +169,18 @@ func (s *GuestService) Execute(ctx context.Context, p GuestOperationParams, inpu
 	}
 	if err != nil && (effectApplied || errors.Is(err, sessions.ErrMutationEffectUnknown) || errors.Is(err, sessions.ErrMutationFinalizationPending) || (rcpt != nil && rcpt.Outcome.Status == domain.OutcomeFailed && slices.Contains(rcpt.EvidenceRefs, "guest-operation-dispatched"))) {
 		err = errors.Join(ErrGuestUncertain, err)
+	}
+	if err == nil && spool != nil && dispatched {
+		if rcpt == nil || rcpt.Validate() != nil || rcpt.Outcome.Status != domain.OutcomeSuccess || !spool.matches(out) {
+			return out, ErrGuestUncertain
+		}
+		_, fresh, checkErr := s.resolve(ctx, p)
+		if checkErr != nil || !reflect.DeepEqual(fresh, config) {
+			return out, ErrGuestUncertain
+		}
+		if publishErr := spool.publish(ctx, sink); publishErr != nil {
+			return out, errors.Join(ErrGuestUncertain, publishErr)
+		}
 	}
 	return out, err
 }

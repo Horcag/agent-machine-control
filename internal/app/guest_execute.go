@@ -24,19 +24,23 @@ func validGuestFile(file stream.FileIdentity, root stream.RootIdentity) bool {
 	return guestFileRoot(file) == root && file.Volume == root.Volume && len(file.FileID) == 32 && validLabDigest(file.FileID+file.FileID) && file.CreationTime > 0 && file.Owner == root.Owner && validLabDigest(file.SDDLHash) && file.Size >= 0 && validLabDigest(file.SHA256)
 }
 
-func (s *GuestService) run(ctx context.Context, p GuestOperationParams, op domain.Operation, config GuestConfiguration, key, id string, input io.Reader, output io.Writer, effect *bool, safety SafetyResolution) (out GuestOperationResult, runErr error) {
+func (s *GuestService) run(ctx context.Context, p GuestOperationParams, op domain.Operation, config GuestConfiguration, key, id string, input io.Reader, output io.Writer, effect *bool) (out GuestOperationResult, runErr error) {
 	attempted := false
+	var worker guestWorkerRecord
 	defer func() {
 		if runErr != nil && attempted {
-			_ = s.transport.Retire(op.Target, key, config.Generation)
-			s.mu.Lock()
-			delete(s.workers, key)
-			s.mu.Unlock()
+			runErr = errors.Join(runErr, s.retireWorker(ctx, key, worker))
 		}
 	}()
-	var worker guestWorkerRecord
+	if err := s.checkRetirement(ctx, key, guestWorkerRecord{Target: op.Target, Caller: op.Actor.AuthenticatedCaller, Actor: op.Actor.EffectiveActor, Generation: config.Generation}); err != nil {
+		return out, err
+	}
 	if p.Operation == "prepare" {
 		*effect = true
+		worker = guestWorkerRecord{Target: op.Target, Caller: op.Actor.AuthenticatedCaller, Actor: op.Actor.EffectiveActor, Generation: config.Generation, Root: config.WorkspaceIdentity, RecordID: id}
+		if err := s.recordLaunch(ctx, key, worker); err != nil {
+			return out, err
+		}
 		attempted = true
 		identity, err := s.transport.Prepare(ctx, op.Target, key, config.Generation)
 		if err != nil {
@@ -48,6 +52,9 @@ func (s *GuestService) run(ctx context.Context, p GuestOperationParams, op domai
 		}
 		if err = s.store.write(ctx, id, ".worker", worker); err != nil {
 			return out, ErrGuestUncertain
+		}
+		if err = s.recordReady(ctx, key, worker); err != nil {
+			return out, err
 		}
 	} else {
 		s.mu.Lock()
@@ -70,13 +77,10 @@ func (s *GuestService) run(ctx context.Context, p GuestOperationParams, op domai
 	}
 	// Prepare and ownership reads can take time. Refresh the exact server authority
 	// again after their durable writes, immediately before the transport effect.
-	_, fresh, err := s.resolve(ctx, p)
-	if err != nil || !reflect.DeepEqual(fresh, config) || !reflect.DeepEqual(s.session.resolveSafety(ctx, op.Target), safety) || ctx.Err() != nil {
-		return out, ErrGuestAuthority
+	if err := s.validateEffectAuthority(ctx, p, config); err != nil {
+		return out, err
 	}
-	if p.Operation != "get" {
-		*effect = true
-	}
+	*effect = true // Download dispatch/exposure is an admitted effect too.
 	attempted = true
 	result, err := s.transport.Execute(ctx, op.Target, key, config.Generation, request, input, output)
 	if err != nil {
@@ -85,10 +89,16 @@ func (s *GuestService) run(ctx context.Context, p GuestOperationParams, op domai
 	if result.ID != id || result.Status != "ok" || result.Worker != worker.Identity {
 		return out, guestProtocolError()
 	}
+	if checked, ok := input.(*guestCheckedInput); ok && !checked.valid() {
+		return out, stream.ErrIntegrity
+	}
 	out.Worker = result.Worker
 	out.Size = result.Size
 	out.SHA256 = result.SHA256
 	out.ExitCode = result.ExitCode
+	if spool, ok := output.(*guestSpool); ok && !spool.matches(out) {
+		return out, stream.ErrIntegrity
+	}
 	switch p.Operation {
 	case "prepare":
 		if result.Root == nil || *result.Root != config.WorkspaceIdentity {
