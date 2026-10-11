@@ -18,7 +18,7 @@ type GuestRetirementVerifier interface {
 	ConfirmGuestRetirement(context.Context, domain.MachineRef, domain.ActorID, string, stream.WorkerIdentity) (bool, error)
 }
 
-func (s *GuestService) checkRetirement(ctx context.Context, key string, worker guestWorkerRecord) error {
+func (s *GuestService) checkRetirement(ctx context.Context, key string, allowCurrent bool, worker guestWorkerRecord) error {
 	entries, err := os.ReadDir(s.store.directory)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -35,7 +35,7 @@ func (s *GuestService) checkRetirement(ctx context.Context, key string, worker g
 		if count > 128 {
 			return ErrGuestUncertain
 		}
-		if err := s.checkPriorGuestLaunch(ctx, key, strings.TrimSuffix(entry.Name(), ".launch"), worker); err != nil {
+		if err := s.checkPriorGuestLaunch(ctx, key, strings.TrimSuffix(entry.Name(), ".launch"), allowCurrent, worker); err != nil {
 			return err
 		}
 
@@ -73,10 +73,10 @@ func (s *GuestService) retireWorker(parent context.Context, key string, worker g
 	s.mu.Lock()
 	s.workers[key] = worker
 	s.mu.Unlock()
-	persistErr := s.store.write(ctx, key, ".retirement", worker)
+	persistErr := s.store.write(ctx, worker.RecordID, ".retirement", worker)
 	if persistErr != nil {
 		var prior guestWorkerRecord
-		if readErr := s.store.read(ctx, key, ".retirement", &prior); readErr == nil && reflect.DeepEqual(prior, worker) {
+		if readErr := s.store.read(ctx, worker.RecordID, ".retirement", &prior); readErr == nil && reflect.DeepEqual(prior, worker) {
 			persistErr = nil
 		}
 	}
@@ -84,13 +84,13 @@ func (s *GuestService) retireWorker(parent context.Context, key string, worker g
 	if closeErr != nil || persistErr != nil {
 		return errors.Join(ErrGuestUncertain, closeErr, persistErr)
 	}
-	return s.confirmRetirement(ctx, key, worker)
+	return s.confirmRetirement(ctx, worker.RecordID, worker)
 }
 
 func (s *GuestService) recordLaunch(ctx context.Context, key string, record guestWorkerRecord) error {
 	if err := s.store.write(ctx, key, ".launch", record); err != nil {
 		var prior guestWorkerRecord
-		if readErr := s.store.read(ctx, key, ".launch", &prior); readErr != nil || prior.Target != record.Target || prior.Caller != record.Caller || prior.Actor != record.Actor || prior.Generation != record.Generation {
+		if readErr := s.store.read(ctx, key, ".launch", &prior); readErr != nil || !reflect.DeepEqual(prior, record) {
 			return ErrGuestUncertain
 		}
 	}
@@ -100,17 +100,20 @@ func (s *GuestService) recordLaunch(ctx context.Context, key string, record gues
 func (s *GuestService) recordReady(ctx context.Context, key string, worker guestWorkerRecord) error {
 	if err := s.store.write(ctx, key, ".ready", worker); err != nil {
 		var prior guestWorkerRecord
-		if readErr := s.store.read(ctx, key, ".ready", &prior); readErr != nil || prior.Identity != worker.Identity || prior.Target != worker.Target || prior.Caller != worker.Caller || prior.Actor != worker.Actor || prior.Generation != worker.Generation {
+		if readErr := s.store.read(ctx, key, ".ready", &prior); readErr != nil || !reflect.DeepEqual(prior, worker) {
 			return ErrGuestUncertain
 		}
 	}
 	return nil
 }
 
-func (s *GuestService) checkPriorGuestLaunch(ctx context.Context, key, priorKey string, worker guestWorkerRecord) error {
+func (s *GuestService) checkPriorGuestLaunch(ctx context.Context, key, priorKey string, allowCurrent bool, worker guestWorkerRecord) error {
 	var err error
 	var launch guestWorkerRecord
 	if err = s.store.read(ctx, priorKey, ".launch", &launch); err != nil {
+		return ErrGuestUncertain
+	}
+	if launch.RecordID != priorKey {
 		return ErrGuestUncertain
 	}
 	if launch.Target != worker.Target || launch.Actor != worker.Actor || launch.Caller != worker.Caller {
@@ -119,11 +122,11 @@ func (s *GuestService) checkPriorGuestLaunch(ctx context.Context, key, priorKey 
 	var pending guestWorkerRecord
 	pendingErr := s.store.read(ctx, priorKey, ".retirement", &pending)
 	if pendingErr == nil {
+		if !sameGuestLaunch(pending, launch) {
+			return ErrGuestUncertain
+		}
 		if err = s.confirmRetirement(ctx, priorKey, pending); err != nil {
 			return err
-		}
-		if priorKey == key {
-			return ErrGuestNotPrepared
 		}
 		return nil
 	}
@@ -131,20 +134,24 @@ func (s *GuestService) checkPriorGuestLaunch(ctx context.Context, key, priorKey 
 		return ErrGuestUncertain
 	}
 	s.mu.Lock()
-	active := s.workers[priorKey]
+	active := s.workers[key]
 	s.mu.Unlock()
-	if priorKey == key && active.RecordID != "" {
+	if allowCurrent && active.RecordID == priorKey {
 		return nil
 	}
 	var ready guestWorkerRecord
 	if err = s.store.read(ctx, priorKey, ".ready", &ready); err != nil {
 		return ErrGuestUncertain
 	}
+	if !sameGuestLaunch(ready, launch) {
+		return ErrGuestUncertain
+	}
 	if err = s.confirmRetirement(ctx, priorKey, ready); err != nil {
 		return err
 	}
-	if priorKey == key {
-		return ErrGuestNotPrepared
-	}
 	return nil
+}
+
+func sameGuestLaunch(record, launch guestWorkerRecord) bool {
+	return record.RecordID == launch.RecordID && record.Target == launch.Target && record.Caller == launch.Caller && record.Actor == launch.Actor && record.Generation == launch.Generation && record.Root == launch.Root
 }

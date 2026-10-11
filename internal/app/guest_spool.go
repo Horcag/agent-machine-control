@@ -78,7 +78,7 @@ func (s *guestSpool) WriteContext(ctx context.Context, p []byte) (int, error) {
 	if int64(len(p)) > s.limit-s.size {
 		return 0, domain.ErrNonCanonicalParameter
 	}
-	n, err := s.file.Write(p)
+	n, err := stream.OwnedOutput(s.file).WriteContext(ctx, p)
 	if n > 0 {
 		_, _ = s.digest.Write(p[:n])
 		s.size += int64(n)

@@ -11,6 +11,8 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/guest/stream"
 )
 
+var ErrGuestWorkspaceUnprovisioned = errors.New("app: guest workspace requires explicit provisioning")
+
 var ErrGuestAuthority = errors.New("app: guest authority changed or unavailable")
 var ErrGuestNotPrepared = errors.New("app: guest worker requires explicit preparation")
 var ErrGuestOwnership = errors.New("app: guest artifact ownership or identity mismatch")
@@ -106,6 +108,9 @@ type GuestService struct {
 	mu         sync.Mutex
 	workers    map[string]guestWorkerRecord
 	spoolBytes int64
+	running    int
+	closing    bool
+	drained    chan struct{}
 }
 
 func NewGuestService(session *SessionService, resolver SessionTargetResolver, config GuestConfigProvider, transport GuestTransport, store *GuestStore) *GuestService {

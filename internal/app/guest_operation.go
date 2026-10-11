@@ -42,6 +42,9 @@ func (s *GuestService) resolve(ctx context.Context, p GuestOperationParams) (Tar
 	}
 	config, err := s.config.Current(ctx, domain.MachineRef(resolution.Locator.String()), p.Caller)
 	if err != nil {
+		if errors.Is(err, ErrGuestWorkspaceUnprovisioned) {
+			return resolution, config, ErrGuestWorkspaceUnprovisioned
+		}
 		return resolution, config, ErrGuestAuthority
 	}
 	if !validGuestConfiguration(config, p.Caller) {
@@ -80,6 +83,10 @@ func guestOperation(p GuestOperationParams, target domain.MachineRef, config Gue
 // Execute admits one complete request. A retry returns durable metadata only;
 // streamed output is never replayed or represented as a host-side durable file.
 func (s *GuestService) Execute(ctx context.Context, p GuestOperationParams, input io.Reader, output io.Writer) (out GuestOperationResult, callErr error) {
+	if err := s.beginGuestCall(); err != nil {
+		return out, err
+	}
+	defer s.endGuestCall()
 	resolution, config, err := s.resolve(ctx, p)
 	if err != nil {
 		return out, err

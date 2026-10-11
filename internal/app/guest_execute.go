@@ -32,7 +32,7 @@ func (s *GuestService) run(ctx context.Context, p GuestOperationParams, op domai
 			runErr = errors.Join(runErr, s.retireWorker(ctx, key, worker))
 		}
 	}()
-	if err := s.checkRetirement(ctx, key, guestWorkerRecord{Target: op.Target, Caller: op.Actor.AuthenticatedCaller, Actor: op.Actor.EffectiveActor, Generation: config.Generation}); err != nil {
+	if err := s.checkRetirement(ctx, key, p.Operation != "prepare", guestWorkerRecord{Target: op.Target, Caller: op.Actor.AuthenticatedCaller, Actor: op.Actor.EffectiveActor, Generation: config.Generation}); err != nil {
 		return out, err
 	}
 	var err error
@@ -71,7 +71,16 @@ func (s *GuestService) run(ctx context.Context, p GuestOperationParams, op domai
 
 func (s *GuestService) prepareGuestWorker(ctx context.Context, op domain.Operation, config GuestConfiguration, key, id string, effect *bool) (worker guestWorkerRecord, attempted bool, err error) {
 	worker = guestWorkerRecord{Target: op.Target, Caller: op.Actor.AuthenticatedCaller, Actor: op.Actor.EffectiveActor, Generation: config.Generation, Root: config.WorkspaceIdentity, RecordID: id}
-	if err = s.recordLaunch(ctx, key, worker); err != nil {
+	s.mu.Lock()
+	previous := s.workers[key]
+	s.mu.Unlock()
+	if previous.RecordID != "" {
+		*effect = true
+		if err = s.retireWorker(ctx, key, previous); err != nil {
+			return previous, false, err
+		}
+	}
+	if err = s.recordLaunch(ctx, id, worker); err != nil {
 		return worker, false, err
 	}
 	*effect = true
@@ -86,7 +95,7 @@ func (s *GuestService) prepareGuestWorker(ctx context.Context, op domain.Operati
 	if err = s.store.write(ctx, id, ".worker", worker); err != nil {
 		return worker, true, ErrGuestUncertain
 	}
-	if err = s.recordReady(ctx, key, worker); err != nil {
+	if err = s.recordReady(ctx, id, worker); err != nil {
 		return worker, true, err
 	}
 	return worker, true, nil
