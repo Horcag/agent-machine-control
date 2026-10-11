@@ -59,8 +59,8 @@ func TestGuestConfirmedRetirementAllowsFreshSameGenerationEpoch(t *testing.T) {
 
 func TestGuestShutdownRetainsUnverifiedOwnWorker(t *testing.T) {
 	h := newGuestHarness(t)
-	h.prepare(t)
-	if err := h.service.Shutdown(context.Background()); !errors.Is(err, ErrGuestUncertain) {
+	prepareGuestShutdownFixture(t, h)
+	if err := h.service.Shutdown(guestShutdownContext(t)); !errors.Is(err, ErrGuestUncertain) {
 		t.Fatalf("shutdown claimed absence: %v", err)
 	}
 	if h.transport.retired != 1 {
@@ -78,8 +78,8 @@ func TestGuestVerifiedShutdownAllowsNewServiceSameGeneration(t *testing.T) {
 	h := newGuestHarness(t)
 	verified := &guestVerifiedConfig{guestTestConfig: h.config, absent: true}
 	h.service.config = verified
-	h.prepare(t)
-	if err := h.service.Shutdown(context.Background()); err != nil {
+	prepareGuestShutdownFixture(t, h)
+	if err := h.service.Shutdown(guestShutdownContext(t)); err != nil {
 		t.Fatal(err)
 	}
 	h.transport.worker.PID++

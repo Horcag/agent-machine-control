@@ -20,11 +20,15 @@ type guestBlockingVerifier struct {
 	mu                 sync.Mutex
 	calls              int
 	ignoreCancellation bool
+	observedDeadline   time.Time
+	observedWitness    any
 }
 
 func (c *guestBlockingVerifier) ConfirmGuestRetirement(ctx context.Context, _ domain.MachineRef, _ domain.ActorID, _ string, _ stream.WorkerIdentity) (bool, error) {
 	c.mu.Lock()
 	c.calls++
+	c.observedDeadline, _ = ctx.Deadline()
+	c.observedWitness = ctx.Value(guestShutdownWitnessKey{})
 	if c.calls == 1 {
 		close(c.entered)
 	}
@@ -45,26 +49,33 @@ func TestGuestShutdownRetirementHonorsCallerContext(t *testing.T) {
 	h := newGuestHarness(t)
 	verifier := &guestBlockingVerifier{guestTestConfig: h.config, entered: make(chan struct{}), release: make(chan struct{})}
 	h.service.config = verifier
-	h.prepare(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	prepareGuestShutdownFixture(t, h)
+	witness := new(int)
+	parent := context.WithValue(t.Context(), guestShutdownWitnessKey{}, witness)
+	ctx, cancel := context.WithTimeout(parent, guestShutdownTestBudget)
 	defer cancel()
+	requestedDeadline, _ := ctx.Deadline()
 	result := make(chan error, 1)
 	go func() { result <- h.service.Shutdown(ctx) }()
-	select {
-	case <-verifier.entered:
-	case <-time.After(time.Second):
-		t.Fatal("retirement verifier was not called")
+	awaitGuestShutdownEntry(t, verifier.entered)
+	verifier.mu.Lock()
+	observedDeadline := verifier.observedDeadline
+	observedWitness := verifier.observedWitness
+	verifier.mu.Unlock()
+	cancel()
+	if err := awaitGuestShutdownResult(t, result); !errors.Is(err, context.Canceled) || !errors.Is(err, ErrGuestUncertain) {
+		t.Fatalf("caller cancellation lost: %v", err)
 	}
-	select {
-	case err := <-result:
-		if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, ErrGuestUncertain) {
-			t.Fatalf("deadline lost: %v", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("shutdown discarded caller deadline")
+	if !observedDeadline.Equal(requestedDeadline) || observedWitness != witness {
+		t.Fatalf("caller context detached: deadline=%v witness=%v", observedDeadline, observedWitness)
+	}
+	worker := originalGuestEpoch(t, h)
+	var pending guestWorkerRecord
+	if err := h.service.store.read(t.Context(), worker.RecordID, ".retirement", &pending); err != nil || pending.Identity != worker.Identity {
+		t.Fatalf("pending original identity lost: %v", err)
 	}
 	close(verifier.release)
-	if err := h.service.Shutdown(context.Background()); err != nil {
+	if err := h.service.Shutdown(guestShutdownContext(t)); err != nil {
 		t.Fatalf("pending retirement could not be confirmed: %v", err)
 	}
 }
@@ -73,15 +84,15 @@ func TestGuestConcurrentShutdownHasOneRetirementEffect(t *testing.T) {
 	h := newGuestHarness(t)
 	verifier := &guestBlockingVerifier{guestTestConfig: h.config, entered: make(chan struct{}), release: make(chan struct{})}
 	h.service.config = verifier
-	h.prepare(t)
+	prepareGuestShutdownFixture(t, h)
 	first := make(chan error, 1)
 	second := make(chan error, 1)
-	go func() { first <- h.service.Shutdown(context.Background()) }()
-	<-verifier.entered
-	go func() { second <- h.service.Shutdown(context.Background()) }()
+	go func() { first <- h.service.Shutdown(guestShutdownContext(t)) }()
+	awaitGuestShutdownEntry(t, verifier.entered)
+	go func() { second <- h.service.Shutdown(guestShutdownContext(t)) }()
 	close(verifier.release)
 	for _, result := range []chan error{first, second} {
-		if err := <-result; err != nil {
+		if err := awaitGuestShutdownResult(t, result); err != nil {
 			t.Fatalf("identical shutdown failed: %v", err)
 		}
 	}
@@ -97,27 +108,28 @@ func TestGuestShutdownNeverReportsSuccessAfterDeadline(t *testing.T) {
 	h := newGuestHarness(t)
 	verifier := &guestBlockingVerifier{guestTestConfig: h.config, entered: make(chan struct{}), release: make(chan struct{}), ignoreCancellation: true}
 	h.service.config = verifier
-	h.prepare(t)
-	ctx, cancel := context.WithCancel(context.Background())
+	prepareGuestShutdownFixture(t, h)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
 	result := make(chan error, 1)
 	go func() { result <- h.service.Shutdown(ctx) }()
-	<-verifier.entered
+	awaitGuestShutdownEntry(t, verifier.entered)
 	cancel()
 	close(verifier.release)
-	if err := <-result; !errors.Is(err, context.Canceled) {
+	if err := awaitGuestShutdownResult(t, result); !errors.Is(err, context.Canceled) {
 		t.Fatalf("expired shutdown reported success: %v", err)
 	}
 }
 
 func TestGuestShutdownDoesNotCloseBeforeDurableIntent(t *testing.T) {
 	h := newGuestHarness(t)
-	h.prepare(t)
+	prepareGuestShutdownFixture(t, h)
 	original := h.service.store.directory
 	h.service.store.directory = filepath.Join(t.TempDir(), "blocked")
 	if err := os.WriteFile(h.service.store.directory, nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.service.Shutdown(context.Background()); !errors.Is(err, ErrGuestUncertain) {
+	if err := h.service.Shutdown(guestShutdownContext(t)); !errors.Is(err, ErrGuestUncertain) {
 		t.Fatalf("missing intent accepted: %v", err)
 	}
 	if h.transport.retired != 0 {
@@ -126,7 +138,9 @@ func TestGuestShutdownDoesNotCloseBeforeDurableIntent(t *testing.T) {
 	h.service.store.directory = original
 	verified := &guestVerifiedConfig{guestTestConfig: h.config, absent: true}
 	h.service.config = verified
-	if err := h.service.Shutdown(context.Background()); err != nil {
+	if err := h.service.Shutdown(guestShutdownContext(t)); err != nil {
 		t.Fatal(err)
 	}
 }
+
+type guestShutdownWitnessKey struct{}
