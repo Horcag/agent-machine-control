@@ -5,6 +5,7 @@ package client
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -115,7 +116,23 @@ func TestGuestPublicationWindowsNativeHeldRename(t *testing.T) {
 			if err != nil || !os.SameFile(original, held) {
 				t.Fatalf("publication closed or changed held source: %v", err)
 			}
-			data, err := os.ReadFile(destination)
+			// The original handle retains WRITE and DELETE access. This reader
+			// must share both while independently checking the installed object.
+			name, err := windows.UTF16PtrFromString(destination)
+			if err != nil {
+				t.Fatal(err)
+			}
+			handle, err := windows.CreateFile(name, windows.GENERIC_READ, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reader := os.NewFile(uintptr(handle), destination)
+			t.Cleanup(func() { _ = reader.Close() })
+			reopened, err := reader.Stat()
+			if err != nil || !os.SameFile(original, reopened) {
+				t.Fatalf("reader opened a different object: %v", err)
+			}
+			data, err := io.ReadAll(io.LimitReader(reader, int64(len("verified original")+1)))
 			if err != nil || string(data) != "verified original" {
 				t.Fatalf("published bytes: %q %v", data, err)
 			}
