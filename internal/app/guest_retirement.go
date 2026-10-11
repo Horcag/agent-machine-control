@@ -84,10 +84,10 @@ func (s *GuestService) confirmRetirement(ctx context.Context, key string, worker
 func (s *GuestService) retireWorker(parent context.Context, key string, worker guestWorkerRecord) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
 	defer cancel()
-	return s.retireWorkerContext(ctx, key, worker)
+	return s.retireWorkerContext(ctx, key, worker, true)
 }
 
-func (s *GuestService) retireWorkerContext(ctx context.Context, key string, worker guestWorkerRecord) error {
+func (s *GuestService) retireWorkerContext(ctx context.Context, key string, worker guestWorkerRecord, closeWithoutIntent bool) error {
 	if err := ctx.Err(); err != nil {
 		return errors.Join(ErrGuestUncertain, err)
 	}
@@ -100,6 +100,9 @@ func (s *GuestService) retireWorkerContext(ctx context.Context, key string, work
 		if readErr := s.store.read(ctx, worker.RecordID, ".retirement", &prior); readErr == nil && reflect.DeepEqual(prior, worker) {
 			persistErr = nil
 		}
+	}
+	if persistErr != nil && !closeWithoutIntent {
+		return errors.Join(ErrGuestUncertain, persistErr)
 	}
 	if err := ctx.Err(); err != nil {
 		return errors.Join(ErrGuestUncertain, persistErr, err)

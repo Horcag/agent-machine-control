@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -104,5 +106,27 @@ func TestGuestShutdownNeverReportsSuccessAfterDeadline(t *testing.T) {
 	close(verifier.release)
 	if err := <-result; !errors.Is(err, context.Canceled) {
 		t.Fatalf("expired shutdown reported success: %v", err)
+	}
+}
+
+func TestGuestShutdownDoesNotCloseBeforeDurableIntent(t *testing.T) {
+	h := newGuestHarness(t)
+	h.prepare(t)
+	original := h.service.store.directory
+	h.service.store.directory = filepath.Join(t.TempDir(), "blocked")
+	if err := os.WriteFile(h.service.store.directory, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.service.Shutdown(context.Background()); !errors.Is(err, ErrGuestUncertain) {
+		t.Fatalf("missing intent accepted: %v", err)
+	}
+	if h.transport.retired != 0 {
+		t.Fatal("worker closed without durable retirement intent")
+	}
+	h.service.store.directory = original
+	verified := &guestVerifiedConfig{guestTestConfig: h.config, absent: true}
+	h.service.config = verified
+	if err := h.service.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }

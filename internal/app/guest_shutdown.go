@@ -33,16 +33,7 @@ func (s *GuestService) Shutdown(ctx context.Context) error {
 	if s == nil {
 		return ErrGuestAuthority
 	}
-	s.mu.Lock()
-	if !s.closing {
-		s.closing = true
-		s.drained = make(chan struct{})
-		if s.running == 0 {
-			close(s.drained)
-		}
-	}
-	drained := s.drained
-	s.mu.Unlock()
+	drained := s.closeGuestAdmission()
 	select {
 	case <-ctx.Done():
 		return errors.Join(ErrGuestUncertain, ctx.Err())
@@ -69,7 +60,7 @@ func (s *GuestService) Shutdown(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return errors.Join(result, ErrGuestUncertain, err)
 		}
-		result = errors.Join(result, s.retireWorkerContext(ctx, key, worker))
+		result = errors.Join(result, s.retireWorkerContext(ctx, key, worker, false))
 	}
 	if err := ctx.Err(); err != nil {
 		return errors.Join(result, ErrGuestUncertain, err)
@@ -80,4 +71,18 @@ func (s *GuestService) Shutdown(ctx context.Context) error {
 		s.mu.Unlock()
 	}
 	return result
+}
+
+func (s *GuestService) closeGuestAdmission() <-chan struct{} {
+	s.mu.Lock()
+	if !s.closing {
+		s.closing = true
+		s.drained = make(chan struct{})
+		if s.running == 0 {
+			close(s.drained)
+		}
+	}
+	drained := s.drained
+	s.mu.Unlock()
+	return drained
 }
