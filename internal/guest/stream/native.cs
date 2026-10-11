@@ -25,8 +25,8 @@ internal static class Native {
         if(String.IsNullOrEmpty(path)||path.IndexOfAny(new char[]{'*','?','\0'})>=0||!Path.IsPathRooted(path)||path.StartsWith(@"\\")||path.IndexOf(':',2)>=0)throw new InvalidDataException();
         string full=Path.GetFullPath(path);if(full.Length>240||full.Length<4)throw new InvalidDataException();return full;
     }
-    static SafeFileHandle Handle(string path,uint access,uint share,uint creation) {
-        SafeFileHandle handle=null;try{using(var privilege=new SecurityPrivilege())handle=CreateFile(path,access,share,IntPtr.Zero,creation,0x02200000,IntPtr.Zero);}catch{if(handle!=null)handle.Dispose();throw;} // OPEN_REPARSE_POINT | BACKUP_SEMANTICS
+    static SafeFileHandle Handle(string path,uint access,uint share,uint creation,uint flags=0) {
+        SafeFileHandle handle=null;try{using(var privilege=new SecurityPrivilege())handle=CreateFile(path,access,share,IntPtr.Zero,creation,0x02200000|flags,IntPtr.Zero);}catch{if(handle!=null)handle.Dispose();throw;} // OPEN_REPARSE_POINT | BACKUP_SEMANTICS
         if(handle.IsInvalid){handle.Dispose();throw new IOException("file_unavailable");}
         try {Info info=Metadata(handle);if((info.Attributes&0x400)!=0)throw new IOException("reparse_point");return handle;}catch{handle.Dispose();throw;}
     }
@@ -77,14 +77,17 @@ internal static class Native {
                 {"rootOwner",rootSecurity.Owner.Value},{"rootSDDLHash",SecurityHash(rootSecurity)}};
         }
         internal void Delete(){Disposition(true);}
-        internal void Commit(){Disposition(false);}
+        // ON_CLOSE | DO_NOT_DELETE clears atomic FILE_FLAG_DELETE_ON_CLOSE.
+        // Legacy FileDispositionInfo cannot clear a create-time delete-on-close flag.
+        internal void Commit(){byte[] flags=BitConverter.GetBytes(8u);if(!SetFileInformationByHandle(Handle,21,flags,4))throw new IOException("atomic_commit_unsupported");}
         void Disposition(bool delete){byte[] disposition=new byte[]{delete?(byte)1:(byte)0};if(!SetFileInformationByHandle(Handle,4,disposition,1))throw new IOException("disposition_failed");}
         public void Dispose(){Stream.Dispose();}
     }
     internal static File Create(string path){
-        SafeFileHandle handle=Handle(path,0xC1030000,0,1);
-        try {byte[] disposition=new byte[]{1};if(!SetFileInformationByHandle(handle,4,disposition,1))throw new IOException("upload_cleanup_unavailable");return new File(handle,true);}
-        catch{handle.Dispose();throw;}
+        // The kernel owns cleanup from the instant CREATE_NEW succeeds, including
+        // metadata validation, FileStream construction failure and abrupt EOF kill.
+        // Unsupported extended commit never falls back to a gap-prone legacy path.
+        return new File(Handle(path,0xC1030000,0,1,0x04000000),true);
     }
     internal static File Open(string path){return new File(Handle(path,0x81030000,0,3),false);}
     internal static bool Same(Dictionary<string,object> expected,Dictionary<string,object> actual) {

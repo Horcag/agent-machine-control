@@ -48,7 +48,10 @@ public static class Worker {
         result["size"]=0L;result["sha256"]=Digest(new byte[0]);Control(result);Control(result);
     }
     public static void Run(Stream stdin,Stream stdout) {
-        var job=Lifetime.OwnWorker();input=new Lifetime.Input(stdin,job);output=stdout;var process=Process.GetCurrentProcess();
+        using(var lifetime=new Lifetime.Guard())RunOwned(stdin,stdout);
+    }
+    static void RunOwned(Stream stdin,Stream stdout) {
+        input=stdin;output=stdout;var process=Process.GetCurrentProcess();
         identity=new Dictionary<string,object>{{"pid",process.Id},{"birthTicks",process.StartTime.ToUniversalTime().Ticks},{"image",process.MainModule.FileName},{"sid",WindowsIdentity.GetCurrent().User.Value}};
         Control(identity);
         using(runspace=RunspaceFactory.CreateRunspace()) { runspace.Open();
@@ -82,14 +85,11 @@ public static class Worker {
             // CREATE_NEW refuses replacement. Incomplete bytes remain exclusively task-owned
             // and are removed by their held handle on every unsuccessful commit.
             using(var file=Native.Create(path)) {
-                bool committed=false;
-                try {
-                    string hash=Transfer(input,file.Stream,size,deadline);
-                    if(input.ReadByte()!=1||hash!=Text(request,"sha256")) throw new InvalidDataException();
-                    Fresh(deadline);file.Stream.Flush(true);
-                    var receipt=file.Identity(path,roots,hash);Fresh(deadline);file.Commit();
-                    var result=Result(id,"ok",0,Digest(new byte[0]),0);result["files"]=new object[]{receipt};committed=true;Empty(result);
-                } finally {if(!committed) file.Delete();}
+                string hash=Transfer(input,file.Stream,size,deadline);
+                if(input.ReadByte()!=1||hash!=Text(request,"sha256")) throw new InvalidDataException();
+                Fresh(deadline);file.Stream.Flush(true);
+                var receipt=file.Identity(path,roots,hash);Fresh(deadline);file.Commit();
+                var result=Result(id,"ok",0,Digest(new byte[0]),0);result["files"]=new object[]{receipt};Empty(result);
             }
         }
     }

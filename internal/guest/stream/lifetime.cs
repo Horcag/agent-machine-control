@@ -1,6 +1,5 @@
 namespace AMCStream {
 using System;
-using System.Collections.Concurrent;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -22,26 +21,43 @@ internal static class Lifetime {
         if(!SetInformationJobObject(job,9,ref limits,(uint)Marshal.SizeOf(typeof(ExtendedLimits)))||!AssignProcessToJobObject(job,GetCurrentProcess())){job.Dispose();throw new IOException("worker_job_unavailable");}
         return job;
     }
-    // A bounded pump detects SSH stdin EOF even during an executing pipeline.
-    // Closing the unnamed worker job terminates only this worker and descendants.
-    internal sealed class Input : Stream {
-        readonly BlockingCollection<byte[]> blocks=new BlockingCollection<byte[]>(2);
-        byte[] current;int position;
-        internal Input(Stream source,SafeFileHandle job) {
-            var reader=new Thread(delegate(){
-                try {for(;;){byte[] buffer=new byte[65536];int n=source.Read(buffer,0,buffer.Length);if(n==0)break;if(n!=buffer.Length)Array.Resize(ref buffer,n);blocks.Add(buffer);}}
-                finally {blocks.CompleteAdding();job.Dispose();}
-            });reader.IsBackground=true;reader.Start();
+    [StructLayout(LayoutKind.Sequential)] struct PipeLocal {
+        public uint Type,Configuration,MaximumInstances,CurrentInstances,InboundQuota,ReadAvailable,OutboundQuota,WriteAvailable,State,End;
+    }
+    [StructLayout(LayoutKind.Sequential)] struct IOStatus {public IntPtr Status;public UIntPtr Information;}
+    [DllImport("kernel32.dll",SetLastError=true)] static extern IntPtr GetStdHandle(int id);
+    [DllImport("kernel32.dll",SetLastError=true)] static extern uint GetFileType(IntPtr handle);
+    [DllImport("ntdll.dll")] static extern int NtQueryInformationFile(IntPtr handle,out IOStatus status,out PipeLocal pipe,uint length,int type);
+    internal static uint PipeState(IntPtr handle) {
+        IOStatus status;PipeLocal pipe;
+        int result=NtQueryInformationFile(handle,out status,out pipe,40,24); // FilePipeLocalInformation
+        if(result<0||status.Information.ToUInt64()<40)throw new IOException("stdin_lifecycle_unavailable");
+        return pipe.State;
+    }
+    internal static void Observe(WaitHandle stopped,Func<uint> query,Action disconnect) {
+        while(!stopped.WaitOne(50)){if(query()!=3){disconnect();return;}}
+    }
+    // Observe the pipe's native connection state without consuming bytes. A full
+    // input backlog cannot conceal EOF behind a bounded producer queue.
+    internal sealed class Guard : IDisposable {
+        readonly SafeFileHandle job;readonly ManualResetEvent stopped=new ManualResetEvent(false);readonly Thread observer;
+        internal Guard() {
+            IntPtr stdin=GetStdHandle(-10);
+            if(stdin==IntPtr.Zero||stdin==new IntPtr(-1)||GetFileType(stdin)!=3||PipeState(stdin)!=3)throw new IOException("stdin_lifecycle_unavailable");
+            job=OwnWorker();
+            observer=new Thread(delegate(){
+                try{Observe(stopped,delegate(){return PipeState(stdin);},delegate(){job.Dispose();});}
+                catch{job.Dispose();}
+            });observer.IsBackground=true;
+            try{observer.Start();}catch{job.Dispose();stopped.Dispose();throw;}
         }
-        public override int Read(byte[] buffer,int offset,int count){
-            if(count==0)return 0;
-            if(current==null||position==current.Length){try{current=blocks.Take();position=0;}catch(InvalidOperationException){return 0;}}
-            int n=Math.Min(count,current.Length-position);Buffer.BlockCopy(current,position,buffer,offset,n);position+=n;return n;
+        public void Dispose(){
+            stopped.Set();
+            // Closing this exact unnamed job is the fail-closed bound if a native
+            // query fails to return; no observer or descendant survives the worker.
+            if(!observer.Join(2000)){job.Dispose();return;}
+            stopped.Dispose();job.Dispose();
         }
-        public override bool CanRead{get{return true;}}public override bool CanSeek{get{return false;}}public override bool CanWrite{get{return false;}}
-        public override long Length{get{throw new NotSupportedException();}}public override long Position{get{throw new NotSupportedException();}set{throw new NotSupportedException();}}
-        public override void Flush(){}public override long Seek(long offset,SeekOrigin origin){throw new NotSupportedException();}
-        public override void SetLength(long size){throw new NotSupportedException();}public override void Write(byte[] buffer,int offset,int count){throw new NotSupportedException();}
     }
 }
 }

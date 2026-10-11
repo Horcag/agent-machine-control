@@ -1,7 +1,6 @@
 package stream
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -150,7 +149,7 @@ func TestUploadRejectsSizeDigestAndExtraInput(t *testing.T) {
 			req := request()
 			req.Size = 5
 			req.SHA256 = hash([]byte("right"))
-			_, err := c.Execute(context.Background(), "target", "actor", "g", req, bytes.NewBufferString(input), nil)
+			_, err := c.Execute(context.Background(), "target", "actor", "g", req, BytesInput([]byte(input)), nil)
 			if !errors.Is(err, ErrIntegrity) {
 				t.Fatal(err)
 			}

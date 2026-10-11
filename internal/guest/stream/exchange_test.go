@@ -28,12 +28,12 @@ func TestDownloadResultRequiresObservedDigestAndCompleteReceipt(t *testing.T) {
 	result := Result{ID: req.ID, Status: "ok", Size: 4, SHA256: hash(data)}
 	ch := response(req, data, result)
 	var out bytes.Buffer
-	got, err := exchange(ch, req, nil, &out)
+	got, err := exchange(ch, req, nil, &out, WorkerIdentity{})
 	if err != nil || got.SHA256 != hash(data) || !bytes.Equal(out.Bytes(), data) {
 		t.Fatal(got, err)
 	}
 	for _, bad := range []Result{{ID: "other", Size: 4, SHA256: hash(data)}, {ID: req.ID, Size: 3, SHA256: hash(data)}, {ID: req.ID, Size: 4, SHA256: hash(nil)}} {
-		if _, err = exchange(response(req, data, bad), req, nil, io.Discard); !errors.Is(err, ErrIntegrity) {
+		if _, err = exchange(response(req, data, bad), req, nil, io.Discard, WorkerIdentity{}); !errors.Is(err, ErrIntegrity) {
 			t.Fatal("accepted wrong receipt", err)
 		}
 	}
@@ -41,11 +41,11 @@ func TestDownloadResultRequiresObservedDigestAndCompleteReceipt(t *testing.T) {
 	raw := make([]byte, wire.read.Len())
 	_, _ = wire.read.Read(raw)
 	wire.read = bytes.NewReader(raw[:len(raw)-1])
-	if _, err = exchange(wire, req, nil, io.Discard); err == nil {
+	if _, err = exchange(wire, req, nil, io.Discard, WorkerIdentity{}); err == nil {
 		t.Fatal("accepted incomplete completion")
 	}
 	req.MaxOutput = 3
-	if _, err = exchange(response(req, data, result), req, nil, io.Discard); !errors.Is(err, ErrProtocol) {
+	if _, err = exchange(response(req, data, result), req, nil, io.Discard, WorkerIdentity{}); !errors.Is(err, ErrProtocol) {
 		t.Fatal("unbounded output", err)
 	}
 }
@@ -97,5 +97,24 @@ func TestDownloadRequiresOneOriginalReferenceForExactPath(t *testing.T) {
 	req.Owned = []FileIdentity{{Path: req.Path}}
 	if err := validate(req); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestHeaderWorkerIdentityRejectedBeforePayload(t *testing.T) {
+	expected := WorkerIdentity{PID: 1, BirthTicks: 2, Image: "synthetic-worker", SID: "synthetic-sid"}
+	foreign := expected
+	foreign.PID = 3
+	req := Request{ID: "secret", Operation: "get", MaxOutput: 100}
+	payload := []byte("must not escape")
+	var wire bytes.Buffer
+	_ = writeControl(&wire, Result{ID: req.ID, Worker: foreign, Size: int64(len(payload))})
+	_, _ = wire.Write(payload)
+	ch := &scriptedChannel{read: bytes.NewReader(wire.Bytes())}
+	var output bytes.Buffer
+	if _, err := exchange(ch, req, nil, &output, expected); !errors.Is(err, ErrProtocol) {
+		t.Fatal(err)
+	}
+	if output.Len() != 0 || ch.read.Len() != len(payload) {
+		t.Fatal("foreign worker payload consumed or emitted")
 	}
 }

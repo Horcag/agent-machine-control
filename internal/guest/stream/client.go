@@ -61,6 +61,10 @@ func (c *Client) Execute(ctx context.Context, target domain.MachineRef, actor st
 	}
 	ctx, cancel := context.WithDeadline(ctx, req.DeadlineUTC)
 	defer cancel()
+	input, output, err := bindRequestIO(ctx, input, output)
+	if err != nil {
+		return Result{}, err
+	}
 	key := poolKey{target, actor, generation}
 	w, release, err := c.acquire(ctx, key, false)
 	if err != nil {
@@ -73,10 +77,7 @@ func (c *Client) Execute(ctx context.Context, target domain.MachineRef, actor st
 	}
 	stop := context.AfterFunc(ctx, func() { _ = w.channel.Close() })
 	defer stop()
-	result, err := exchange(w.channel, req, input, output)
-	if err == nil && result.Worker != w.identity {
-		err = ErrProtocol
-	}
+	result, err := exchange(w.channel, req, input, output, w.identity)
 	if err != nil {
 		c.evict(key, w)
 		if ctx.Err() != nil {
@@ -95,7 +96,7 @@ func (c *Client) evict(key poolKey, w *worker) {
 		delete(c.workers, key)
 	}
 }
-func exchange(ch io.ReadWriter, req Request, input io.Reader, output io.Writer) (Result, error) {
+func exchange(ch io.ReadWriter, req Request, input io.Reader, output io.Writer, identity WorkerIdentity) (Result, error) {
 	if err := writeControl(ch, req); err != nil {
 		return Result{}, err
 	}
@@ -104,14 +105,14 @@ func exchange(ch io.ReadWriter, req Request, input io.Reader, output io.Writer) 
 			return Result{}, err
 		}
 	}
-	return receiveResult(ch, req, output)
+	return receiveResult(ch, req, output, identity)
 }
-func receiveResult(ch io.Reader, req Request, output io.Writer) (Result, error) {
+func receiveResult(ch io.Reader, req Request, output io.Writer, identity WorkerIdentity) (Result, error) {
 	var header Result
 	if err := readControl(ch, &header); err != nil {
 		return Result{}, err
 	}
-	if header.ID != req.ID || header.Size < 0 || header.Size > req.MaxOutput {
+	if header.ID != req.ID || header.Size < 0 || header.Size > req.MaxOutput || header.Worker != identity {
 		return Result{}, ErrProtocol
 	}
 	if output == nil {
@@ -125,7 +126,7 @@ func receiveResult(ch io.Reader, req Request, output io.Writer) (Result, error) 
 	if err = readControl(ch, &result); err != nil {
 		return header, err
 	}
-	if result.ID != req.ID || result.Size != header.Size || !validDigest(result.SHA256) || digest != result.SHA256 {
+	if result.ID != req.ID || result.Worker != identity || result.Size != header.Size || !validDigest(result.SHA256) || digest != result.SHA256 {
 		return result, ErrIntegrity
 	}
 	return result, nil

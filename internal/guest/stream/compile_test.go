@@ -35,6 +35,13 @@ namespace AMCStream {
    if(!Native.Same(a,b))throw new System.Exception("original rejected");
    foreach(var key in keys){b[key]="changed";if(Native.Same(a,b))throw new System.Exception("changed identity accepted "+key);b[key]="original";}
    b.Remove("owner");if(Native.Same(a,b))throw new System.Exception("incomplete identity accepted");
+   using(var stopped=new System.Threading.ManualResetEvent(false)){
+    int observations=0,disconnects=0;
+    // A disconnected pipe with unread payload must still terminate the worker.
+    Lifetime.Observe(stopped,delegate(){observations++;return 4u;},delegate(){disconnects++;});
+    if(observations!=1||disconnects!=1)throw new System.Exception("EOF observer missed unread backlog");
+    stopped.Set();Lifetime.Observe(stopped,delegate(){throw new System.Exception("observer survived stop");},delegate(){throw new System.Exception("stop closed job twice");});
+   }
   }
  }
 }`)...)
