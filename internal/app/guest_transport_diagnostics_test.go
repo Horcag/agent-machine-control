@@ -133,3 +133,25 @@ func TestGuestPrepareRootDiagnosticsKeepEveryOriginalFieldExact(t *testing.T) {
 		})
 	}
 }
+
+func TestGuestControlFatalCopiesOnlyClosedMetadataAndRetires(t *testing.T) {
+	for _, stage := range []string{"control_eof", "control_read", "control_decode", "control_header"} {
+		t.Run(stage, func(t *testing.T) {
+			h := newGuestHarness(t)
+			h.prepare(t)
+			h.transport.executeHook = func(_ context.Context, _ stream.Request, _ io.Reader, sink io.Writer) (stream.Result, error) {
+				_, _ = sink.Write([]byte("private partial output"))
+				return stream.Result{}, errors.Join(&PolicyDeniedError{Message: "private policy message"}, &stream.ControlFailure{Stage: stage})
+			}
+			p := h.params("exec", "fatal-control")
+			p.Size, p.SHA256, p.MaxOutput = 1, guestSHA("x"), 64
+			var output bytes.Buffer
+			out, err := h.service.Execute(t.Context(), p, stream.BytesInput([]byte("x")), stream.BufferOutput(&output))
+			if !errors.Is(err, ErrGuestUncertain) || !errors.Is(err, stream.ErrControlFailure) || strings.Contains(err.Error(), "private") || output.Len() != 0 {
+				t.Fatal("fatal escaped boundary", err)
+			}
+			assertGuestFailedDiagnostic(t, h, out, "guest-control-failure:"+stage)
+			assertGuestSpoolClean(t, h)
+		})
+	}
+}

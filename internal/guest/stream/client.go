@@ -113,6 +113,13 @@ func receiveResult(ch io.Reader, req Request, output io.Writer, identity WorkerI
 	if err := readControl(ch, &header); err != nil {
 		return Result{}, err
 	}
+	if header.ControlFailure != nil {
+		return receiveControlFailure(ch, header, identity)
+	}
+	return receiveOperationResult(ch, req, output, identity, header)
+}
+
+func receiveOperationResult(ch io.Reader, req Request, output io.Writer, identity WorkerIdentity, header Result) (Result, error) {
 	if header.ID != req.ID || header.Size < 0 || header.Size > req.MaxOutput || header.Worker != identity {
 		return Result{}, ErrProtocol
 	}

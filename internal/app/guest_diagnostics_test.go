@@ -56,6 +56,7 @@ func TestGuestTransportCannotImpersonatePolicyDenial(t *testing.T) {
 func TestGuestDiagnosticEvidenceRejectsUnknownOrArbitraryErrors(t *testing.T) {
 	for _, err := range []error{
 		errors.New("private backend exception"),
+		&stream.ControlFailure{Stage: "private backend exception"},
 		&stream.WorkerFailure{Stage: "C:\\private\\secret SDDL token", NativeError: 5},
 	} {
 		refs := guestEvidenceRefs(errors.Join(ErrGuestUncertain, err))

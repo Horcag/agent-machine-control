@@ -81,6 +81,7 @@ internal static class Lifetime {
             });observer.IsBackground=true;
             try{observer.Start();}catch{job.Dispose();stopped.Dispose();throw;}
         }
+        internal void HoldTerminal(){stopped.WaitOne();}
         internal void ArmFailure(DateTime deadline){terminal=ArmFailureBound(delegate{job.Dispose();},deadline);}
         public void Dispose(){
             stopped.Set();

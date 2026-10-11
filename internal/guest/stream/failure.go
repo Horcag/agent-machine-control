@@ -40,7 +40,7 @@ func validFailureStage(stage string) bool {
 }
 
 func validFailureResult(result Result) bool {
-	return result.Failure.Valid() &&
+	return result.ControlFailure == nil && result.Failure.Valid() &&
 		result.Status == "failed" && result.ExitCode == 1 && result.Size == 0 &&
 		result.SHA256 == emptyDigest && result.Root == nil && len(result.Files) == 0 && len(result.Removed) == 0
 }
@@ -60,7 +60,7 @@ func verifyWorkerFailure(header, result Result) error {
 		}
 		return result.Failure
 	}
-	if result.Failure != nil || result.Status == "failed" {
+	if result.ControlFailure != nil || result.Failure != nil || result.Status == "failed" {
 		return ErrProtocol
 	}
 	return nil

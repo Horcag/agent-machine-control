@@ -77,14 +77,15 @@ type Removal struct {
 	Absent bool   `json:"absent"`
 }
 type Result struct {
-	ID       string         `json:"id"`
-	Status   string         `json:"status"`
-	ExitCode int            `json:"exitCode"`
-	Size     int64          `json:"size"`
-	SHA256   string         `json:"sha256"`
-	Worker   WorkerIdentity `json:"worker"`
-	Root     *RootIdentity  `json:"root,omitempty"`
-	Files    []FileIdentity `json:"files,omitempty"`
-	Removed  []Removal      `json:"removed,omitempty"`
-	Failure  *WorkerFailure `json:"failure,omitempty"`
+	ID             string          `json:"id"`
+	Status         string          `json:"status"`
+	ExitCode       int             `json:"exitCode"`
+	Size           int64           `json:"size"`
+	SHA256         string          `json:"sha256"`
+	Worker         WorkerIdentity  `json:"worker"`
+	Root           *RootIdentity   `json:"root,omitempty"`
+	Files          []FileIdentity  `json:"files,omitempty"`
+	Removed        []Removal       `json:"removed,omitempty"`
+	Failure        *WorkerFailure  `json:"failure,omitempty"`
+	ControlFailure *ControlFailure `json:"controlFailure,omitempty"`
 }

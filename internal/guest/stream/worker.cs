@@ -16,15 +16,27 @@ public static class Worker {
     static Dictionary<string,object> identity;
     static Runspace runspace;
     static bool responseStarted;
-    static byte[] Exact(int count) {
+    static byte[] Exact(int count) {return Exact(input,count);}
+    static byte[] Exact(Stream from,int count) {
         byte[] data = new byte[count]; int position = 0;
-        while (position < count) { int n = input.Read(data, position, count-position); if (n == 0) throw new EndOfStreamException(); position += n; }
+        while (position < count) { int n = from.Read(data, position, count-position); if (n == 0) throw new EndOfStreamException(); position += n; }
         return data;
     }
-    static Dictionary<string,object> ReadControl() {
-        byte[] h = Exact(4); Array.Reverse(h); uint n = BitConverter.ToUInt32(h,0);
-        if (n == 0 || n > 262144) throw new InvalidDataException();
-        return JSON.Deserialize<Dictionary<string,object>>(new UTF8Encoding(false,true).GetString(Exact((int)n)));
+    internal sealed class ControlFailure : IOException {
+        internal readonly string Stage;
+        internal ControlFailure(string stage){Stage=stage;}
+    }
+    static byte[] ControlBytes(Stream from,int count) {
+        try{return Exact(from,count);}
+        catch(EndOfStreamException){throw new ControlFailure("control_eof");}
+        catch{throw new ControlFailure("control_read");}
+    }
+    internal static Dictionary<string,object> ReadControl(Stream from,Func<string,Dictionary<string,object>> decode) {
+        byte[] h=ControlBytes(from,4);Array.Reverse(h);uint n=BitConverter.ToUInt32(h,0);
+        if(n==0||n>262144)throw new ControlFailure("control_header");
+        byte[] bytes=ControlBytes(from,(int)n);
+        try{var value=decode(new UTF8Encoding(false,true).GetString(bytes));if(value==null)throw new InvalidDataException();return value;}
+        catch{throw new ControlFailure("control_decode");}
     }
     static void Control(object value) {
         byte[] body = Encoding.UTF8.GetBytes(JSON.Serialize(value)); if (body.Length > 262144) throw new InvalidDataException();
@@ -58,7 +70,14 @@ public static class Worker {
         Control(identity);
         try {
             for(;;) {
-                Dictionary<string,object> request;try {request=ReadControl();} catch(EndOfStreamException){return;}
+                Dictionary<string,object> request;
+                try{request=ReadControl(input,delegate(string text){return JSON.Deserialize<Dictionary<string,object>>(text);});}
+                catch(ControlFailure error){
+                    lifetime.ArmFailure(DateTime.MaxValue);
+                    var fatal=Result("","failed",0,Digest(new byte[0]),1);
+                    fatal["controlFailure"]=new Dictionary<string,object>{{"stage",error.Stage}};
+                    Empty(fatal);lifetime.HoldTerminal();return;
+                }
                 // Malformed or interrupted requests terminate the channel, never replay.
                 string id=Text(request,"id");if(id.Length==0||id.Length>128)throw new InvalidDataException();
                 responseStarted=false;string stage="request";DateTime deadline=DateTime.MaxValue;

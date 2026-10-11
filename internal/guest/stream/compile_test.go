@@ -27,8 +27,25 @@ namespace System.Web.Script.Serialization {
  }
 }
 namespace AMCStream {
+ public sealed class ThrowingControlStream : System.IO.MemoryStream {
+  public override int Read(byte[] bytes,int offset,int count){throw new System.IO.IOException("private failure text");}
+ }
  public static class IdentityRegression {
+  static void ControlRefusal(System.IO.Stream input,string stage,System.Func<string,System.Collections.Generic.Dictionary<string,object>> decode){
+   try{Worker.ReadControl(input,decode);throw new System.Exception("control failure accepted");}
+   catch(Worker.ControlFailure failure){if(failure.Stage!=stage)throw new System.Exception("wrong control stage");}
+  }
+
   public static void Check(){
+   System.Func<string,System.Collections.Generic.Dictionary<string,object>> decoded=delegate(string text){return new System.Collections.Generic.Dictionary<string,object>{{"id",text}};};
+   ControlRefusal(new System.IO.MemoryStream(),"control_eof",decoded);
+   ControlRefusal(new ThrowingControlStream(),"control_read",decoded);
+   ControlRefusal(new System.IO.MemoryStream(new byte[]{0,0,0,0}),"control_header",decoded);
+   ControlRefusal(new System.IO.MemoryStream(new byte[]{0,4,0,1}),"control_header",decoded);
+   ControlRefusal(new System.IO.MemoryStream(new byte[]{0,0,0,2,1}),"control_eof",decoded);
+   ControlRefusal(new System.IO.MemoryStream(new byte[]{0,0,0,1,255}),"control_decode",decoded);
+   ControlRefusal(new System.IO.MemoryStream(new byte[]{0,0,0,1,65}),"control_decode",delegate(string text){throw new System.Exception("private JSON parser text");});
+   if((string)Worker.ReadControl(new System.IO.MemoryStream(new byte[]{0,0,0,1,65}),decoded)["id"]!="A")throw new System.Exception("valid control changed");
    var failure=Failure.Metadata(new System.Exception(@"C:\private\secret SDDL token"),"observe");
    if(failure.Count!=2||(string)failure["stage"]!="observe"||(uint)failure["nativeError"]!=0)throw new System.Exception("exception text retained");
    failure=Failure.Metadata(new NativeFailure("security_enable",1300),"observe");
