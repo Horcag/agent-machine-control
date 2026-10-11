@@ -62,7 +62,7 @@ public static class Worker {
         result["size"]=0L;result["sha256"]=Digest(new byte[0]);Control(result);Control(result);
     }
     public static void Run(Stream stdin,Stream stdout) {
-        using(var lifetime=new Lifetime.Guard())RunOwned(stdin,stdout,lifetime);
+        using(var lifetime=new Lifetime.Guard())Lifetime.RunWorker(delegate{RunOwned(stdin,stdout,lifetime);},lifetime.Termination);
     }
     static void RunOwned(Stream stdin,Stream stdout,Lifetime.Guard lifetime) {
         input=stdin;output=stdout;var process=Process.GetCurrentProcess();

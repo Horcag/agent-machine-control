@@ -70,6 +70,36 @@ namespace AMCStream {
    termination=new Lifetime.OwnTermination(delegate(uint code){kills++;throw new System.Exception("native invocation failed");},delegate{closes++;});
    termination.Stop(211);termination.Stop(212);
    if(kills!=1||closes!=1)throw new System.Exception("throwing kill leaked owned job");
+   foreach(bool nativeSuccess in new[]{true,false}){
+    uint marker=0;int closures=0;
+    var owned=new Lifetime.OwnTermination(delegate(uint code){marker=code;return nativeSuccess;},delegate{closures++;});
+    using(var stop=new System.Threading.ManualResetEvent(false)){
+     Lifetime.ObserveOwned(stop,delegate(){throw new System.Exception("synthetic observer failure");},owned);
+    }
+    owned.Stop(219);if(marker!=215||closures!=1)throw new System.Exception("observer marker lost");
+   }
+   uint first=0;int closed=0;
+   var primary=new Lifetime.OwnTermination(delegate(uint code){first=code;throw new System.Exception("synthetic terminate failure");},delegate{closed++;});
+   var originalFailure=new System.Exception("synthetic worker failure");
+   try{Lifetime.RunWorker(delegate(){throw originalFailure;},primary);throw new System.Exception("worker failure swallowed");}
+   catch(System.Exception error){if(!object.ReferenceEquals(error,originalFailure))throw;}
+   primary.Stop(219);if(first!=216||closed!=1)throw new System.Exception("using cleanup replaced first marker");
+   var order=new System.Collections.Generic.List<string>();
+   var normal=new Lifetime.OwnTermination(delegate(uint code){order.Add("marker:"+code);return false;},delegate{order.Add("close");});
+   Lifetime.RunWorker(delegate{order.Add("run");},normal);
+   Lifetime.FinishObserver(delegate{order.Add("stop");},delegate{order.Add("join");return true;},delegate{order.Add("release");},delegate{order.Add("timer");},normal);
+   if(string.Join(",",order.ToArray())!="run,stop,join,release,marker:219,close,timer")throw new System.Exception("normal stop order changed");
+   order.Clear();normal=new Lifetime.OwnTermination(delegate(uint code){order.Add("marker:"+code);return false;},delegate{order.Add("close");});
+   Lifetime.FinishObserver(delegate{order.Add("stop");},delegate{order.Add("join");return false;},delegate{order.Add("release");},delegate{order.Add("timer");},normal);
+   if(string.Join(",",order.ToArray())!="stop,join,marker:218,close,timer")throw new System.Exception("join timeout did not close before timer release");
+   using(var fired=new System.Threading.ManualResetEvent(false)){
+    first=0;closed=0;
+    var timed=new Lifetime.OwnTermination(delegate(uint code){first=code;return false;},delegate{System.Threading.Interlocked.Increment(ref closed);fired.Set();});
+    using(var timer=Lifetime.ArmOwnedFailure(timed,System.DateTime.UtcNow.AddMilliseconds(30))){
+     Lifetime.FinishObserver(delegate{},delegate{if(!fired.WaitOne(5000))throw new System.Exception("failure timer missed bound");return false;},delegate{},delegate{},timed);
+    }
+    if(first!=217||closed!=1)throw new System.Exception("join cleanup replaced prearmed timer marker");
+   }
    var now=new System.DateTime(2026,1,1,0,0,0,System.DateTimeKind.Utc);
    if(Lifetime.FailureBudget(now.AddSeconds(30),now)!=System.TimeSpan.FromSeconds(1))throw new System.Exception("failure bound exceeded one second");
    if(Lifetime.FailureBudget(now.AddMilliseconds(20),now)!=System.TimeSpan.FromMilliseconds(20))throw new System.Exception("request deadline extended");

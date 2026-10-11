@@ -35,6 +35,7 @@ internal static class Lifetime {
         return CheckedPipeState(result,status.Information.ToUInt64(),pipe.State);
     }
     internal const uint QueryFailureExit=211,ShortInformationExit=212,DisconnectedExit=213,PendingExit=214;
+    internal const uint ObserverUnhandledExit=215,WorkerUnhandledExit=216,FailureTimerExit=217,ObserverJoinTimeoutExit=218,NormalDisposeExit=219;
     internal sealed class PipeFailure : IOException {
         internal readonly uint ExitCode;
         internal PipeFailure(uint exitCode){ExitCode=exitCode;}
@@ -53,8 +54,24 @@ internal static class Lifetime {
             try{terminate(code);}catch{}finally{close();}
         }
     }
+    internal static void RunWorker(Action run,OwnTermination termination) {
+        try{run();}catch{termination.Stop(WorkerUnhandledExit);throw;}
+    }
+    internal static void FinishObserver(Action stop,Func<bool> join,Action releaseStop,Action releaseTimer,OwnTermination termination) {
+        stop();
+        if(!join()){termination.Stop(ObserverJoinTimeoutExit);releaseTimer();return;}
+        releaseStop();termination.Stop(NormalDisposeExit);releaseTimer();
+    }
     internal static void Observe(WaitHandle stopped,Func<uint> query,Action disconnect) {
         while(!stopped.WaitOne(50)){if(query()!=3){disconnect();return;}}
+    }
+    internal static void ObserveOwned(WaitHandle stopped,Func<uint> query,OwnTermination termination) {
+        try{Observe(stopped,query,delegate{termination.Stop(DisconnectedExit);});}
+        catch(PipeFailure error){termination.Stop(error.ExitCode);}
+        catch{termination.Stop(ObserverUnhandledExit);}
+    }
+    internal static Timer ArmOwnedFailure(OwnTermination termination,DateTime deadline) {
+        return ArmFailureBound(delegate{termination.Stop(FailureTimerExit);},deadline);
     }
     internal static TimeSpan FailureBudget(DateTime deadline,DateTime now) {
         return TimeSpan.FromTicks(Math.Min(TimeSpan.TicksPerSecond,Math.Max(0,deadline.Ticks-now.Ticks)));
@@ -68,27 +85,22 @@ internal static class Lifetime {
     // Observe the pipe's native connection state without consuming bytes. A full
     // input backlog cannot conceal EOF behind a bounded producer queue.
     internal sealed class Guard : IDisposable {
-        readonly SafeFileHandle job;readonly ManualResetEvent stopped=new ManualResetEvent(false);readonly Thread observer;Timer terminal;
+        readonly SafeFileHandle job;readonly ManualResetEvent stopped=new ManualResetEvent(false);readonly Thread observer;internal readonly OwnTermination Termination;Timer terminal;
         internal Guard() {
             IntPtr stdin=GetStdHandle(-10);
             if(stdin==IntPtr.Zero||stdin==new IntPtr(-1)||GetFileType(stdin)!=3||PipeState(stdin)!=3)throw new IOException("stdin_lifecycle_unavailable");
             job=OwnWorker();
-            var termination=new OwnTermination(delegate(uint code){return TerminateJobObject(job,code);},delegate{job.Dispose();});
-            observer=new Thread(delegate(){
-                try{Observe(stopped,delegate(){return PipeState(stdin);},delegate(){termination.Stop(DisconnectedExit);});}
-                catch(PipeFailure error){termination.Stop(error.ExitCode);}
-                catch{job.Dispose();}
-            });observer.IsBackground=true;
+            Termination=new OwnTermination(delegate(uint code){return TerminateJobObject(job,code);},delegate{job.Dispose();});
+            observer=new Thread(delegate(){ObserveOwned(stopped,delegate(){return PipeState(stdin);},Termination);});observer.IsBackground=true;
             try{observer.Start();}catch{job.Dispose();stopped.Dispose();throw;}
         }
         internal void HoldTerminal(){stopped.WaitOne();}
-        internal void ArmFailure(DateTime deadline){terminal=ArmFailureBound(delegate{job.Dispose();},deadline);}
+        internal void ArmFailure(DateTime deadline){terminal=ArmOwnedFailure(Termination,deadline);}
         public void Dispose(){
-            stopped.Set();
-            // Closing this exact unnamed job is the fail-closed bound if a native
-            // query fails to return; no observer or descendant survives the worker.
-            if(!observer.Join(2000)){job.Dispose();if(terminal!=null)terminal.Dispose();return;}
-            stopped.Dispose();job.Dispose();if(terminal!=null)terminal.Dispose();
+            // The first diagnostic marker wins; every stop still closes this
+            // exact unnamed job even when native termination fails or throws.
+            FinishObserver(delegate{stopped.Set();},delegate{return observer.Join(2000);},
+                delegate{stopped.Dispose();},delegate{if(terminal!=null)terminal.Dispose();},Termination);
         }
     }
 }
