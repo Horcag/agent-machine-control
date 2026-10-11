@@ -31,9 +31,10 @@ func createGuestStagingFile(path string) (*os.File, error) {
 	return os.NewFile(uintptr(handle), path), nil
 }
 
-// FILE_RENAME_INFO uses the zero union value for ReplaceIfExists=FALSE.
+// FILE_RENAME_INFORMATION uses the zero union value for ReplaceIfExists=FALSE.
 // RootDirectory and the leaf name ensure lookup stays within the held parent.
-// https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_rename_info
+// The NT rename class supports a relative leaf under the held RootDirectory.
+// https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information
 // Successful rename removes the original staging entry. The caller retains
 // ownership of the open file; cleanup must tolerate that entry being absent.
 type guestRenameInformation struct {
@@ -57,7 +58,7 @@ func publishGuestFileHandle(ctx context.Context, file *os.File, destination stri
 		return err
 	}
 	var layout guestRenameInformation
-	size := int(unsafe.Offsetof(layout.FileName)) + len(name)*2
+	size := int(unsafe.Sizeof(layout)) + len(name)*2
 	buffer := make([]byte, size)
 	rename := (*guestRenameInformation)(unsafe.Pointer(&buffer[0]))
 	rename.RootDirectory = parent
@@ -81,8 +82,13 @@ func publishGuestFileHandle(ctx context.Context, file *os.File, destination stri
 		if publicationErr = guestPublicationContextErr(ctx); publicationErr != nil {
 			return
 		}
-		publicationErr = windows.SetFileInformationByHandle(source, windows.FileRenameInfo, &buffer[0], uint32(size))
+		var status windows.IO_STATUS_BLOCK
+		publicationErr = windows.NtSetInformationFile(source, &status, &buffer[0], uint32(size), windows.FileRenameInformation)
 		if publicationErr != nil {
+			if nativeStatus, ok := publicationErr.(windows.NTStatus); ok {
+				publicationErr = nativeStatus.Errno()
+			}
+			publicationErr = fmt.Errorf("guest held-handle rename failed: %w", publicationErr)
 			return
 		}
 		installed, inspectErr := openGuestPublicationChild(parent, leaf, false)
@@ -132,7 +138,7 @@ func openGuestPublicationParent(destination string) (windows.Handle, string, err
 		next, openErr := openGuestPublicationChild(parent, part, true)
 		windows.CloseHandle(parent)
 		if openErr != nil {
-			return 0, "", openErr
+			return 0, "", fmt.Errorf("guest held destination directory open failed: %w", openErr)
 		}
 		parent = next
 	}
