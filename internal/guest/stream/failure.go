@@ -32,7 +32,7 @@ func validFailureStage(stage string) bool {
 	case "runspace_open", "request", "observe", "put", "get", "exec", "remove_owned",
 		"security_token", "security_lookup", "security_enable", "security_restore",
 		"ancestor_open", "workspace_open", "file_open", "metadata_read", "file_id_read",
-		"security_size", "security_read", "security_parse", "file_commit", "file_delete":
+		"security_size", "security_read", "security_parse", "file_commit", "file_delete", "file_owner_set":
 		return true
 	default:
 		return false

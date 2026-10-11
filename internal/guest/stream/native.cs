@@ -5,6 +5,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Cryptography;
+using System.Security.Principal;
 using Microsoft.Win32.SafeHandles;
 
 
@@ -21,6 +22,16 @@ internal static class Native {
     [DllImport("kernel32.dll",SetLastError=true)] static extern bool SetFileInformationByHandle(SafeFileHandle handle,int type,byte[] data,uint size);
     [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern uint GetFileAttributes(string path);
     [DllImport("advapi32.dll",SetLastError=true)] static extern bool GetKernelObjectSecurity(SafeFileHandle handle,uint requested,byte[] descriptor,uint length,out uint needed);
+    [DllImport("advapi32.dll")] static extern uint SetSecurityInfo(SafeFileHandle handle,int type,uint information,byte[] owner,IntPtr group,IntPtr dacl,IntPtr sacl);
+    internal static T CreateOwned<T>(string expectedOwner,string currentOwner,byte[] owner,Func<T> create,Func<T,byte[],uint> setOwner,Action<T> dispose) {
+        if(String.IsNullOrEmpty(expectedOwner)||expectedOwner!=currentOwner||owner==null||owner.Length==0)throw new InvalidDataException();
+        T original=create();
+        try {uint error=setOwner(original,owner);if(error!=0)throw new NativeFailure("file_owner_set",error);return original;}
+        catch{dispose(original);throw;}
+    }
+    static uint SetOwner(SafeFileHandle handle,byte[] owner){
+        return SetSecurityInfo(handle,1,1,owner,IntPtr.Zero,IntPtr.Zero,IntPtr.Zero); // SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION only
+    }
     internal static string FullPath(string path) {
         if(String.IsNullOrEmpty(path)||path.IndexOfAny(new char[]{'*','?','\0'})>=0||!Path.IsPathRooted(path)||path.StartsWith(@"\\")||path.IndexOf(':',2)>=0)throw new InvalidDataException();
         string full=Path.GetFullPath(path);if(full.Length>240||full.Length<4)throw new InvalidDataException();return full;
@@ -84,11 +95,16 @@ internal static class Native {
         void Disposition(bool delete){byte[] disposition=new byte[]{delete?(byte)1:(byte)0};if(!SetFileInformationByHandle(Handle,4,disposition,1))throw Failure.LastError("file_delete");}
         public void Dispose(){Stream.Dispose();}
     }
-    internal static File Create(string path){
+    internal static File Create(string path,string expectedOwner){
         // The kernel owns cleanup from the instant CREATE_NEW succeeds, including
         // metadata validation, FileStream construction failure and abrupt EOF kill.
         // Unsupported extended commit never falls back to a gap-prone legacy path.
-        return new File(Handle(path,0xC1030000,0,1,0x04000000),true);
+        using(var identity=WindowsIdentity.GetCurrent()) {
+            var sid=identity.User;byte[] owner=new byte[sid.BinaryLength];sid.GetBinaryForm(owner,0);
+            var handle=CreateOwned(expectedOwner,sid.Value,owner,
+                delegate{return Handle(path,0xC10B0000,0,1,0x04000000);},SetOwner,delegate(SafeFileHandle original){original.Dispose();}); // adds WRITE_OWNER only
+            return new File(handle,true);
+        }
     }
     internal static File Open(string path){return new File(Handle(path,0x81030000,0,3),false);}
     internal static bool Same(Dictionary<string,object> expected,Dictionary<string,object> actual) {

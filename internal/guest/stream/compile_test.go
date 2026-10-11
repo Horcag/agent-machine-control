@@ -50,7 +50,7 @@ namespace AMCStream {
    if(failure.Count!=2||(string)failure["stage"]!="observe"||(uint)failure["nativeError"]!=0)throw new System.Exception("exception text retained");
    failure=Failure.Metadata(new NativeFailure("security_enable",1300),"observe");
    if(failure.Count!=2||(string)failure["stage"]!="security_enable"||(uint)failure["nativeError"]!=1300)throw new System.Exception("native diagnostic lost");
-   string[] stages={"runspace_open","request","observe","put","get","exec","remove_owned","security_token","security_lookup","security_enable","security_restore","ancestor_open","workspace_open","file_open","metadata_read","file_id_read","security_size","security_read","security_parse","file_commit","file_delete","control_eof","control_read","control_header","control_decode"};
+   string[] stages={"runspace_open","request","observe","put","get","exec","remove_owned","security_token","security_lookup","security_enable","security_restore","ancestor_open","workspace_open","file_open","metadata_read","file_id_read","security_size","security_read","security_parse","file_commit","file_delete","control_eof","control_read","control_header","control_decode","file_owner_set"};
    for(int i=0;i<stages.Length;i++){
     uint plain=Failure.TimerExit(new System.Exception("private text"),stages[i]);
     uint nativeCode=Failure.TimerExit(new NativeFailure(stages[i],65535),"request");
@@ -69,6 +69,23 @@ namespace AMCStream {
     }
     if(marker!=0x010A0514u||closures!=1)throw new System.Exception("encoded timer cause overwritten");
    }
+   int creates=0,ownerSets=0,ownerCloses=0;byte[] originalSid={1,1,0,0,0,0,0,5,21,0,0,0};
+   var held=new System.IO.MemoryStream();
+   System.Func<System.IO.MemoryStream> create=delegate{creates++;return held;};
+   System.Action<System.IO.MemoryStream> close=delegate(System.IO.MemoryStream file){ownerCloses++;file.Dispose();};
+   try{Native.CreateOwned("synthetic-user","synthetic-other",originalSid,create,delegate(System.IO.MemoryStream file,byte[] sid){ownerSets++;return 0u;},close);throw new System.Exception("foreign owner accepted");}
+   catch(System.IO.InvalidDataException){}
+   if(creates!=0||ownerSets!=0||ownerCloses!=0)throw new System.Exception("mismatched owner created file");
+   foreach(bool throws in new[]{false,true}){
+    held=new System.IO.MemoryStream();creates=ownerSets=ownerCloses=0;
+    try{Native.CreateOwned("synthetic-user","synthetic-user",originalSid,create,delegate(System.IO.MemoryStream file,byte[] sid){ownerSets++;if(!object.ReferenceEquals(file,held)||!object.ReferenceEquals(sid,originalSid)||file.Length!=0)throw new System.Exception("owner handle/input drift");if(throws)throw new System.IO.IOException("synthetic setter failure");return 5u;},close);throw new System.Exception("failed setter published file");}
+    catch(NativeFailure error){if(throws||error.Stage!="file_owner_set"||error.Code!=5)throw;}
+    catch(System.IO.IOException){if(!throws)throw;}
+    if(creates!=1||ownerSets!=1||ownerCloses!=1||held.CanWrite)throw new System.Exception("failed setter leaked original");
+   }
+   held=new System.IO.MemoryStream();creates=ownerSets=ownerCloses=0;
+   var published=Native.CreateOwned("synthetic-user","synthetic-user",originalSid,create,delegate(System.IO.MemoryStream file,byte[] sid){ownerSets++;if(!object.ReferenceEquals(file,held)||file.Length!=0||!object.ReferenceEquals(sid,originalSid))throw new System.Exception("owner set after payload");return 0u;},close);
+   published.WriteByte(42);if(creates!=1||ownerSets!=1||ownerCloses!=0||published.Length!=1)throw new System.Exception("owned file not published after setter");published.Dispose();
    var a=new System.Collections.Generic.Dictionary<string,object>();var b=new System.Collections.Generic.Dictionary<string,object>();
    string[] keys={"path","volume","fileId","creationTime","owner","sddlHash","size","sha256","rootPath","rootVolume","rootFileId","rootCreationTime","rootOwner","rootSDDLHash"};
    foreach(var key in keys){a[key]="original";b[key]="original";}

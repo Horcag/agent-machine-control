@@ -125,10 +125,10 @@ public static class Worker {
         string path=Native.FullPath(Text(request,"path"));
         using(var roots=Native.LockParents(path)) {
             Fresh(deadline);
-            if(!Native.Same((Dictionary<string,object>)request["expectedRoot"],roots.Identity()))throw new InvalidDataException();
+            var root=roots.Identity();if(!Native.Same((Dictionary<string,object>)request["expectedRoot"],root))throw new InvalidDataException();
             // CREATE_NEW refuses replacement. Incomplete bytes remain exclusively task-owned
             // and are removed by their held handle on every unsuccessful commit.
-            using(var file=Native.Create(path)) {
+            using(var file=Native.Create(path,(string)root["owner"])) {
                 string hash=Transfer(input,file.Stream,size,deadline);
                 if(input.ReadByte()!=1||hash!=Text(request,"sha256")) throw new InvalidDataException();
                 Fresh(deadline);file.Stream.Flush(true);

@@ -27,6 +27,7 @@ internal static class Failure {
             case "file_commit":index=20;break;case "file_delete":index=21;break;
             case "control_eof":index=22;break;case "control_read":index=23;break;
             case "control_header":index=24;break;case "control_decode":index=25;break;
+            case "file_owner_set":index=26;break;
             default:return Lifetime.FailureTimerExit;
         }
         return code>65535?Lifetime.FailureTimerExit:0x01000000u|(index<<16)|code;
