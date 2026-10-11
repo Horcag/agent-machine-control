@@ -39,6 +39,21 @@ namespace AMCStream {
    if(!Native.Same(a,b))throw new System.Exception("original rejected");
    foreach(var key in keys){b[key]="changed";if(Native.Same(a,b))throw new System.Exception("changed identity accepted "+key);b[key]="original";}
    b.Remove("owner");if(Native.Same(a,b))throw new System.Exception("incomplete identity accepted");
+   var now=new System.DateTime(2026,1,1,0,0,0,System.DateTimeKind.Utc);
+   if(Lifetime.FailureBudget(now.AddSeconds(30),now)!=System.TimeSpan.FromSeconds(1))throw new System.Exception("failure bound exceeded one second");
+   if(Lifetime.FailureBudget(now.AddMilliseconds(20),now)!=System.TimeSpan.FromMilliseconds(20))throw new System.Exception("request deadline extended");
+   if(Lifetime.FailureBudget(now.AddTicks(-1),now)!=System.TimeSpan.Zero)throw new System.Exception("expired request extended");
+   // Output backpressure and terminal input cannot cancel the prearmed bound.
+   using(var released=new System.Threading.ManualResetEvent(false)){
+    int closures=0;
+    using(var timer=Lifetime.ArmFailureBound(delegate(){System.Threading.Interlocked.Increment(ref closures);released.Set();},System.DateTime.UtcNow.AddMilliseconds(100))){
+     if(!released.WaitOne(5000)||closures!=1)throw new System.Exception("blocked failure response survived its bound");
+    }
+   }
+   using(var terminal=new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes("another business request"))){
+    Lifetime.DrainTerminal(terminal);
+    if(terminal.Position!=terminal.Length)throw new System.Exception("terminal input was reused");
+   }
    using(var stopped=new System.Threading.ManualResetEvent(false)){
     int observations=0,disconnects=0;
     // A disconnected pipe with unread payload must still terminate the worker.

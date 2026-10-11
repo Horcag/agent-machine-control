@@ -50,9 +50,9 @@ public static class Worker {
         result["size"]=0L;result["sha256"]=Digest(new byte[0]);Control(result);Control(result);
     }
     public static void Run(Stream stdin,Stream stdout) {
-        using(var lifetime=new Lifetime.Guard())RunOwned(stdin,stdout);
+        using(var lifetime=new Lifetime.Guard())RunOwned(stdin,stdout,lifetime);
     }
-    static void RunOwned(Stream stdin,Stream stdout) {
+    static void RunOwned(Stream stdin,Stream stdout,Lifetime.Guard lifetime) {
         input=stdin;output=stdout;var process=Process.GetCurrentProcess();
         identity=new Dictionary<string,object>{{"pid",process.Id},{"birthTicks",process.StartTime.ToUniversalTime().Ticks},{"image",process.MainModule.FileName},{"sid",WindowsIdentity.GetCurrent().User.Value}};
         Control(identity);
@@ -61,9 +61,9 @@ public static class Worker {
                 Dictionary<string,object> request;try {request=ReadControl();} catch(EndOfStreamException){return;}
                 // Malformed or interrupted requests terminate the channel, never replay.
                 string id=Text(request,"id");if(id.Length==0||id.Length>128)throw new InvalidDataException();
-                responseStarted=false;string stage="request";
+                responseStarted=false;string stage="request";DateTime deadline=DateTime.MaxValue;
                 try {
-                    DateTime deadline=Deadline(request);Fresh(deadline);
+                    deadline=Deadline(request);Fresh(deadline);
                     string operation=Text(request,"operation");long size=Number(request,"size"),limit=Number(request,"maxOutput");
                     if(size<0||size>(1L<<40)||limit<0||limit>(1L<<40))throw new InvalidDataException();
                     if(operation!="observe"&&operation!="put"&&operation!="get"&&operation!="exec"&&operation!="remove-owned")throw new InvalidDataException();
@@ -78,8 +78,12 @@ public static class Worker {
                 } catch(Exception error) {
                     // A partial response cannot safely become a new control frame.
                     if(responseStarted)throw;
+                    // Closing our kill-on-close job immediately after Flush can
+                    // race the SSH server's pipe drain. Bound the terminal wait
+                    // before writing, including output backpressure and cleanup.
+                    lifetime.ArmFailure(deadline);
                     var result=Result(id,"failed",0,Digest(new byte[0]),1);
-                    result["failure"]=Failure.Metadata(error,stage);Empty(result);return;
+                    result["failure"]=Failure.Metadata(error,stage);Empty(result);Lifetime.DrainTerminal(input);return;
                 }
             }
         } finally {if(runspace!=null)runspace.Dispose();}

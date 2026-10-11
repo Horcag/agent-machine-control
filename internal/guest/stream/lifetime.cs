@@ -37,10 +37,19 @@ internal static class Lifetime {
     internal static void Observe(WaitHandle stopped,Func<uint> query,Action disconnect) {
         while(!stopped.WaitOne(50)){if(query()!=3){disconnect();return;}}
     }
+    internal static TimeSpan FailureBudget(DateTime deadline,DateTime now) {
+        return TimeSpan.FromTicks(Math.Min(TimeSpan.TicksPerSecond,Math.Max(0,deadline.Ticks-now.Ticks)));
+    }
+    internal static Timer ArmFailureBound(Action close,DateTime deadline) {
+        return new Timer(delegate{close();},null,FailureBudget(deadline,DateTime.UtcNow),Timeout.InfiniteTimeSpan);
+    }
+    // After a failed response the worker is terminal. Keep the pipe open long
+    // enough for the peer to consume the pair; no further request is executed.
+    internal static void DrainTerminal(Stream input) {while(input.ReadByte()>=0){}}
     // Observe the pipe's native connection state without consuming bytes. A full
     // input backlog cannot conceal EOF behind a bounded producer queue.
     internal sealed class Guard : IDisposable {
-        readonly SafeFileHandle job;readonly ManualResetEvent stopped=new ManualResetEvent(false);readonly Thread observer;
+        readonly SafeFileHandle job;readonly ManualResetEvent stopped=new ManualResetEvent(false);readonly Thread observer;Timer terminal;
         internal Guard() {
             IntPtr stdin=GetStdHandle(-10);
             if(stdin==IntPtr.Zero||stdin==new IntPtr(-1)||GetFileType(stdin)!=3||PipeState(stdin)!=3)throw new IOException("stdin_lifecycle_unavailable");
@@ -51,12 +60,13 @@ internal static class Lifetime {
             });observer.IsBackground=true;
             try{observer.Start();}catch{job.Dispose();stopped.Dispose();throw;}
         }
+        internal void ArmFailure(DateTime deadline){terminal=ArmFailureBound(delegate{job.Dispose();},deadline);}
         public void Dispose(){
             stopped.Set();
             // Closing this exact unnamed job is the fail-closed bound if a native
             // query fails to return; no observer or descendant survives the worker.
-            if(!observer.Join(2000)){job.Dispose();return;}
-            stopped.Dispose();job.Dispose();
+            if(!observer.Join(2000)){job.Dispose();if(terminal!=null)terminal.Dispose();return;}
+            stopped.Dispose();job.Dispose();if(terminal!=null)terminal.Dispose();
         }
     }
 }
