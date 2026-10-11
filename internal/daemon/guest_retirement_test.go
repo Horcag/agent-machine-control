@@ -1,14 +1,17 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"github.com/Horcag/agent-machine-control/internal/auth"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -36,7 +39,23 @@ func (r *retirementFakeRunner) RunCommand(_ context.Context, target domain.Machi
 	if target != "local:11111111-1111-4111-8111-111111111111" || !strings.HasPrefix(command, "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ") || limit != 16*1024 {
 		r.t.Fatal("observation escaped original target or fixed bounded command")
 	}
-	return r.run(input)
+	reader := bytes.NewReader(input)
+	var size uint32
+	if binary.Read(reader, binary.BigEndian, &size) != nil || size > 16*1024 {
+		r.t.Fatal("retirement identity framing invalid")
+	}
+	identity := make([]byte, size)
+	if _, err := io.ReadFull(reader, identity); err != nil {
+		r.t.Fatal(err)
+	}
+	if binary.Read(reader, binary.BigEndian, &size) != nil || int(size) != len(guestRetirementScript) {
+		r.t.Fatal("retirement source framing invalid")
+	}
+	source := make([]byte, size)
+	if _, err := io.ReadFull(reader, source); err != nil || string(source) != guestRetirementScript || reader.Len() != 0 {
+		r.t.Fatal("retirement source or trailing input changed")
+	}
+	return r.run(identity)
 }
 func TestGuestRetirementExactNativeObservation(t *testing.T) {
 	original := stream.WorkerIdentity{PID: 1234, BirthTicks: 638000000000000001, Image: `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, SID: "S-1-5-21-1000"}

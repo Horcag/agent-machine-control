@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"strings"
@@ -55,7 +56,7 @@ func (p *guestConfigurationProvider) ConfirmGuestRetirement(ctx context.Context,
 	if err != nil || ready.Generation != generation {
 		return false, app.ErrGuestAuthority
 	}
-	input, err := json.Marshal(original)
+	input, err := guestRetirementInput(original)
 	if err != nil {
 		return false, err
 	}
@@ -114,12 +115,60 @@ func (p *guestConfigurationProvider) retirementCommandRunner(ctx context.Context
 	return guestssh.NewTransport(frozen), nil
 }
 func encodedGuestRetirementCommand() string {
-	units := utf16.Encode([]rune(guestRetirementScript))
+	return guestRetirementCommand(guestRetirementScript)
+}
+
+// The shell receives only this bounded loader. The original identity and exact
+// server-owned source travel in binary stdin, outside Windows command limits.
+const guestRetirementLoader = `$ErrorActionPreference='Stop'
+$stream=[Console]::OpenStandardInput()
+function ReadExact([int]$count) {
+ $bytes=[byte[]]::new($count);$offset=0
+ while($offset-lt$count){$read=$stream.Read($bytes,$offset,$count-$offset);if($read-le0){throw 'retirement_truncated'};$offset+=$read}
+ return ,$bytes
+}
+function ReadLength([int]$maximum) {
+ $bytes=ReadExact 4
+ $length=[long]$bytes[0]*16777216+[long]$bytes[1]*65536+[long]$bytes[2]*256+[long]$bytes[3]
+ if($length-le0-or$length-gt$maximum){throw 'retirement_length'}
+ return [int]$length
+}
+$identity=ReadExact (ReadLength 16384)
+$source=ReadExact (ReadLength 507896)
+if($identity.Length+$source.Length+8-gt524288-or$stream.ReadByte()-ne-1){throw 'retirement_frame'}
+$hasher=[Security.Cryptography.SHA256]::Create()
+try{$actual=[BitConverter]::ToString($hasher.ComputeHash($source)).Replace('-','').ToLowerInvariant()}finally{$hasher.Dispose()}
+if($actual-cne'%s'){throw 'retirement_source'}
+$utf8=[Text.UTF8Encoding]::new($false,$true)
+$original=$utf8.GetString($identity)|ConvertFrom-Json
+& ([ScriptBlock]::Create($utf8.GetString($source)))
+`
+
+func guestRetirementCommand(source string) string {
+	hash := sha256.Sum256([]byte(source))
+	loader := fmt.Sprintf(guestRetirementLoader, fmt.Sprintf("%x", hash))
+	units := utf16.Encode([]rune(loader))
 	data := make([]byte, len(units)*2)
 	for i, unit := range units {
 		binary.LittleEndian.PutUint16(data[i*2:], unit)
 	}
 	return "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand " + base64.StdEncoding.EncodeToString(data)
+}
+
+func guestRetirementInput(original stream.WorkerIdentity) ([]byte, error) {
+	identity, err := json.Marshal(original)
+	if err != nil || len(identity) > 16*1024 || len(guestRetirementScript) > 507896 {
+		return nil, app.ErrGuestUncertain
+	}
+	var input bytes.Buffer
+	for _, block := range [][]byte{identity, []byte(guestRetirementScript)} {
+		// #nosec G115 -- both blocks are explicitly bounded below 512 KiB above.
+		if err = binary.Write(&input, binary.BigEndian, uint32(len(block))); err != nil {
+			return nil, err
+		}
+		input.Write(block)
+	}
+	return input.Bytes(), nil
 }
 func decodeGuestRetirement(data []byte, original stream.WorkerIdentity) (bool, error) {
 	if len(data) > 16*1024 || rejectDuplicateJSONKeys(data) != nil {

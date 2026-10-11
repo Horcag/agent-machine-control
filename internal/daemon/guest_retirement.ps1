@@ -25,7 +25,11 @@ public static class AMCOriginalProcessProbe {
     [DllImport("kernel32.dll",SetLastError=true)] static extern bool K32EnumProcesses([Out] uint[] processes,uint size,out uint needed);
     static bool Missing(int pid) {
         var processes = new uint[65536];uint needed;
-        if(!K32EnumProcesses(processes,(uint)(processes.Length*4),out needed)||needed>=processes.Length*4)throw new Win32Exception();
+        if(!K32EnumProcesses(processes,(uint)(processes.Length*4),out needed))throw new Win32Exception();
+        return InventoryMissing(pid,processes,needed);
+    }
+    public static bool InventoryMissing(int pid,uint[] processes,uint needed) {
+        if(needed==0||needed>=processes.Length*4||needed%4!=0)throw new Win32Exception();
         for(int i=0;i<needed/4;i++)if(processes[i]==pid)return false;
         return true;
     }
@@ -56,6 +60,5 @@ public static class AMCOriginalProcessProbe {
     }
 }
 '@
-$original = [Console]::In.ReadToEnd() | ConvertFrom-Json
 $observed = [AMCOriginalProcessProbe]::Read([int]$original.pid, [long]$original.birthTicks)
 @{ original = $original; status = $observed.status; observed = @{ pid = $observed.pid; birthTicks = $observed.birthTicks; image = $observed.image; sid = $observed.sid } } | ConvertTo-Json -Compress -Depth 4
