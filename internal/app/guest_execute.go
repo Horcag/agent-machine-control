@@ -44,7 +44,7 @@ func (s *GuestService) run(ctx context.Context, p GuestOperationParams, op domai
 	if err != nil {
 		return out, err
 	}
-	if worker.Target != op.Target || worker.Actor != op.Actor.EffectiveActor || worker.Caller != op.Actor.AuthenticatedCaller || worker.Generation != config.Generation || worker.Root != config.WorkspaceIdentity {
+	if !validGuestWorkerBinding(worker, op, config) {
 		return out, ErrGuestAuthority
 	}
 	request, owned, err := s.request(ctx, p, op, config, id)
@@ -62,18 +62,9 @@ func (s *GuestService) run(ctx context.Context, p GuestOperationParams, op domai
 	if err != nil {
 		return out, ErrGuestUncertain
 	}
-	if result.ID != id || result.Status != "ok" || result.Worker != worker.Identity {
-		return out, guestProtocolError()
-	}
-	if checked, ok := input.(*guestCheckedInput); ok && !checked.valid() {
-		return out, stream.ErrIntegrity
-	}
-	out.Worker = result.Worker
-	out.Size = result.Size
-	out.SHA256 = result.SHA256
-	out.ExitCode = result.ExitCode
-	if spool, ok := output.(*guestSpool); ok && !spool.matches(out) {
-		return out, stream.ErrIntegrity
+	out, err = verifiedGuestResult(id, worker.Identity, result, input, output)
+	if err != nil {
+		return out, err
 	}
 	return s.applyGuestResult(ctx, p, op, config, key, id, request, owned, result, out)
 }
@@ -218,4 +209,26 @@ func (s *GuestService) request(ctx context.Context, p GuestOperationParams, op d
 
 func validGuestOwned(record guestOwnedArtifact, artifactID string, op domain.Operation, config GuestConfiguration) bool {
 	return record.Artifact.ID == artifactID && record.Target == op.Target && record.Caller == op.Actor.AuthenticatedCaller && record.Actor == op.Actor.EffectiveActor && record.Generation == config.Generation && validGuestFile(record.Identity, config.WorkspaceIdentity) && record.Identity.Path == guestArtifactPath(config.WorkspaceIdentity.Path, artifactID) && record.Artifact.Size == record.Identity.Size && record.Artifact.SHA256 == record.Identity.SHA256
+}
+
+func verifiedGuestResult(id string, worker stream.WorkerIdentity, result stream.Result, input io.Reader, output io.Writer) (GuestOperationResult, error) {
+	var out GuestOperationResult
+	if result.ID != id || result.Status != "ok" || result.Worker != worker {
+		return out, guestProtocolError()
+	}
+	if checked, ok := input.(*guestCheckedInput); ok && !checked.valid() {
+		return out, stream.ErrIntegrity
+	}
+	out.Worker = result.Worker
+	out.Size = result.Size
+	out.SHA256 = result.SHA256
+	out.ExitCode = result.ExitCode
+	if spool, ok := output.(*guestSpool); ok && !spool.matches(out) {
+		return out, stream.ErrIntegrity
+	}
+	return out, nil
+}
+
+func validGuestWorkerBinding(worker guestWorkerRecord, op domain.Operation, config GuestConfiguration) bool {
+	return worker.Target == op.Target && worker.Actor == op.Actor.EffectiveActor && worker.Caller == op.Actor.AuthenticatedCaller && worker.Generation == config.Generation && worker.Root == config.WorkspaceIdentity
 }

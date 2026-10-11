@@ -64,29 +64,26 @@ func validateGuestArtifactIDs(ids []string) error {
 }
 
 func validateGuestShape(op string, size, limit int64, number int) error {
+	valid := false
 	switch op {
 	case "prepare":
-		if size != 0 || limit != 0 || number != 0 {
-			return ErrNonCanonicalParameter
-		}
+		valid = size == 0 && limit == 0 && number == 0
 	case "put":
-		if limit != 0 || number != 0 {
-			return ErrNonCanonicalParameter
-		}
+		valid = limit == 0 && number == 0
 	case "exec":
-		if size > 16*1024*1024 || limit == 0 || limit > 16*1024*1024 || number != 0 {
-			return ErrNonCanonicalParameter
-		}
+		valid = validGuestCommandShape(size, limit, number)
 	case "get":
-		if size != 0 || limit == 0 || number != 1 {
-			return ErrNonCanonicalParameter
-		}
+		valid = size == 0 && limit > 0 && number == 1
 	case "remove-owned":
-		if size != 0 || limit != 0 || number == 0 {
-			return ErrNonCanonicalParameter
-		}
+		valid = size == 0 && limit == 0 && number > 0
+	}
+	if !valid {
+		return ErrNonCanonicalParameter
 	}
 	return nil
+}
+func validGuestCommandShape(size, limit int64, number int) bool {
+	return size <= 16*1024*1024 && limit > 0 && limit <= 16*1024*1024 && number == 0
 }
 
 func guestParameterInt(value any) (int64, error) {
