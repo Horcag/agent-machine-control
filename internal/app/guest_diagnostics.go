@@ -11,6 +11,10 @@ import (
 // Copy only recognized diagnostics. The original error may contain guest paths,
 // exception text or credentials even when it wraps a safe protocol sentinel.
 func safeGuestTransportError(err error) error {
+	if startup, ok := errors.AsType[*stream.StartupFailure](err); ok && startup.Valid() {
+		diagnostic := *startup
+		return errors.Join(ErrGuestUncertain, &diagnostic)
+	}
 	if fatal, ok := errors.AsType[*stream.ControlFailure](err); ok && fatal.Valid() {
 		return errors.Join(ErrGuestUncertain, &stream.ControlFailure{Stage: fatal.Stage})
 	}
@@ -67,6 +71,9 @@ func verifyGuestRoot(actual *stream.RootIdentity, original stream.RootIdentity) 
 }
 
 func guestFailureEvidence(err error) string {
+	if startup, ok := errors.AsType[*stream.StartupFailure](err); ok && startup.Valid() {
+		return startup.Error()
+	}
 	if exit, ok := errors.AsType[*stream.RemoteExit](err); ok && exit.Valid() {
 		return fmt.Sprintf("guest-remote-exit:%d", exit.Code)
 	}

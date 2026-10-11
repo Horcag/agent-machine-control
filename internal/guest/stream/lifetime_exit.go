@@ -26,16 +26,8 @@ func observeLifetimeExit(ctx context.Context, channel io.ReadWriteCloser, err er
 	if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 		return err
 	}
-	observer, ok := channel.(interface {
-		ExitStatus(context.Context) (int, bool)
-	})
-	if !ok || ctx.Err() != nil {
-		return err
-	}
-	bounded, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
-	defer cancel()
-	code, known := observer.ExitStatus(bounded)
-	if !known || bounded.Err() != nil {
+	code, known := observeExitStatus(ctx, channel)
+	if !known {
 		return err
 	}
 	var marker error
@@ -56,4 +48,20 @@ func observeLifetimeExit(ctx context.Context, channel io.ReadWriteCloser, err er
 		return errors.Join(err, exit)
 	}
 	return errors.Join(err, marker)
+}
+
+func observeExitStatus(ctx context.Context, channel io.ReadWriteCloser) (int, bool) {
+	observer, ok := channel.(interface {
+		ExitStatus(context.Context) (int, bool)
+	})
+	if !ok || ctx.Err() != nil {
+		return 0, false
+	}
+	bounded, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+	code, known := observer.ExitStatus(bounded)
+	if !known || bounded.Err() != nil {
+		return 0, false
+	}
+	return code, true
 }

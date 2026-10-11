@@ -91,7 +91,7 @@ func (s *GuestService) prepareGuestWorker(ctx context.Context, op domain.Operati
 	identity, err := s.transport.Prepare(ctx, op.Target, key, config.Generation)
 	worker.Identity = identity
 	if err != nil {
-		return worker, true, ErrGuestUncertain
+		return worker, true, safeGuestTransportError(err)
 	}
 	if !validGuestWorker(identity) || identity.SID != config.WorkspaceIdentity.Owner {
 		return worker, true, guestProtocolError()

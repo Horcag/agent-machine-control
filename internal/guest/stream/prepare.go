@@ -44,15 +44,24 @@ func (c *Client) Prepare(ctx context.Context, target domain.MachineRef, actor, g
 }
 
 func (c *Client) openWorker(ctx context.Context, target domain.MachineRef) (guestssh.Duplex, WorkerIdentity, error) {
+	started := time.Now()
 	ch, err := c.opener.OpenDuplex(ctx, target, StartupCommand)
+	failure := StartupFailure{Stage: "open", OpenMillis: time.Since(started).Milliseconds()}
 	if err != nil {
-		return nil, WorkerIdentity{}, err
+		return nil, WorkerIdentity{}, startupFailure(ctx, nil, failure, err)
 	}
 	stop := context.AfterFunc(ctx, func() { _ = ch.Close() })
 	defer stop()
 	var identity WorkerIdentity
-	if err = writeSource(ch); err == nil {
+	failure.Stage = "source_write"
+	started = time.Now()
+	err = writeSource(ch)
+	failure.SourceWriteMillis = time.Since(started).Milliseconds()
+	if err == nil {
+		failure.Stage = "hello"
+		started = time.Now()
 		err = readControl(ch, &identity)
+		failure.HelloMillis = time.Since(started).Milliseconds()
 	}
 	if err == nil && (identity.PID <= 0 || identity.BirthTicks <= 0 || identity.Image == "" || identity.SID == "") {
 		err = ErrProtocol
@@ -61,6 +70,7 @@ func (c *Client) openWorker(ctx context.Context, target domain.MachineRef) (gues
 		err = ctx.Err()
 	}
 	if err != nil {
+		err = startupFailure(ctx, ch, failure, err)
 		_ = ch.Close()
 		return nil, WorkerIdentity{}, err
 	}
