@@ -186,7 +186,7 @@ func (s *GuestService) finishGuest(ctx context.Context, p GuestOperationParams, 
 		cached.CachedReceipt = true
 		out = cached
 	}
-	if err != nil && (effectApplied || errors.Is(err, sessions.ErrMutationEffectUnknown) || errors.Is(err, sessions.ErrMutationFinalizationPending) || (rcpt != nil && rcpt.Outcome.Status == domain.OutcomeFailed && slices.Contains(rcpt.EvidenceRefs, "guest-operation-dispatched"))) {
+	if err != nil && (guestOutcomeUncertain(err, rcpt, effectApplied)) {
 		err = errors.Join(ErrGuestUncertain, err)
 	}
 	if err == nil && spool != nil && dispatched {
@@ -228,4 +228,8 @@ func (s *GuestService) guestDependenciesAvailable() bool {
 }
 func validGuestConfiguration(config GuestConfiguration, caller domain.ActorContext) bool {
 	return config.Caller.Validate() == nil && config.Caller.AuthenticatedCaller == caller.AuthenticatedCaller && config.Caller.EffectiveActor == caller.EffectiveActor && config.Caller.EffectivePermissions.IsSubsetOf(caller.EffectivePermissions) && config.Caller.CallerPermissions.IsSubsetOf(caller.CallerPermissions) && domain.ValidateBoundedString(config.Generation, 1, 256, ErrGuestAuthority) == nil && validGuestRoot(config.WorkspaceIdentity)
+}
+
+func guestOutcomeUncertain(err error, rcpt *domain.Receipt, effect bool) bool {
+	return effect || errors.Is(err, sessions.ErrMutationEffectUnknown) || errors.Is(err, sessions.ErrMutationFinalizationPending) || (rcpt != nil && rcpt.Outcome.Status == domain.OutcomeFailed && slices.Contains(rcpt.EvidenceRefs, "guest-operation-dispatched"))
 }

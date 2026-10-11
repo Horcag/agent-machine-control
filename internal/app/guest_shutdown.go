@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"maps"
 )
 
 func (s *GuestService) beginGuestCall() error {
@@ -48,10 +49,7 @@ func (s *GuestService) Shutdown(ctx context.Context) error {
 	case <-drained:
 	}
 	s.mu.Lock()
-	workers := make(map[string]guestWorkerRecord, len(s.workers))
-	for key, worker := range s.workers {
-		workers[key] = worker
-	}
+	workers := maps.Clone(s.workers)
 	s.mu.Unlock()
 	var result error
 	for key, worker := range workers {

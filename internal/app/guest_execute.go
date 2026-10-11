@@ -131,7 +131,7 @@ func (s *GuestService) applyGuestResult(ctx context.Context, p GuestOperationPar
 	case "put":
 		return s.applyGuestPut(ctx, p, op, config, id, request, result, out)
 	case "get":
-		if len(result.Files) != 1 || result.Files[0] != owned[0].Identity || result.Size != owned[0].Artifact.Size || result.SHA256 != owned[0].Artifact.SHA256 {
+		if !validGuestDownload(result, owned[0]) {
 			return out, guestProtocolError()
 		}
 	case "exec":
@@ -240,4 +240,8 @@ func verifiedGuestResult(id string, worker stream.WorkerIdentity, result stream.
 
 func validGuestWorkerBinding(worker guestWorkerRecord, op domain.Operation, config GuestConfiguration) bool {
 	return worker.Target == op.Target && worker.Actor == op.Actor.EffectiveActor && worker.Caller == op.Actor.AuthenticatedCaller && worker.Generation == config.Generation && worker.Root == config.WorkspaceIdentity
+}
+
+func validGuestDownload(result stream.Result, owned guestOwnedArtifact) bool {
+	return len(result.Files) == 1 && result.Files[0] == owned.Identity && result.Size == owned.Artifact.Size && result.SHA256 == owned.Artifact.SHA256
 }
