@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -146,4 +147,50 @@ func TestGuestApprovalBeneficiaryFailsClosed(t *testing.T) {
 	if _, _, err := h.service.IssueApprovalFor(context.Background(), p, time.Minute, "self"); err == nil {
 		t.Fatal("invalid issuer approved")
 	}
+}
+
+func TestGuestShutdownWaitsOwnedCallAndHonorsCallerDeadline(t *testing.T) {
+	h := newGuestHarness(t)
+	verified := &guestVerifiedConfig{guestTestConfig: h.config, absent: true}
+	h.service.config = verified
+	h.prepare(t)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	h.transport.executeHook = func(ctx context.Context, request stream.Request, input io.Reader, output io.Writer) (stream.Result, error) {
+		_, err := io.Copy(io.Discard, input)
+		if err != nil {
+			return stream.Result{}, err
+		}
+		close(entered)
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return stream.Result{}, ctx.Err()
+		}
+		_, err = output.(stream.ContextWriter).WriteContext(ctx, []byte("ok"))
+		return stream.Result{ID: request.ID, Status: "ok", Worker: h.transport.worker, Size: 2, SHA256: guestSHA("ok")}, err
+	}
+	p := h.params("exec", "during-shutdown")
+	p.Size = 1
+	p.SHA256 = guestSHA("x")
+	p.MaxOutput = 10
+	go func() {
+		_, err := h.service.Execute(context.Background(), p, stream.BytesInput([]byte("x")), stream.BufferOutput(new(bytes.Buffer)))
+		done <- err
+	}()
+	<-entered
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if err := h.service.Shutdown(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("shutdown ignored caller deadline: %v", err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if err := h.service.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertGuestSpoolClean(t, h)
 }

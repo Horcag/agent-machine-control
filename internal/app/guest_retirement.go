@@ -31,11 +31,19 @@ func (s *GuestService) checkRetirement(ctx context.Context, key string, allowCur
 		if !strings.HasSuffix(entry.Name(), ".launch") {
 			continue
 		}
+		priorKey := strings.TrimSuffix(entry.Name(), ".launch")
+		var launch guestWorkerRecord
+		if err := s.store.read(ctx, priorKey, ".launch", &launch); err != nil || launch.RecordID != priorKey {
+			return ErrGuestUncertain
+		}
+		if launch.Target != worker.Target || launch.Actor != worker.Actor || launch.Caller != worker.Caller {
+			continue
+		}
 		count++
 		if count > 128 {
 			return ErrGuestUncertain
 		}
-		if err := s.checkPriorGuestLaunch(ctx, key, strings.TrimSuffix(entry.Name(), ".launch"), allowCurrent, worker); err != nil {
+		if err := s.checkPriorGuestLaunch(ctx, key, priorKey, allowCurrent, launch); err != nil {
 			return err
 		}
 
@@ -107,18 +115,8 @@ func (s *GuestService) recordReady(ctx context.Context, key string, worker guest
 	return nil
 }
 
-func (s *GuestService) checkPriorGuestLaunch(ctx context.Context, key, priorKey string, allowCurrent bool, worker guestWorkerRecord) error {
+func (s *GuestService) checkPriorGuestLaunch(ctx context.Context, key, priorKey string, allowCurrent bool, launch guestWorkerRecord) error {
 	var err error
-	var launch guestWorkerRecord
-	if err = s.store.read(ctx, priorKey, ".launch", &launch); err != nil {
-		return ErrGuestUncertain
-	}
-	if launch.RecordID != priorKey {
-		return ErrGuestUncertain
-	}
-	if launch.Target != worker.Target || launch.Actor != worker.Actor || launch.Caller != worker.Caller {
-		return nil
-	}
 	var pending guestWorkerRecord
 	pendingErr := s.store.read(ctx, priorKey, ".retirement", &pending)
 	if pendingErr == nil {
