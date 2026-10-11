@@ -100,19 +100,23 @@ type guestWorkerRecord struct {
 }
 
 type GuestService struct {
-	session    *SessionService
-	resolver   SessionTargetResolver
-	config     GuestConfigProvider
-	transport  GuestTransport
-	store      *GuestStore
-	mu         sync.Mutex
-	workers    map[string]guestWorkerRecord
-	spoolBytes int64
-	running    int
-	closing    bool
-	drained    chan struct{}
+	session      *SessionService
+	resolver     SessionTargetResolver
+	config       GuestConfigProvider
+	transport    GuestTransport
+	store        *GuestStore
+	mu           sync.Mutex
+	workers      map[string]guestWorkerRecord
+	spoolBytes   int64
+	running      int
+	closing      bool
+	drained      chan struct{}
+	shutdownGate chan struct{}
+	shutdownDone bool
 }
 
 func NewGuestService(session *SessionService, resolver SessionTargetResolver, config GuestConfigProvider, transport GuestTransport, store *GuestStore) *GuestService {
-	return &GuestService{session: session, resolver: resolver, config: config, transport: transport, store: store, workers: map[string]guestWorkerRecord{}}
+	gate := make(chan struct{}, 1)
+	gate <- struct{}{}
+	return &GuestService{shutdownGate: gate, session: session, resolver: resolver, config: config, transport: transport, store: store, workers: map[string]guestWorkerRecord{}}
 }

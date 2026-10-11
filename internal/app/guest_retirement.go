@@ -66,10 +66,16 @@ func (s *GuestService) confirmRetirement(ctx context.Context, key string, worker
 		return ErrGuestUncertain
 	}
 	absent, err := verifier.ConfirmGuestRetirement(ctx, worker.Target, worker.Actor, worker.Generation, worker.Identity)
-	if err != nil || !absent {
-		return errors.Join(ErrGuestUncertain, err)
+	if err != nil || !absent || ctx.Err() != nil {
+		return errors.Join(ErrGuestUncertain, err, ctx.Err())
 	}
 	if err = s.store.write(ctx, key, ".retired", worker); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			var existing guestWorkerRecord
+			if readErr := s.store.read(ctx, key, ".retired", &existing); readErr == nil && reflect.DeepEqual(existing, worker) {
+				return nil
+			}
+		}
 		return errors.Join(ErrGuestUncertain, err)
 	}
 	return nil
@@ -78,6 +84,13 @@ func (s *GuestService) confirmRetirement(ctx context.Context, key string, worker
 func (s *GuestService) retireWorker(parent context.Context, key string, worker guestWorkerRecord) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
 	defer cancel()
+	return s.retireWorkerContext(ctx, key, worker)
+}
+
+func (s *GuestService) retireWorkerContext(ctx context.Context, key string, worker guestWorkerRecord) error {
+	if err := ctx.Err(); err != nil {
+		return errors.Join(ErrGuestUncertain, err)
+	}
 	s.mu.Lock()
 	s.workers[key] = worker
 	s.mu.Unlock()
@@ -87,6 +100,9 @@ func (s *GuestService) retireWorker(parent context.Context, key string, worker g
 		if readErr := s.store.read(ctx, worker.RecordID, ".retirement", &prior); readErr == nil && reflect.DeepEqual(prior, worker) {
 			persistErr = nil
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return errors.Join(ErrGuestUncertain, persistErr, err)
 	}
 	closeErr := s.transport.Retire(worker.Target, key, worker.Generation)
 	if closeErr != nil || persistErr != nil {
