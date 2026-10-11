@@ -341,11 +341,12 @@ func TestDeadlineCaptureWriteSeparatesObservationFromEffect(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			ctx := t.Context()
 			expected := error(nil)
-			if mode == "expired" {
+			switch mode {
+			case "expired":
 				deadline, cancel := context.WithDeadline(ctx, time.Now().Add(-time.Second))
 				defer cancel()
 				ctx, expected = deadline, context.DeadlineExceeded
-			} else if mode == "canceled" {
+			case "canceled":
 				canceled, cancel := context.WithCancel(ctx)
 				cancel()
 				ctx, expected = canceled, context.Canceled
