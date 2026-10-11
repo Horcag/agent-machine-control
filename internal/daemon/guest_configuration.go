@@ -166,7 +166,7 @@ func (s *Server) initializeGuestService(sessionSvc *app.SessionService, targetSe
 	}
 	guestTransport := s.cfg.GuestTransport
 	if guestTransport == nil {
-		guestTransport = stream.NewClient(guestssh.NewTransport(keyProvider))
+		guestTransport = newDefaultGuestTransport(s, keyProvider)
 	}
 	s.guestService = app.NewGuestService(sessionSvc, guestTargetResolver{service: targetService}, guestConfig, guestTransport, app.NewGuestStore(filepath.Join(s.stateDir.Root(), "guest-operations")))
 }

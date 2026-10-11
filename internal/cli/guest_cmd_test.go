@@ -18,6 +18,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -59,33 +60,7 @@ func TestGuestExecExitCodePreservesVerifiedResult(t *testing.T) {
 
 func TestGuestCLIDiscoveryStreamsExactAuthorityAndMapsFailure(t *testing.T) {
 	var captured []app.GuestOperationParams
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p, _, err := daemon.DecodeGuestMetadata(r.Body)
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		data, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		if p.Target != "synthetic-target" || p.Reason != "contract" || p.ApprovalID != "synthetic-grant" || strings.Contains(fmt.Sprintf("%+v", p), "script.ps1") {
-			t.Error("exact authority or filename privacy violated")
-		}
-		if p.Operation == "put" || p.Operation == "exec" {
-			sum := sha256.Sum256(data)
-			if p.Size != int64(len(data)) || p.SHA256 != hex.EncodeToString(sum[:]) {
-				t.Error("source binding lost")
-			}
-		}
-		captured = append(captured, p)
-		w.Header().Set("Content-Type", "application/octet-stream")
-		w.Header().Set("Trailer", daemon.GuestResultTrailer)
-		w.WriteHeader(200)
-		data, _ = json.Marshal(daemon.GuestFinal{Error: "synthetic denial"})
-		w.Header().Set(daemon.GuestResultTrailer, base64.RawStdEncoding.EncodeToString(data))
-	}))
+	server := httptest.NewServer(guestCLIFailureHandler(t, &captured))
 	defer server.Close()
 	state := guestCLIState(t, server.URL)
 	directory := t.TempDir()
@@ -107,7 +82,11 @@ func TestGuestCLIDiscoveryStreamsExactAuthorityAndMapsFailure(t *testing.T) {
 			t.Fatalf("%s returned success or output after failure: %d %s", operation, code, out.String())
 		}
 	}
-	if len(captured) != 5 {
+	expectedDispatches := 5
+	if runtime.GOOS != "linux" && runtime.GOOS != "windows" {
+		expectedDispatches = 3
+	}
+	if len(captured) != expectedDispatches {
 		t.Fatalf("whole CLI dispatches=%d", len(captured))
 	}
 	entries, err := os.ReadDir(directory)
@@ -115,9 +94,40 @@ func TestGuestCLIDiscoveryStreamsExactAuthorityAndMapsFailure(t *testing.T) {
 		t.Fatalf("failed downloads leaked outputs or stages: %v %v", entries, err)
 	}
 }
+func guestCLIFailureHandler(t *testing.T, captured *[]app.GuestOperationParams) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, _, err := daemon.DecodeGuestMetadata(r.Body)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if p.Target != "synthetic-target" || p.Reason != "contract" || p.ApprovalID != "synthetic-grant" || strings.Contains(fmt.Sprintf("%+v", p), "script.ps1") {
+			t.Error("exact authority or filename privacy violated")
+		}
+		if p.Operation == "put" || p.Operation == "exec" {
+			sum := sha256.Sum256(data)
+			if p.Size != int64(len(data)) || p.SHA256 != hex.EncodeToString(sum[:]) {
+				t.Error("source binding lost")
+			}
+		}
+		*captured = append(*captured, p)
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Trailer", daemon.GuestResultTrailer)
+		w.WriteHeader(200)
+		data, _ = json.Marshal(daemon.GuestFinal{Error: "synthetic denial"})
+		w.Header().Set(daemon.GuestResultTrailer, base64.RawStdEncoding.EncodeToString(data))
+	}
+}
+
 func guestCLIState(t *testing.T, endpoint string) string {
 	t.Helper()
-	sd, err := statedir.Resolve(t.TempDir())
+	sd, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}

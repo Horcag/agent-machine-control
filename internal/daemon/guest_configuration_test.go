@@ -16,48 +16,49 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/domain"
 	guestssh "github.com/Horcag/agent-machine-control/internal/guest/ssh"
 	"github.com/Horcag/agent-machine-control/internal/statedir"
+	"github.com/Horcag/agent-machine-control/internal/target"
 )
 
 func TestGuestWorkspaceRequiresOriginalProtectedRecord(t *testing.T) {
-	sd, err := statedir.Resolve(t.TempDir())
+	sd, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	provider := guestConfigurationProvider{server: &Server{stateDir: sd}}
-	target := domain.MachineRef("local:11111111-1111-4111-8111-111111111111")
-	if _, err = provider.workspaceRecord(t.Context(), target); !errors.Is(err, app.ErrGuestWorkspaceUnprovisioned) {
+	targetRef := domain.MachineRef("local:11111111-1111-4111-8111-111111111111")
+	if _, err = provider.workspaceRecord(t.Context(), targetRef); !errors.Is(err, app.ErrGuestWorkspaceUnprovisioned) {
 		t.Fatalf("missing record error=%v", err)
 	}
 	directory := filepath.Join(sd.Root(), "guest-workspaces")
-	if err = os.Mkdir(directory, 0700); err != nil {
+	if err = statedir.EnsurePrivateDirectory(directory); err != nil {
 		t.Fatal(err)
 	}
-	sum := sha256.Sum256([]byte(target))
+	sum := sha256.Sum256([]byte(targetRef))
 	path := filepath.Join(directory, hex.EncodeToString(sum[:])+".json")
-	record := GuestWorkspaceRecord{Target: string(target), ProvisioningID: "synthetic-original-provision"}
+	record := GuestWorkspaceRecord{Target: string(targetRef), ProvisioningID: "synthetic-original-provision"}
 	data, _ := json.Marshal(record)
-	if err = os.WriteFile(path, data, 0600); err != nil {
+	if err = writeGuestPrivateFixture(t, path, data); err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := provider.workspaceRecord(t.Context(), target)
+	loaded, err := provider.workspaceRecord(t.Context(), targetRef)
 	if err != nil || loaded.ProvisioningID != record.ProvisioningID {
 		t.Fatalf("record=%+v err=%v", loaded, err)
 	}
 	record.Target = "local:22222222-2222-4222-8222-222222222222"
 	data, _ = json.Marshal(record)
-	if err = os.WriteFile(path, data, 0600); err != nil {
+	if err = writeGuestPrivateFixture(t, path, data); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = provider.workspaceRecord(t.Context(), target); err == nil {
+	if _, err = provider.workspaceRecord(t.Context(), targetRef); err == nil {
 		t.Fatal("foreign target record accepted")
 	}
 }
 func TestGuestCurrentActorRejectsRevokedTokenAndDelegation(t *testing.T) {
-	sd, err := statedir.Resolve(t.TempDir())
+	sd, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = os.Mkdir(sd.AuthDir(), 0700); err != nil {
+	if err = statedir.EnsurePrivateDirectory(sd.AuthDir()); err != nil {
 		t.Fatal(err)
 	}
 	store, err := auth.LoadOrCreate(sd.AuthDir(), auth.WithPrincipalResolver(func() (string, error) { return "operator:synthetic", nil }))
@@ -159,7 +160,7 @@ func newGuestConfigurationFixture(t *testing.T) (guestConfigurationProvider, *ef
 	}
 	config.User = ""
 	data, _ = json.Marshal(config)
-	if err = os.WriteFile(path, data, 0600); err != nil {
+	if err = writeGuestPrivateFixture(t, path, data); err != nil {
 		t.Fatal(err)
 	}
 	store, err := auth.LoadOrCreate(sd.AuthDir(), auth.WithPrincipalResolver(func() (string, error) { return "operator:synthetic", nil }))
@@ -176,12 +177,12 @@ func newGuestConfigurationFixture(t *testing.T) (guestConfigurationProvider, *ef
 	}
 	ref := domain.MachineRef("local:11111111-1111-4111-8111-111111111111")
 	directory := filepath.Join(sd.Root(), "guest-workspaces")
-	if err = os.Mkdir(directory, 0700); err != nil {
+	if err = statedir.EnsurePrivateDirectory(directory); err != nil {
 		t.Fatal(err)
 	}
 	name := sha256.Sum256([]byte(ref))
 	data, _ = json.Marshal(GuestWorkspaceRecord{Target: string(ref), ProvisioningID: "synthetic-original"})
-	if err = os.WriteFile(filepath.Join(directory, hex.EncodeToString(name[:])+".json"), data, 0600); err != nil {
+	if err = writeGuestPrivateFixture(t, filepath.Join(directory, hex.EncodeToString(name[:])+".json"), data); err != nil {
 		t.Fatal(err)
 	}
 	keys := &effectiveGuestRoute{KeyProvider: guestKeyProvider{targets: targets, inner: local}}
@@ -214,4 +215,23 @@ func TestGuestWorkspaceRejectsUntrustedMetadata(t *testing.T) {
 			t.Fatalf("untrusted metadata accepted: %s %v", data, err)
 		}
 	}
+}
+
+// Test files use the same private creation guard as server-owned records.
+func writeGuestPrivateFixture(t *testing.T, path string, data []byte) error {
+	t.Helper()
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	security := target.NewPrivatePathSecurity()
+	if err = security.ProtectNewFile(t.Context(), path); err != nil {
+		return err
+	}
+	if err = security.ValidateFile(t.Context(), path); err != nil {
+		return err
+	}
+	_, err = file.Write(data)
+	return err
 }

@@ -163,6 +163,7 @@ func TestGuestHTTPFramingRejectsWholeBodyMismatch(t *testing.T) {
 			}
 			data, _ := json.Marshal(p)
 			var body bytes.Buffer
+			// #nosec G115 -- bounded synthetic metadata from this fixed operation is below 64KiB.
 			_ = binary.Write(&body, binary.BigEndian, uint32(len(data)))
 			body.Write(data)
 			r := httptest.NewRequest(http.MethodPost, "/", &body)

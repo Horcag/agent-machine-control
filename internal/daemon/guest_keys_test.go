@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"io"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -24,7 +23,7 @@ import (
 
 func guestEnrolledKeyFixture(t *testing.T) (*statedir.StateDir, *app.TargetService, guestssh.KeyProvider, *fakeserver.FakeSSHServer) {
 	t.Helper()
-	sd, err := statedir.Resolve(t.TempDir())
+	sd, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,11 +38,11 @@ func guestEnrolledKeyFixture(t *testing.T) (*statedir.StateDir, *app.TargetServi
 	t.Cleanup(func() { _ = server.Close() })
 	guid := "11111111-1111-4111-8111-111111111111"
 	directory := filepath.Join(sd.MachinesDir(), guid)
-	if err = os.Mkdir(directory, 0700); err != nil {
+	if err = statedir.EnsurePrivateDirectory(directory); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := json.Marshal(guestssh.MachineSSHConfig{Endpoint: server.Addr(), User: "synthetic-user", DefaultKeyAlias: "default", PinnedHostKeySHA256: server.HostKeyPin()})
-	if err = os.WriteFile(filepath.Join(directory, "config.json"), data, 0600); err != nil {
+	if err = writeGuestPrivateFixture(t, filepath.Join(directory, "config.json"), data); err != nil {
 		t.Fatal(err)
 	}
 	store, err := target.NewStore(sd.TargetsDir())
@@ -120,7 +119,7 @@ func writeGuestFixtureClientKey(t *testing.T, sd *statedir.StateDir) gossh.Signe
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(filepath.Join(sd.KeysDir(), "default.key"), pem.EncodeToMemory(block), 0600); err != nil {
+	if err = writeGuestPrivateFixture(t, filepath.Join(sd.KeysDir(), "default.key"), pem.EncodeToMemory(block)); err != nil {
 		t.Fatal(err)
 	}
 

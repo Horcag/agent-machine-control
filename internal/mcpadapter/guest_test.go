@@ -17,6 +17,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -33,7 +34,43 @@ func TestGuestInvalidDeadlineNoDispatch(t *testing.T) {
 func TestGuestMCPStreamsLocalPayloadAndPublishesVerifiedBinary(t *testing.T) {
 	payload := []byte{0, 255, 128, 1}
 	var operations []string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(guestMCPStreamHandler(t, payload, &operations))
+	defer server.Close()
+	a := &Adapter{client: client.New(server.URL, "synthetic-agent")}
+	directory := t.TempDir()
+	source := filepath.Join(directory, "payload.bin")
+	if err := os.WriteFile(source, []byte("Write-Output 'synthetic'"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, operation := range []string{"prepare", "put", "get", "exec", "remove-owned"} {
+		in := guestMCPCaseInput(operation, source, directory)
+		result, receipt, err := callGuestMCP(a, t, in, operation)
+		if in.Destination != "" && runtime.GOOS != "linux" && runtime.GOOS != "windows" {
+			assertGuestMCPUnsupportedPublication(t, in.Destination, result, err)
+			continue
+		}
+		if err != nil || result != nil || receipt.Receipt == nil {
+			t.Fatalf("%s: %+v %v", operation, result, err)
+		}
+		if in.Destination != "" {
+			got, err := os.ReadFile(in.Destination)
+			if err != nil || !bytes.Equal(got, payload) {
+				t.Fatalf("verified publication %s: %v", operation, err)
+			}
+		}
+	}
+	expected := "prepare,put,get,exec,remove-owned"
+	if runtime.GOOS != "linux" && runtime.GOOS != "windows" {
+		expected = "prepare,put,remove-owned"
+	}
+	if strings.Join(operations, ",") != expected {
+		t.Fatalf("unexpected dispatch %v", operations)
+	}
+}
+
+func guestMCPStreamHandler(t *testing.T, payload []byte, operations *[]string) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer synthetic-agent" {
 			t.Error("agent credential lost")
 		}
@@ -53,47 +90,46 @@ func TestGuestMCPStreamsLocalPayloadAndPublishesVerifiedBinary(t *testing.T) {
 		if strings.Contains(fmt.Sprintf("%+v", p), "payload.bin") {
 			t.Error("local source name escaped into metadata")
 		}
-		operations = append(operations, p.Operation)
-		if p.Operation == "put" || p.Operation == "exec" {
-			sum := sha256.Sum256(input)
-			if p.Size != int64(len(input)) || p.SHA256 != hex.EncodeToString(sum[:]) {
-				t.Error("whole payload binding lost")
-			}
-		}
+		*operations = append(*operations, p.Operation)
+		assertGuestMCPUploadBinding(t, p, input)
 		output := []byte(nil)
 		if p.Operation == "get" || p.Operation == "exec" {
 			output = payload
 		}
 		writeGuestMCPFinal(t, w, p, output)
-	}))
-	defer server.Close()
-	a := &Adapter{client: client.New(server.URL, "synthetic-agent")}
-	directory := t.TempDir()
-	source := filepath.Join(directory, "payload.bin")
-	if err := os.WriteFile(source, []byte("Write-Output 'synthetic'"), 0600); err != nil {
-		t.Fatal(err)
 	}
-	for _, operation := range []string{"prepare", "put", "get", "exec", "remove-owned"} {
-		in := GuestInput{Target: "synthetic-target", Reason: "contract", ApprovalID: "synthetic-grant", IdempotencyKey: "request-" + operation, Deadline: time.Now().Add(time.Minute).Format(time.RFC3339Nano), MaxOutput: 64}
-		if operation == "put" || operation == "exec" {
-			in.Source = source
-		}
-		if operation == "get" || operation == "exec" {
-			in.Destination = filepath.Join(directory, operation+".bin")
-		}
-		result, receipt, err := callGuestMCP(a, t, in, operation)
-		if err != nil || result != nil || receipt.Receipt == nil {
-			t.Fatalf("%s: %+v %v", operation, result, err)
-		}
-		if in.Destination != "" {
-			got, err := os.ReadFile(in.Destination)
-			if err != nil || !bytes.Equal(got, payload) {
-				t.Fatalf("verified publication %s: %v", operation, err)
-			}
+}
+func assertGuestMCPUploadBinding(t *testing.T, p app.GuestOperationParams, input []byte) {
+	t.Helper()
+	if p.Operation == "put" || p.Operation == "exec" {
+		sum := sha256.Sum256(input)
+		if p.Size != int64(len(input)) || p.SHA256 != hex.EncodeToString(sum[:]) {
+			t.Error("whole payload binding lost")
 		}
 	}
-	if strings.Join(operations, ",") != "prepare,put,get,exec,remove-owned" {
-		t.Fatalf("unexpected dispatch %v", operations)
+}
+
+func guestMCPCaseInput(operation, source, directory string) GuestInput {
+	in := GuestInput{Target: "synthetic-target", Reason: "contract", ApprovalID: "synthetic-grant", IdempotencyKey: "request-" + operation, Deadline: time.Now().Add(time.Minute).Format(time.RFC3339Nano), MaxOutput: 64}
+	if operation == "put" || operation == "exec" {
+		in.Source = source
+	}
+	if operation == "get" || operation == "exec" {
+		in.Destination = filepath.Join(directory, operation+".bin")
+	}
+	return in
+}
+func assertGuestMCPUnsupportedPublication(t *testing.T, destination string, result *mcp.CallToolResult, err error) {
+	t.Helper()
+	if err != nil || result == nil || !result.IsError {
+		t.Fatalf("unsupported publication was admitted: %+v %v", result, err)
+	}
+	if _, err = os.Lstat(destination); !os.IsNotExist(err) {
+		t.Fatalf("unsupported publication created output: %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Dir(destination))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("unsupported publication leaked staging: %v %v", entries, err)
 	}
 }
 
