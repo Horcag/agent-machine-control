@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/Horcag/agent-machine-control/internal/statedir"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/Horcag/agent-machine-control/internal/app"
 	"github.com/Horcag/agent-machine-control/internal/guest/stream"
+	"github.com/Horcag/agent-machine-control/internal/statedir"
 )
 
 // GuestSource holds the exact opened local file through hashing and upload.
@@ -74,37 +74,36 @@ func (s *GuestSource) Verify() error {
 	return nil
 }
 
-// GuestOperationToFile stages only in the destination directory and publishes
-// with link's atomic create-new semantics after complete protocol verification.
-func (c *Client) GuestOperationToFile(ctx context.Context, p app.GuestOperationParams, input stream.ContextReader, destination string) (app.GuestOperationResult, error) {
+// GuestOperationToFile holds a private staging file through verification and
+// atomically publishes that held object without replacing an existing destination.
+func (c *Client) GuestOperationToFile(ctx context.Context, p app.GuestOperationParams, input stream.ContextReader, destination string) (result app.GuestOperationResult, callErr error) {
 	var zero app.GuestOperationResult
+	if p.Deadline.IsZero() {
+		return zero, ErrInvalidArgument
+	}
+	ctx, cancel := context.WithDeadline(ctx, p.Deadline)
+	defer cancel()
+	var err error
+	destination, err = guestPublicationDestination(destination)
+	if err != nil {
+		return zero, err
+	}
 	if _, err := os.Lstat(destination); err == nil {
 		return zero, os.ErrExist
 	} else if !os.IsNotExist(err) {
 		return zero, err
 	}
-	directory := filepath.Dir(destination)
-	file, err := os.CreateTemp(directory, ".amc-guest-*")
+	stage, err := newGuestStaging(ctx, filepath.Dir(destination))
 	if err != nil {
 		return zero, err
 	}
-	name := file.Name()
-	original, err := file.Stat()
-	if err != nil {
-		_ = file.Close()
-		return zero, err
-	}
-	defer func() {
-		_ = file.Close()
-		if current, err := os.Lstat(name); err == nil && os.SameFile(original, current) {
-			_ = os.Remove(name)
-		}
-	}()
-	result, err := c.GuestOperation(ctx, p, input, stream.OwnedOutput(file))
+	defer func() { callErr = errors.Join(callErr, stage.cleanup()) }()
+	file := stage.file
+	result, err = c.GuestOperation(ctx, p, input, stream.OwnedOutput(file))
 	if err != nil {
 		return result, err
 	}
-	if err = publishGuestFile(ctx, file, name, original, destination, result); err != nil {
+	if err = c.publishGuestFile(ctx, file, destination, result); err != nil {
 		return result, err
 	}
 
@@ -152,35 +151,34 @@ func OpenGuestPayload(ctx context.Context, operation, path string) (*GuestSource
 	return source, nil
 }
 
-func publishGuestFile(ctx context.Context, file *os.File, name string, original os.FileInfo, destination string, result app.GuestOperationResult) error {
-	var err error
-	if err = ctx.Err(); err != nil {
+func (c *Client) publishGuestFile(ctx context.Context, file *os.File, destination string, result app.GuestOperationResult) error {
+	original, err := file.Stat()
+	if err != nil {
 		return err
 	}
 	if err = verifyGuestFileContent(ctx, file, result); err != nil {
 		return err
 	}
-	current, err := os.Lstat(name)
-	if err != nil || !os.SameFile(original, current) {
-		return errors.New("guest staging identity changed")
-	}
-	if err = file.Close(); err != nil {
-		return err
+	verified, err := file.Stat()
+	if err != nil || !os.SameFile(original, verified) || original.Size() != verified.Size() || !original.ModTime().Equal(verified.ModTime()) {
+		return errors.New("guest staged content changed during verification")
 	}
 	if err = ctx.Err(); err != nil {
 		return err
 	}
-	if err = os.Link(name, destination); err != nil {
+	if c.guestBeforePublication != nil {
+		if err = c.guestBeforePublication(file); err != nil {
+			return err
+		}
+	}
+	if err = publishGuestFileHandle(ctx, file, destination); err != nil {
 		return err
 	}
 	installed, err := os.Lstat(destination)
 	if err != nil || !os.SameFile(original, installed) {
 		return errors.New("guest destination identity mismatch")
 	}
-	if err = statedir.SyncDir(filepath.Dir(destination)); err != nil {
-		return err
-	}
-	return nil
+	return statedir.SyncDir(filepath.Dir(destination))
 }
 
 func verifyGuestFileContent(ctx context.Context, file *os.File, result app.GuestOperationResult) error {

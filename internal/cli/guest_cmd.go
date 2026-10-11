@@ -44,6 +44,11 @@ func runGuest(ctx context.Context, prompter Prompter, direct bool, state string,
 		return ExitUsage
 	}
 	p := flags.params
+	if !approve {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, p.Deadline)
+		defer cancel()
+	}
 	sourcePath, destination, validity := flags.source, flags.destination, flags.validity
 	cl, err := client.Discover(state, client.TokenTypeOperator)
 	if err != nil {
@@ -70,10 +75,8 @@ func runGuest(ctx context.Context, prompter Prompter, direct bool, state string,
 	if err != nil {
 		return mapClientError(err, stderr, "guest")
 	}
-	if json.NewEncoder(stdout).Encode(result) != nil {
-		return ExitBackendUnavailable
-	}
-	return ExitSuccess
+	return finishGuestCLI(stdout, p.Operation, result)
+
 }
 
 type guestCLIFlags struct {
@@ -152,4 +155,17 @@ func approveGuestCLI(ctx context.Context, cl *client.Client, prompter Prompter, 
 	}
 	return ExitSuccess
 
+}
+
+func finishGuestCLI(stdout io.Writer, operation string, result app.GuestOperationResult) int {
+	if json.NewEncoder(stdout).Encode(result) != nil {
+		return ExitBackendUnavailable
+	}
+	if operation != "exec" || result.ExitCode == 0 {
+		return ExitSuccess
+	}
+	if result.ExitCode > 0 && result.ExitCode <= 255 {
+		return result.ExitCode
+	}
+	return 1
 }

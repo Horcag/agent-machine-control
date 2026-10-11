@@ -29,6 +29,8 @@ func (a *Adapter) guestOperation(ctx context.Context, in GuestInput, operation s
 	if err != nil {
 		return mcpToolError(NewInputError("invalid guest deadline")), zero, nil
 	}
+	ctx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
 	cl, err := a.getClient()
 	if err != nil {
 		return mcpToolError(err), zero, nil

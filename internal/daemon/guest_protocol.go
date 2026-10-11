@@ -109,10 +109,6 @@ func (s *Server) handleGuestOperation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 405, "method_not_allowed", "method not allowed")
 		return
 	}
-	if r.Header.Get("Content-Type") != GuestContentType || r.ContentLength < 4 {
-		writeError(w, 400, "invalid_argument", "guest stream requires bounded framing and Content-Length")
-		return
-	}
 	// Bound metadata reads before the caller deadline has been decoded.
 	stop, err := guestIOContext(r.Context(), w, r.Body, time.Now().Add(30*time.Second))
 	if err != nil {
@@ -120,8 +116,8 @@ func (s *Server) handleGuestOperation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer stop()
-	p, prefix, err := DecodeGuestMetadata(r.Body)
-	if err != nil || r.ContentLength-prefix != p.Size || p.Deadline.IsZero() {
+	p, err := readGuestHTTPRequest(r)
+	if err != nil {
 		writeError(w, 400, "invalid_argument", "invalid guest stream metadata or length")
 		return
 	}
@@ -142,7 +138,15 @@ func (s *Server) handleGuestOperation(w http.ResponseWriter, r *http.Request) {
 	_ = http.NewResponseController(w).SetWriteDeadline(p.Deadline)
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Trailer", GuestResultTrailer)
-	result, opErr := s.guestService.Execute(ctx, p, guestHTTPInput{r.Body}, guestHTTPOutput{w})
+	var input io.Reader
+	var output io.Writer
+	if p.Operation == "put" || p.Operation == "exec" {
+		input = guestHTTPInput{r.Body}
+	}
+	if p.Operation == "get" || p.Operation == "exec" {
+		output = guestHTTPOutput{w}
+	}
+	result, opErr := s.guestService.Execute(ctx, p, input, output)
 	final := GuestFinal{Result: result}
 	if opErr != nil {
 		final.Error = "guest operation failed; verify the receipt before taking another action"
@@ -178,4 +182,15 @@ func (s *Server) handleGuestApproval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, GuestApprovalResponse{grant, receipt})
+}
+
+func readGuestHTTPRequest(r *http.Request) (app.GuestOperationParams, error) {
+	if r.Header.Get("Content-Type") != GuestContentType || r.ContentLength < 4 {
+		return app.GuestOperationParams{}, stream.ErrRequest
+	}
+	p, prefix, err := DecodeGuestMetadata(r.Body)
+	if err != nil || r.ContentLength-prefix != p.Size || p.Deadline.IsZero() {
+		return app.GuestOperationParams{}, stream.ErrRequest
+	}
+	return p, nil
 }

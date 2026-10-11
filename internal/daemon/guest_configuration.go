@@ -26,8 +26,10 @@ type GuestWorkspaceRecord struct {
 	Workspace      stream.RootIdentity `json:"workspace"`
 }
 type guestConfigurationProvider struct {
-	server *Server
-	keys   guestssh.KeyProvider
+	server            *Server
+	keys              guestssh.KeyProvider
+	retirementRunner  guestCommandRunner
+	retirementCurrent func(context.Context, domain.MachineRef, domain.ActorContext) (app.GuestConfiguration, error)
 }
 
 func (p *guestConfigurationProvider) Current(ctx context.Context, targetRef domain.MachineRef, caller domain.ActorContext) (app.GuestConfiguration, error) {
@@ -39,18 +41,11 @@ func (p *guestConfigurationProvider) Current(ctx context.Context, targetRef doma
 	if err != nil {
 		return zero, err
 	}
-	resolution, err := p.server.targetService.ResolveTarget(ctx, string(targetRef))
-	if err != nil {
-		return zero, err
-	}
-	if resolution.Locator.String() != string(targetRef) {
-		return zero, app.ErrGuestAuthority
-	}
 	enrollment, err := p.server.targetService.EnrollmentIdentity(ctx, string(targetRef))
 	if err != nil {
 		return zero, err
 	}
-	config, err := p.keys.GetMachineConfig(targetRef)
+	config, err := guestMachineConfig(ctx, p.keys, targetRef)
 	if err != nil {
 		return zero, err
 	}
@@ -155,6 +150,7 @@ func decodeGuestWorkspace(data []byte, targetRef domain.MachineRef) (GuestWorksp
 }
 
 func (s *Server) initializeGuestService(sessionSvc *app.SessionService, targetService *app.TargetService, keyProvider guestssh.KeyProvider) {
+	keyProvider = guestKeyProvider{targets: targetService, inner: keyProvider}
 	guestConfig := s.cfg.GuestConfigProvider
 	if guestConfig == nil {
 		guestConfig = &guestConfigurationProvider{server: s, keys: keyProvider}
@@ -163,5 +159,17 @@ func (s *Server) initializeGuestService(sessionSvc *app.SessionService, targetSe
 	if guestTransport == nil {
 		guestTransport = stream.NewClient(guestssh.NewTransport(keyProvider))
 	}
-	s.guestService = app.NewGuestService(sessionSvc, targetService, guestConfig, guestTransport, app.NewGuestStore(filepath.Join(s.stateDir.Root(), "guest-operations")))
+	s.guestService = app.NewGuestService(sessionSvc, guestTargetResolver{service: targetService}, guestConfig, guestTransport, app.NewGuestStore(filepath.Join(s.stateDir.Root(), "guest-operations")))
+}
+
+func guestMachineConfig(ctx context.Context, keys guestssh.KeyProvider, targetRef domain.MachineRef) (*guestssh.MachineSSHConfig, error) {
+	if provider, ok := keys.(interface {
+		GetMachineConfigContext(context.Context, domain.MachineRef) (*guestssh.MachineSSHConfig, error)
+	}); ok {
+		return provider.GetMachineConfigContext(ctx, targetRef)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return keys.GetMachineConfig(targetRef)
 }

@@ -199,3 +199,44 @@ func TestGuestScriptRejectsInvalidUTF8(t *testing.T) {
 		t.Fatal("invalid UTF-8 accepted")
 	}
 }
+
+type publicationDeadlineTransport struct {
+	base     http.RoundTripper
+	deadline time.Time
+}
+
+func (t publicationDeadlineTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	response, err := t.base.RoundTrip(request)
+	if err == nil {
+		response.Body = publicationDeadlineBody{response.Body, t.deadline}
+	}
+	return response, err
+}
+
+type publicationDeadlineBody struct {
+	io.ReadCloser
+	deadline time.Time
+}
+
+func (b publicationDeadlineBody) Close() error {
+	if delay := time.Until(b.deadline); delay > 0 {
+		timer := time.NewTimer(delay)
+		<-timer.C
+	}
+	return b.ReadCloser.Close()
+}
+func TestGuestDeadlineCoversPublicationAfterHTTPCompletion(t *testing.T) {
+	fixture, _ := guestFixture(t, []byte("verified data"), "valid")
+	deadline := time.Now().Add(200 * time.Millisecond)
+	cl := New(fixture.Endpoint(), "test-token", WithHTTPClient(&http.Client{Transport: publicationDeadlineTransport{http.DefaultTransport, deadline}}))
+	directory := t.TempDir()
+	destination := filepath.Join(directory, "result")
+	_, err := cl.GuestOperationToFile(context.Background(), app.GuestOperationParams{Operation: "get", IdempotencyKey: "synthetic-request", MaxOutput: 100, Deadline: deadline}, nil, destination)
+	if err == nil {
+		t.Fatal("published after exact operation deadline")
+	}
+	entries, _ := os.ReadDir(directory)
+	if len(entries) != 0 {
+		t.Fatalf("expired publication leaked owned staging or destination: %v", entries)
+	}
+}
