@@ -22,6 +22,7 @@ func TestGuestTransportSentinelsRecordNoWrappedSecretsOrOutput(t *testing.T) {
 		category string
 		cause    error
 	}{
+		{"lifetime_pending", stream.ErrLifetimePending}, {"lifetime_query", stream.ErrLifetimeQuery}, {"lifetime_information", stream.ErrLifetimeInformation}, {"lifetime_disconnected", stream.ErrLifetimeDisconnected},
 		{"protocol", stream.ErrProtocol}, {"integrity", stream.ErrIntegrity}, {"eof", io.EOF},
 		{"unexpected_eof", io.ErrUnexpectedEOF}, {"short_write", io.ErrShortWrite},
 	}

@@ -39,6 +39,20 @@ namespace AMCStream {
    if(!Native.Same(a,b))throw new System.Exception("original rejected");
    foreach(var key in keys){b[key]="changed";if(Native.Same(a,b))throw new System.Exception("changed identity accepted "+key);b[key]="original";}
    b.Remove("owner");if(Native.Same(a,b))throw new System.Exception("incomplete identity accepted");
+
+   if(Lifetime.CheckedPipeState(0,40,3)!=3)throw new System.Exception("connected pipe rejected");
+   foreach(var item in new[]{new object[]{-1,40UL,211u},new object[]{0,39UL,212u},new object[]{0x103,40UL,214u}}){
+    try{Lifetime.CheckedPipeState((int)item[0],(ulong)item[1],3);throw new System.Exception("invalid query accepted");}
+    catch(Lifetime.PipeFailure pipeFailure){if(pipeFailure.ExitCode!=(uint)item[2])throw new System.Exception("wrong query exit");}
+   }
+   int kills=0,closes=0;
+   var termination=new Lifetime.OwnTermination(delegate(uint code){if(code!=213u)throw new System.Exception("wrong kill marker");kills++;return false;},delegate{closes++;});
+   termination.Stop(213);termination.Stop(211);
+   if(kills!=1||closes!=1)throw new System.Exception("failed kill did not close exactly once");
+   kills=0;closes=0;
+   termination=new Lifetime.OwnTermination(delegate(uint code){kills++;throw new System.Exception("native invocation failed");},delegate{closes++;});
+   termination.Stop(211);termination.Stop(212);
+   if(kills!=1||closes!=1)throw new System.Exception("throwing kill leaked owned job");
    var now=new System.DateTime(2026,1,1,0,0,0,System.DateTimeKind.Utc);
    if(Lifetime.FailureBudget(now.AddSeconds(30),now)!=System.TimeSpan.FromSeconds(1))throw new System.Exception("failure bound exceeded one second");
    if(Lifetime.FailureBudget(now.AddMilliseconds(20),now)!=System.TimeSpan.FromMilliseconds(20))throw new System.Exception("request deadline extended");

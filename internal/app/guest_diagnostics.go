@@ -27,6 +27,7 @@ var guestTransportDiagnostics = []struct {
 	err      error
 	category string
 }{
+	{stream.ErrLifetimePending, "lifetime_pending"}, {stream.ErrLifetimeQuery, "lifetime_query"}, {stream.ErrLifetimeInformation, "lifetime_information"}, {stream.ErrLifetimeDisconnected, "lifetime_disconnected"},
 	{stream.ErrProtocol, "protocol"}, {stream.ErrIntegrity, "integrity"},
 	{io.ErrUnexpectedEOF, "unexpected_eof"}, {io.EOF, "eof"}, {io.ErrShortWrite, "short_write"},
 }

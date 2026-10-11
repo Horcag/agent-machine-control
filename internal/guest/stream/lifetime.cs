@@ -15,6 +15,7 @@ internal static class Lifetime {
     [DllImport("kernel32.dll",SetLastError=true)] static extern bool SetInformationJobObject(SafeFileHandle job,int type,ref ExtendedLimits limits,uint length);
     [DllImport("kernel32.dll",SetLastError=true)] static extern bool AssignProcessToJobObject(SafeFileHandle job,IntPtr process);
     [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll",SetLastError=true)] static extern bool TerminateJobObject(SafeFileHandle job,uint exitCode);
     internal static SafeFileHandle OwnWorker() {
         var job=CreateJobObject(IntPtr.Zero,null);if(job.IsInvalid){job.Dispose();throw new IOException("worker_job_unavailable");}
         var limits=new ExtendedLimits{Basic=new Limits{Flags=0x2008,ActiveProcesses=32}}; // KILL_ON_JOB_CLOSE, bounded own descendants
@@ -31,8 +32,26 @@ internal static class Lifetime {
     internal static uint PipeState(IntPtr handle) {
         IOStatus status;PipeLocal pipe;
         int result=NtQueryInformationFile(handle,out status,out pipe,40,24); // FilePipeLocalInformation
-        if(result<0||status.Information.ToUInt64()<40)throw new IOException("stdin_lifecycle_unavailable");
-        return pipe.State;
+        return CheckedPipeState(result,status.Information.ToUInt64(),pipe.State);
+    }
+    internal const uint QueryFailureExit=211,ShortInformationExit=212,DisconnectedExit=213,PendingExit=214;
+    internal sealed class PipeFailure : IOException {
+        internal readonly uint ExitCode;
+        internal PipeFailure(uint exitCode){ExitCode=exitCode;}
+    }
+    internal static uint CheckedPipeState(int status,ulong information,uint state) {
+        if(status<0)throw new PipeFailure(QueryFailureExit);
+        if(status==0x103)throw new PipeFailure(PendingExit);
+        if(information<40)throw new PipeFailure(ShortInformationExit);
+        return state;
+    }
+    internal sealed class OwnTermination {
+        readonly Func<uint,bool> terminate;readonly Action close;int stopped;
+        internal OwnTermination(Func<uint,bool> terminate,Action close){this.terminate=terminate;this.close=close;}
+        internal void Stop(uint code){
+            if(Interlocked.Exchange(ref stopped,1)!=0)return;
+            try{terminate(code);}catch{}finally{close();}
+        }
     }
     internal static void Observe(WaitHandle stopped,Func<uint> query,Action disconnect) {
         while(!stopped.WaitOne(50)){if(query()!=3){disconnect();return;}}
@@ -54,8 +73,10 @@ internal static class Lifetime {
             IntPtr stdin=GetStdHandle(-10);
             if(stdin==IntPtr.Zero||stdin==new IntPtr(-1)||GetFileType(stdin)!=3||PipeState(stdin)!=3)throw new IOException("stdin_lifecycle_unavailable");
             job=OwnWorker();
+            var termination=new OwnTermination(delegate(uint code){return TerminateJobObject(job,code);},delegate{job.Dispose();});
             observer=new Thread(delegate(){
-                try{Observe(stopped,delegate(){return PipeState(stdin);},delegate(){job.Dispose();});}
+                try{Observe(stopped,delegate(){return PipeState(stdin);},delegate(){termination.Stop(DisconnectedExit);});}
+                catch(PipeFailure error){termination.Stop(error.ExitCode);}
                 catch{job.Dispose();}
             });observer.IsBackground=true;
             try{observer.Start();}catch{job.Dispose();stopped.Dispose();throw;}

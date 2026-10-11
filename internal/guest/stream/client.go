@@ -79,6 +79,7 @@ func (c *Client) Execute(ctx context.Context, target domain.MachineRef, actor st
 	defer stop()
 	result, err := exchange(w.channel, req, input, output, w.identity)
 	if err != nil {
+		err = observeLifetimeExit(ctx, w.channel, err)
 		c.evict(key, w)
 		if ctx.Err() != nil {
 			return result, ctx.Err()

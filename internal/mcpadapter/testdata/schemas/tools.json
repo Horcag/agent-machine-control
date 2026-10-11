@@ -2603,6 +2603,9 @@
             "sid"
           ],
           "type": "object"
+        },
+        "worker_record_id": {
+          "type": "string"
         }
       },
       "required": [
@@ -2866,6 +2869,9 @@
             "sid"
           ],
           "type": "object"
+        },
+        "worker_record_id": {
+          "type": "string"
         }
       },
       "required": [
@@ -3129,6 +3135,9 @@
             "sid"
           ],
           "type": "object"
+        },
+        "worker_record_id": {
+          "type": "string"
         }
       },
       "required": [
@@ -3392,6 +3401,9 @@
             "sid"
           ],
           "type": "object"
+        },
+        "worker_record_id": {
+          "type": "string"
         }
       },
       "required": [
@@ -3655,6 +3667,9 @@
             "sid"
           ],
           "type": "object"
+        },
+        "worker_record_id": {
+          "type": "string"
         }
       },
       "required": [

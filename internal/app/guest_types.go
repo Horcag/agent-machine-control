@@ -70,14 +70,15 @@ type GuestRemoval struct {
 }
 
 type GuestOperationResult struct {
-	Receipt       *domain.Receipt       `json:"receipt,omitempty"`
-	CachedReceipt bool                  `json:"cached_receipt"`
-	Worker        stream.WorkerIdentity `json:"worker"`
-	Artifacts     []GuestArtifact       `json:"artifacts,omitempty"`
-	Removed       []GuestRemoval        `json:"removed,omitempty"`
-	Size          int64                 `json:"size"`
-	SHA256        string                `json:"sha256"`
-	ExitCode      int                   `json:"exit_code"`
+	WorkerRecordID string                `json:"worker_record_id,omitempty"`
+	Receipt        *domain.Receipt       `json:"receipt,omitempty"`
+	CachedReceipt  bool                  `json:"cached_receipt"`
+	Worker         stream.WorkerIdentity `json:"worker"`
+	Artifacts      []GuestArtifact       `json:"artifacts,omitempty"`
+	Removed        []GuestRemoval        `json:"removed,omitempty"`
+	Size           int64                 `json:"size"`
+	SHA256         string                `json:"sha256"`
+	ExitCode       int                   `json:"exit_code"`
 }
 
 type guestOwnedArtifact struct {

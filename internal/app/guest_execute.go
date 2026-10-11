@@ -125,6 +125,10 @@ func (s *GuestService) applyGuestResult(ctx context.Context, p GuestOperationPar
 		if err != nil {
 			return out, err
 		}
+		if worker.RecordID != id || !validGuestWorkerBinding(worker, op, config) || worker.Identity != out.Worker {
+			return out, ErrGuestOwnership
+		}
+		out.WorkerRecordID = worker.RecordID
 		s.mu.Lock()
 		s.workers[key] = worker
 		s.mu.Unlock()
