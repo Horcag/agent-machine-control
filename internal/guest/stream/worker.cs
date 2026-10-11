@@ -12,6 +12,7 @@ using System.Management.Automation.Runspaces;
 namespace AMCStream {
 public static class Worker {
     static readonly JavaScriptSerializer JSON = new JavaScriptSerializer { MaxJsonLength = 262144 };
+    internal const string EmptyDigest="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
     static Stream input, output;
     static Dictionary<string,object> identity;
     static Runspace runspace;
@@ -59,7 +60,7 @@ public static class Worker {
         return new Dictionary<string,object>{{"id",id},{"status",status},{"size",size},{"sha256",hash},{"exitCode",exit},{"worker",identity}};
     }
     static void Empty(Dictionary<string,object> result) {
-        result["size"]=0L;result["sha256"]=Digest(new byte[0]);Control(result);Control(result);
+        result["size"]=0L;result["sha256"]=EmptyDigest;Control(result);Control(result);
     }
     public static void Run(Stream stdin,Stream stdout) {
         using(var lifetime=new Lifetime.Guard())Lifetime.RunWorker(delegate{RunOwned(stdin,stdout,lifetime);},lifetime.Termination);
@@ -73,8 +74,8 @@ public static class Worker {
                 Dictionary<string,object> request;
                 try{request=ReadControl(input,delegate(string text){return JSON.Deserialize<Dictionary<string,object>>(text);});}
                 catch(ControlFailure error){
-                    lifetime.ArmFailure(DateTime.MaxValue);
-                    var fatal=Result("","failed",0,Digest(new byte[0]),1);
+                    lifetime.ArmFailure(DateTime.MaxValue,Failure.TimerExit(error,error.Stage));
+                    var fatal=Result("","failed",0,EmptyDigest,1);
                     fatal["controlFailure"]=new Dictionary<string,object>{{"stage",error.Stage}};
                     Empty(fatal);lifetime.HoldTerminal();return;
                 }
@@ -100,8 +101,8 @@ public static class Worker {
                     // Closing our kill-on-close job immediately after Flush can
                     // race the SSH server's pipe drain. Bound the terminal wait
                     // before writing, including output backpressure and cleanup.
-                    lifetime.ArmFailure(deadline);
-                    var result=Result(id,"failed",0,Digest(new byte[0]),1);
+                    lifetime.ArmFailure(deadline,Failure.TimerExit(error,stage));
+                    var result=Result(id,"failed",0,EmptyDigest,1);
                     result["failure"]=Failure.Metadata(error,stage);Empty(result);Lifetime.DrainTerminal(input);return;
                 }
             }
@@ -111,7 +112,7 @@ public static class Worker {
         string path=Native.FullPath(Text(request,"path"));
         using(var roots=Native.LockParents(Path.Combine(path,".amc-observe-placeholder"))) {
             Fresh(deadline);var root=roots.Identity();Fresh(deadline);
-            var result=Result(id,"ok",0,Digest(new byte[0]),0);result["root"]=root;Empty(result);
+            var result=Result(id,"ok",0,EmptyDigest,0);result["root"]=root;Empty(result);
         }
     }
     static void Put(Dictionary<string,object> request,string id,long size,DateTime deadline) {
@@ -126,7 +127,7 @@ public static class Worker {
                 if(input.ReadByte()!=1||hash!=Text(request,"sha256")) throw new InvalidDataException();
                 Fresh(deadline);file.Stream.Flush(true);
                 var receipt=file.Identity(path,roots,hash);Fresh(deadline);file.Commit();
-                var result=Result(id,"ok",0,Digest(new byte[0]),0);result["files"]=new object[]{receipt};Empty(result);
+                var result=Result(id,"ok",0,EmptyDigest,0);result["files"]=new object[]{receipt};Empty(result);
             }
         }
     }
@@ -193,7 +194,7 @@ public static class Worker {
             } catch(TimeoutException){status="expired";} catch {status="preserved";}
             removed.Add(new Dictionary<string,object>{{"path",path},{"status",status},{"absent",absent}});
         }
-        var result=Result(id,"ok",0,Digest(new byte[0]),0);result["removed"]=removed;Empty(result);
+        var result=Result(id,"ok",0,EmptyDigest,0);result["removed"]=removed;Empty(result);
     }
 }
 }

@@ -70,8 +70,8 @@ internal static class Lifetime {
         catch(PipeFailure error){termination.Stop(error.ExitCode);}
         catch{termination.Stop(ObserverUnhandledExit);}
     }
-    internal static Timer ArmOwnedFailure(OwnTermination termination,DateTime deadline) {
-        return ArmFailureBound(delegate{termination.Stop(FailureTimerExit);},deadline);
+    internal static Timer ArmOwnedFailure(OwnTermination termination,DateTime deadline,uint exitCode=FailureTimerExit) {
+        return ArmFailureBound(delegate{termination.Stop(exitCode);},deadline);
     }
     internal static TimeSpan FailureBudget(DateTime deadline,DateTime now) {
         return TimeSpan.FromTicks(Math.Min(TimeSpan.TicksPerSecond,Math.Max(0,deadline.Ticks-now.Ticks)));
@@ -95,7 +95,7 @@ internal static class Lifetime {
             try{observer.Start();}catch{job.Dispose();stopped.Dispose();throw;}
         }
         internal void HoldTerminal(){stopped.WaitOne();}
-        internal void ArmFailure(DateTime deadline){terminal=ArmOwnedFailure(Termination,deadline);}
+        internal void ArmFailure(DateTime deadline,uint exitCode){terminal=ArmOwnedFailure(Termination,deadline,exitCode);}
         public void Dispose(){
             // The first diagnostic marker wins; every stop still closes this
             // exact unnamed job even when native termination fails or throws.

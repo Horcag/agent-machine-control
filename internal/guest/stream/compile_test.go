@@ -50,6 +50,25 @@ namespace AMCStream {
    if(failure.Count!=2||(string)failure["stage"]!="observe"||(uint)failure["nativeError"]!=0)throw new System.Exception("exception text retained");
    failure=Failure.Metadata(new NativeFailure("security_enable",1300),"observe");
    if(failure.Count!=2||(string)failure["stage"]!="security_enable"||(uint)failure["nativeError"]!=1300)throw new System.Exception("native diagnostic lost");
+   string[] stages={"runspace_open","request","observe","put","get","exec","remove_owned","security_token","security_lookup","security_enable","security_restore","ancestor_open","workspace_open","file_open","metadata_read","file_id_read","security_size","security_read","security_parse","file_commit","file_delete","control_eof","control_read","control_header","control_decode"};
+   for(int i=0;i<stages.Length;i++){
+    uint plain=Failure.TimerExit(new System.Exception("private text"),stages[i]);
+    uint nativeCode=Failure.TimerExit(new NativeFailure(stages[i],65535),"request");
+    if(plain!=(0x01000000u|((uint)(i+1)<<16))||nativeCode!=(plain|65535u))throw new System.Exception("closed timer stage encoding changed");
+   }
+   if(Failure.TimerExit(new System.Exception("secret"),"unknown")!=217||Failure.TimerExit(new NativeFailure("unknown",1),"observe")!=217||Failure.TimerExit(new NativeFailure("observe",65536),"request")!=217)throw new System.Exception("unsafe timer cause encoded");
+   using(var hash=System.Security.Cryptography.SHA256.Create()){
+    if(Worker.EmptyDigest!=Worker.Hex(hash.ComputeHash(new byte[0])))throw new System.Exception("empty payload digest changed");
+   }
+   using(var fired=new System.Threading.ManualResetEvent(false)){
+    uint marker=0;int closures=0;uint encoded=Failure.TimerExit(new NativeFailure("security_enable",1300),"observe");
+    var owned=new Lifetime.OwnTermination(delegate(uint code){marker=code;return false;},delegate{closures++;fired.Set();});
+    using(var timer=Lifetime.ArmOwnedFailure(owned,System.DateTime.UtcNow.AddMilliseconds(30),encoded)){
+     if(!fired.WaitOne(5000))throw new System.Exception("encoded cause timer missed bound");
+     owned.Stop(219);
+    }
+    if(marker!=0x010A0514u||closures!=1)throw new System.Exception("encoded timer cause overwritten");
+   }
    var a=new System.Collections.Generic.Dictionary<string,object>();var b=new System.Collections.Generic.Dictionary<string,object>();
    string[] keys={"path","volume","fileId","creationTime","owner","sddlHash","size","sha256","rootPath","rootVolume","rootFileId","rootCreationTime","rootOwner","rootSDDLHash"};
    foreach(var key in keys){a[key]="original";b[key]="original";}

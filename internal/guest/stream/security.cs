@@ -9,6 +9,28 @@ internal sealed class NativeFailure : IOException {
     internal NativeFailure(string stage,uint code){Stage=stage;Code=code;}
 }
 internal static class Failure {
+    // Exit diagnostics are bounded metadata, never a successful protocol reply.
+    internal static uint TimerExit(Exception error,string stage) {
+        var native=error as NativeFailure;uint code=native==null?0u:native.Code;
+        if(native!=null)stage=native.Stage;
+        uint index;
+        switch(stage) {
+            case "runspace_open":index=1;break;case "request":index=2;break;
+            case "observe":index=3;break;case "put":index=4;break;case "get":index=5;break;
+            case "exec":index=6;break;case "remove_owned":index=7;break;
+            case "security_token":index=8;break;case "security_lookup":index=9;break;
+            case "security_enable":index=10;break;case "security_restore":index=11;break;
+            case "ancestor_open":index=12;break;case "workspace_open":index=13;break;
+            case "file_open":index=14;break;case "metadata_read":index=15;break;
+            case "file_id_read":index=16;break;case "security_size":index=17;break;
+            case "security_read":index=18;break;case "security_parse":index=19;break;
+            case "file_commit":index=20;break;case "file_delete":index=21;break;
+            case "control_eof":index=22;break;case "control_read":index=23;break;
+            case "control_header":index=24;break;case "control_decode":index=25;break;
+            default:return Lifetime.FailureTimerExit;
+        }
+        return code>65535?Lifetime.FailureTimerExit:0x01000000u|(index<<16)|code;
+    }
     internal static NativeFailure LastError(string stage){return new NativeFailure(stage,unchecked((uint)Marshal.GetLastWin32Error()));}
     internal static Dictionary<string,object> Metadata(Exception error,string stage){
         var native=error as NativeFailure;
