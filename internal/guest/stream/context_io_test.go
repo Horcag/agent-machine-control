@@ -95,59 +95,61 @@ type signalledWriter struct {
 func (w signalledWriter) Write(p []byte) (int, error) { close(w.started); return w.PipeWriter.Write(p) }
 func TestExecuteCancellationUnblocksCallerIO(t *testing.T) {
 	for _, operation := range []string{"upload", "download"} {
-		t.Run(operation, func(t *testing.T) {
-			started := make(chan struct{})
-			reader, writer := io.Pipe()
-			defer reader.Close()
-			defer writer.Close()
-			f := &fixtureOpener{}
-			req := request()
-			var input io.Reader
-			var output io.Writer
-			if operation == "upload" {
-				req.Size = 1
-				req.SHA256 = hash([]byte{1})
-				input = OwnedInput(signalledReader{reader, started})
-			} else {
-				req.Operation = "get"
-				req.Path = "synthetic"
-				req.Owned = []FileIdentity{{Path: req.Path}}
-				req.MaxOutput = 1
-				output = OwnedOutput(signalledWriter{writer, started})
-				f.handler = func(ch net.Conn, request Request) {
-					result := Result{ID: request.ID, Size: 1, SHA256: hash([]byte{1}), Worker: WorkerIdentity{PID: 12, BirthTicks: 123, Image: "synthetic-worker", SID: "synthetic-sid"}}
-					_ = writeControl(ch, result)
-					_, _ = ch.Write([]byte{1})
-					_ = writeControl(ch, result)
-				}
-			}
-			c := fixtureClient(t, f)
-			if _, err := c.Prepare(context.Background(), "target", "actor", "g"); err != nil {
-				t.Fatal(err)
-			}
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			done := make(chan error, 1)
-			go func() { _, err := c.Execute(ctx, "target", "actor", "g", req, input, output); done <- err }()
-			select {
-			case <-started:
-			case <-time.After(time.Second):
-				t.Fatal("caller IO never entered")
-			}
-			cancel()
-			select {
-			case err := <-done:
-				if !errors.Is(err, context.Canceled) {
-					t.Fatal(err)
-				}
-			case <-time.After(time.Second):
-				t.Fatal("Execute remained blocked in caller IO")
-			}
-			f.wg.Wait()
-			if f.count.Load() != 1 || f.requests.Load() != 1 {
-				t.Fatal("cancelled request replayed")
-			}
-		})
+		t.Run(operation, func(t *testing.T) { testExecuteCancellationIO(t, operation) })
+	}
+}
+func testExecuteCancellationIO(t *testing.T, operation string) {
+	t.Helper()
+	started := make(chan struct{})
+	reader, writer := io.Pipe()
+	defer reader.Close()
+	defer writer.Close()
+	f := &fixtureOpener{}
+	req := request()
+	var input io.Reader
+	var output io.Writer
+	if operation == "upload" {
+		req.Size = 1
+		req.SHA256 = hash([]byte{1})
+		input = OwnedInput(signalledReader{reader, started})
+	} else {
+		req.Operation = "get"
+		req.Path = "synthetic"
+		req.Owned = []FileIdentity{{Path: req.Path}}
+		req.MaxOutput = 1
+		output = OwnedOutput(signalledWriter{writer, started})
+		f.handler = func(ch net.Conn, request Request) {
+			result := Result{ID: request.ID, Size: 1, SHA256: hash([]byte{1}), Worker: WorkerIdentity{PID: 12, BirthTicks: 123, Image: "synthetic-worker", SID: "synthetic-sid"}}
+			_ = writeControl(ch, result)
+			_, _ = ch.Write([]byte{1})
+			_ = writeControl(ch, result)
+		}
+	}
+	c := fixtureClient(t, f)
+	if _, err := c.Prepare(context.Background(), "target", "actor", "g"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := c.Execute(ctx, "target", "actor", "g", req, input, output); done <- err }()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("caller IO never entered")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Execute remained blocked in caller IO")
+	}
+	f.wg.Wait()
+	if f.count.Load() != 1 || f.requests.Load() != 1 {
+		t.Fatal("cancelled request replayed")
 	}
 }
 

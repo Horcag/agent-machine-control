@@ -33,33 +33,7 @@ func TestDuplexExecNeverAllocatesPTY(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		server, channels, requests, err := gossh.NewServerConn(conn, config)
-		if err != nil {
-			return
-		}
-		defer server.Close()
-		go gossh.DiscardRequests(requests)
-		for newChannel := range channels {
-			channel, requests, err := newChannel.Accept()
-			if err != nil {
-				return
-			}
-			for request := range requests {
-				switch request.Type {
-				case "pty-req":
-					pty.Add(1)
-					_ = request.Reply(false, nil)
-				case "exec":
-					execRequests.Add(1)
-					_ = request.Reply(true, nil)
-					_, _ = io.Copy(channel, channel)
-					_ = channel.Close()
-					return
-				default:
-					_ = request.Reply(false, nil)
-				}
-			}
-		}
+		serveDuplexProtocol(conn, config, &pty, &execRequests)
 	})
 	defer func() { _ = listener.Close(); wg.Wait() }()
 	hostHash := sha256.Sum256(hostSigner.PublicKey().Marshal())
@@ -82,5 +56,35 @@ func TestDuplexExecNeverAllocatesPTY(t *testing.T) {
 	}
 	if pty.Load() != 0 || execRequests.Load() != 1 {
 		t.Fatalf("PTY=%d exec=%d", pty.Load(), execRequests.Load())
+	}
+}
+
+func serveDuplexProtocol(conn net.Conn, config *gossh.ServerConfig, pty, execRequests *atomic.Int64) {
+	server, channels, requests, err := gossh.NewServerConn(conn, config)
+	if err != nil {
+		return
+	}
+	defer server.Close()
+	go gossh.DiscardRequests(requests)
+	for newChannel := range channels {
+		channel, requests, err := newChannel.Accept()
+		if err != nil {
+			return
+		}
+		for request := range requests {
+			switch request.Type {
+			case "pty-req":
+				pty.Add(1)
+				_ = request.Reply(false, nil)
+			case "exec":
+				execRequests.Add(1)
+				_ = request.Reply(true, nil)
+				_, _ = io.Copy(channel, channel)
+				_ = channel.Close()
+				return
+			default:
+				_ = request.Reply(false, nil)
+			}
+		}
 	}
 }
