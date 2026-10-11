@@ -135,9 +135,8 @@ func (s *GuestService) Execute(ctx context.Context, p GuestOperationParams, inpu
 
 func guestEvidenceRefs(err error) []string {
 	refs := []string{"guest-operation-dispatched"}
-	var failure *stream.WorkerFailure
-	if errors.As(err, &failure) && failure.Valid() {
-		refs = append(refs, fmt.Sprintf("guest-worker-failure:%s:%d", failure.Stage, failure.NativeError))
+	if diagnostic := guestFailureEvidence(err); diagnostic != "" {
+		refs = append(refs, diagnostic)
 	}
 	return refs
 }

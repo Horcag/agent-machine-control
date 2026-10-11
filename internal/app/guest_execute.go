@@ -60,11 +60,7 @@ func (s *GuestService) run(ctx context.Context, p GuestOperationParams, op domai
 	attempted = true
 	result, err := s.transport.Execute(ctx, op.Target, key, config.Generation, request, input, output)
 	if err != nil {
-		var failure *stream.WorkerFailure
-		if errors.As(err, &failure) && failure.Valid() {
-			return out, errors.Join(ErrGuestUncertain, &stream.WorkerFailure{Stage: failure.Stage, NativeError: failure.NativeError})
-		}
-		return out, ErrGuestUncertain
+		return out, safeGuestTransportError(err)
 	}
 	out, err = verifiedGuestResult(id, worker.Identity, result, input, output)
 	if err != nil {
@@ -121,8 +117,8 @@ func (s *GuestService) preparedGuestWorker(ctx context.Context, key string) (gue
 func (s *GuestService) applyGuestResult(ctx context.Context, p GuestOperationParams, op domain.Operation, config GuestConfiguration, key, id string, request stream.Request, owned []guestOwnedArtifact, result stream.Result, out GuestOperationResult) (GuestOperationResult, error) {
 	switch p.Operation {
 	case "prepare":
-		if result.Root == nil || *result.Root != config.WorkspaceIdentity {
-			return out, guestProtocolError()
+		if err := verifyGuestRoot(result.Root, config.WorkspaceIdentity); err != nil {
+			return out, err
 		}
 		var worker guestWorkerRecord
 		err := s.store.read(ctx, id, ".worker", &worker)
