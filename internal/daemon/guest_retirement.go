@@ -3,11 +3,15 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	_ "embed"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"io"
+	"net"
+	"strings"
 	"unicode/utf16"
 
 	"github.com/Horcag/agent-machine-control/internal/app"
@@ -173,8 +177,36 @@ func freezeGuestKeys(ctx context.Context, keys guestssh.KeyProvider, target doma
 	if err != nil {
 		return nil, err
 	}
-	return &frozenGuestKeys{config: *config, user: user, endpoint: endpoint, signer: signer, callback: callback}, nil
+	boundCallback, err := frozenGuestHostKeyCallback(config.PinnedHostKeySHA256, callback)
+	if err != nil {
+		return nil, err
+	}
+	return &frozenGuestKeys{config: *config, user: user, endpoint: endpoint, signer: signer, callback: boundCallback}, nil
 }
+
+// A provider callback may have read a different configuration during an ABA
+// change. Both its policy and the pin in the frozen generation must approve.
+func frozenGuestHostKeyCallback(pin string, callback gossh.HostKeyCallback) (gossh.HostKeyCallback, error) {
+	pin = strings.TrimSpace(pin)
+	if pin == "" {
+		return nil, domain.ErrMissingHostKeyPin
+	}
+	if callback == nil {
+		return nil, app.ErrGuestAuthority
+	}
+	return func(hostname string, remote net.Addr, key gossh.PublicKey) error {
+		if err := callback(hostname, remote, key); err != nil {
+			return err
+		}
+		sum := sha256.Sum256(key.Marshal())
+		actual := base64.StdEncoding.EncodeToString(sum[:])
+		if subtle.ConstantTimeCompare([]byte(actual), []byte(pin)) != 1 {
+			return domain.ErrHostKeyMismatch
+		}
+		return nil
+	}, nil
+}
+
 func (k *frozenGuestKeys) GetMachineConfig(domain.MachineRef) (*guestssh.MachineSSHConfig, error) {
 	configuration := k.config
 	return &configuration, nil

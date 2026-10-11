@@ -2,18 +2,27 @@ package daemon
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"github.com/Horcag/agent-machine-control/internal/auth"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/app"
 	"github.com/Horcag/agent-machine-control/internal/domain"
+	guestssh "github.com/Horcag/agent-machine-control/internal/guest/ssh"
+	"github.com/Horcag/agent-machine-control/internal/guest/ssh/fakeserver"
 	"github.com/Horcag/agent-machine-control/internal/guest/stream"
+	gossh "golang.org/x/crypto/ssh"
 )
 
 type retirementFakeRunner struct {
@@ -137,5 +146,92 @@ func TestGuestRetirementUsesFreshOperatorAndAgentAuthority(t *testing.T) {
 	absent, err = provider.ConfirmGuestRetirement(t.Context(), ref, caller.EffectiveActor, configuration.Generation, original)
 	if absent || !errors.Is(err, app.ErrGuestAuthority) || runner.calls != 1 {
 		t.Fatalf("revocation did not block observation: %v %v calls=%d", absent, err, runner.calls)
+	}
+}
+
+func TestGuestFrozenRouteRejectsMixedHostPinABA(t *testing.T) {
+	provider, keys, caller, _ := newGuestConfigurationFixture(t)
+	ref := domain.MachineRef("local:11111111-1111-4111-8111-111111111111")
+	signer, err := keys.GetClientSigner(t.Context(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := fakeserver.New(fakeserver.ModeEcho, signer.PublicKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	keys.endpoint = other.Addr()
+	mixed := &mixedGuestPinKeys{KeyProvider: keys, pin: other.HostKeyPin()}
+	provider.keys = mixed
+	before, err := provider.Current(t.Context(), ref, *caller)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frozen, err := freezeGuestKeys(t.Context(), mixed, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := provider
+	snapshot.keys = frozen
+	after, err := snapshot.Current(t.Context(), ref, *caller)
+	if err != nil || after.Generation != before.Generation {
+		t.Fatalf("fixture did not recreate A/B/A generation: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	channel, err := guestssh.NewTransport(frozen).OpenDuplex(ctx, ref, "synthetic-observation")
+	if channel != nil {
+		_ = channel.Close()
+	}
+	if err == nil || mixed.accepted != 1 {
+		t.Fatalf("mixed-pin route was admitted or B callback not exercised: %v accepted=%d", err, mixed.accepted)
+	}
+}
+
+type mixedGuestPinKeys struct {
+	guestssh.KeyProvider
+	pin      string
+	accepted int
+}
+
+func (k *mixedGuestPinKeys) GetHostKeyCallback(context.Context, domain.MachineRef) (gossh.HostKeyCallback, error) {
+	return func(_ string, _ net.Addr, key gossh.PublicKey) error {
+		sum := sha256.Sum256(key.Marshal())
+		if base64.StdEncoding.EncodeToString(sum[:]) != k.pin {
+			return domain.ErrHostKeyMismatch
+		}
+		k.accepted++
+		return nil
+	}, nil
+}
+func TestGuestFrozenPinPreservesProviderPolicy(t *testing.T) {
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := gossh.NewSignerFromKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(signer.PublicKey().Marshal())
+	pin := base64.StdEncoding.EncodeToString(sum[:])
+	denied := errors.New("synthetic provider denial")
+	callback, err := frozenGuestHostKeyCallback(pin, func(string, net.Addr, gossh.PublicKey) error { return denied })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = callback("synthetic", nil, signer.PublicKey()); !errors.Is(err, denied) {
+		t.Fatalf("provider policy bypassed: %v", err)
+	}
+	callback, err = frozenGuestHostKeyCallback(" "+pin+" ", func(string, net.Addr, gossh.PublicKey) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = callback("synthetic", nil, signer.PublicKey()); err != nil {
+		t.Fatalf("matching policy and pin rejected: %v", err)
+	}
+	if _, err = frozenGuestHostKeyCallback("", callback); !errors.Is(err, domain.ErrMissingHostKeyPin) {
+		t.Fatalf("missing pin accepted: %v", err)
 	}
 }
