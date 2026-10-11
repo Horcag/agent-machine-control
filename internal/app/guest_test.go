@@ -119,6 +119,9 @@ func (f *guestTestTransport) Execute(ctx context.Context, _ domain.MachineRef, _
 	if f.fail {
 		return stream.Result{}, errors.New("lost result")
 	}
+	return f.respond(request, input, output)
+}
+func (f *guestTestTransport) respond(request stream.Request, input io.Reader, output io.Writer) (stream.Result, error) {
 	result := stream.Result{ID: request.ID, Status: "ok", Worker: f.worker, SHA256: guestDigest("")}
 	switch request.Operation {
 	case "observe":

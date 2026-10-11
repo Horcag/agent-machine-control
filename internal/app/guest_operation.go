@@ -27,7 +27,7 @@ func guestPoolKey(target domain.MachineRef, actor domain.ActorContext, generatio
 }
 
 func (s *GuestService) resolve(ctx context.Context, p GuestOperationParams) (TargetResolution, GuestConfiguration, error) {
-	if s == nil || s.session == nil || s.resolver == nil || s.config == nil || s.transport == nil || s.store == nil || s.session.leaseMgr == nil {
+	if !s.guestDependenciesAvailable() {
 		return TargetResolution{}, GuestConfiguration{}, ErrGuestAuthority
 	}
 	if err := p.Caller.Validate(); err != nil {
@@ -44,9 +44,10 @@ func (s *GuestService) resolve(ctx context.Context, p GuestOperationParams) (Tar
 	if err != nil {
 		return resolution, config, ErrGuestAuthority
 	}
-	if config.Caller.Validate() != nil || config.Caller.AuthenticatedCaller != p.Caller.AuthenticatedCaller || config.Caller.EffectiveActor != p.Caller.EffectiveActor || !config.Caller.EffectivePermissions.IsSubsetOf(p.Caller.EffectivePermissions) || !config.Caller.CallerPermissions.IsSubsetOf(p.Caller.CallerPermissions) || domain.ValidateBoundedString(config.Generation, 1, 256, ErrGuestAuthority) != nil || !validGuestRoot(config.WorkspaceIdentity) {
+	if !validGuestConfiguration(config, p.Caller) {
 		return resolution, config, ErrGuestAuthority
 	}
+
 	return resolution, config, ctx.Err()
 }
 
@@ -95,12 +96,6 @@ func (s *GuestService) Execute(ctx context.Context, p GuestOperationParams, inpu
 	if err = checkGuestScopes(op); err != nil {
 		return out, err
 	}
-	if (p.Operation == "put" || p.Operation == "exec") && input == nil {
-		return out, domain.ErrNonCanonicalParameter
-	}
-	if (p.Operation == "get" || p.Operation == "exec") && output == nil {
-		return out, domain.ErrNonCanonicalParameter
-	}
 	ctx, cancel, _, timeout := s.session.beginSessionMutation(ctx, 0, op.Deadline)
 	defer cancel()
 	idFP, err := domain.ComputeIdempotencyFingerprint(op)
@@ -111,27 +106,11 @@ func (s *GuestService) Execute(ctx context.Context, p GuestOperationParams, inpu
 	key := guestPoolKey(op.Target, op.Actor, config.Generation)
 	dispatched := false
 	effectApplied := false
-	var checked *guestCheckedInput
-	if input != nil {
-		source, ok := input.(stream.ContextReader)
-		if !ok {
-			return out, domain.ErrNonCanonicalParameter
-		}
-		checked = &guestCheckedInput{source: source, size: p.Size, expected: p.SHA256, digest: sha256.New()}
-		input = checked
+	input, spool, sink, err := s.prepareGuestIO(ctx, p, input, output)
+	if err != nil {
+		return out, err
 	}
-	var spool *guestSpool
-	var sink stream.ContextWriter
-	if output != nil {
-		var ok bool
-		sink, ok = output.(stream.ContextWriter)
-		if !ok {
-			return out, domain.ErrNonCanonicalParameter
-		}
-		spool, err = s.spool(ctx, p)
-		if err != nil {
-			return out, err
-		}
+	if spool != nil {
 		defer func() { callErr = errors.Join(callErr, spool.cleanup()) }()
 	}
 	var transportOutput io.Writer
@@ -139,23 +118,56 @@ func (s *GuestService) Execute(ctx context.Context, p GuestOperationParams, inpu
 		transportOutput = spool
 	}
 	_, rcpt, err := s.session.coordinateSessionMutation(ctx, op, "guest:"+guestDigest([]string{string(op.Actor.EffectiveActor), string(op.Target), p.IdempotencyKey}), nil, p.ApprovalID, timeout, func(execCtx context.Context) (sessionMutationResult, error) {
-		if err := s.validateEffectAuthority(execCtx, p, config); err != nil {
-			return sessionMutationResult{}, err
-		}
-		if err := checkGuestScopes(op); err != nil {
-			return sessionMutationResult{}, err
-		}
 		dispatched = true
-		result, runErr := s.run(execCtx, p, op, config, key, recordID, input, transportOutput, &effectApplied)
-		out = result
-		if runErr == nil {
-			if persistErr := s.store.write(execCtx, recordID, ".result", out); persistErr != nil {
-				runErr = ErrGuestUncertain
-			}
-		}
-		effect := effectApplied
-		return sessionMutationResult{EffectApplied: effect, ExitCode: out.ExitCode, EvidenceRefs: []string{"guest-operation-dispatched"}}, runErr
+		var runErr error
+		out, effectApplied, runErr = s.dispatchGuest(execCtx, p, op, config, key, recordID, input, transportOutput)
+		return sessionMutationResult{EffectApplied: effectApplied, ExitCode: out.ExitCode, EvidenceRefs: []string{"guest-operation-dispatched"}}, runErr
 	})
+	return s.finishGuest(ctx, p, config, out, rcpt, err, dispatched, effectApplied, recordID, spool, sink)
+}
+
+func (s *GuestService) dispatchGuest(ctx context.Context, p GuestOperationParams, op domain.Operation, config GuestConfiguration, key, id string, input io.Reader, output io.Writer) (GuestOperationResult, bool, error) {
+	if err := s.validateEffectAuthority(ctx, p, config); err != nil {
+		return GuestOperationResult{}, false, err
+	}
+	if err := checkGuestScopes(op); err != nil {
+		return GuestOperationResult{}, false, err
+	}
+	effect := false
+	out, err := s.run(ctx, p, op, config, key, id, input, output, &effect)
+	if err == nil {
+		if persistErr := s.store.write(ctx, id, ".result", out); persistErr != nil {
+			err = ErrGuestUncertain
+		}
+	}
+	return out, effect, err
+}
+
+func (s *GuestService) prepareGuestIO(ctx context.Context, p GuestOperationParams, input io.Reader, output io.Writer) (io.Reader, *guestSpool, stream.ContextWriter, error) {
+	needsInput := p.Operation == "put" || p.Operation == "exec"
+	needsOutput := p.Operation == "get" || p.Operation == "exec"
+	if needsInput != (input != nil) || needsOutput != (output != nil) {
+		return nil, nil, nil, domain.ErrNonCanonicalParameter
+	}
+	if input != nil {
+		source, ok := input.(stream.ContextReader)
+		if !ok {
+			return nil, nil, nil, domain.ErrNonCanonicalParameter
+		}
+		input = &guestCheckedInput{source: source, size: p.Size, expected: p.SHA256, digest: sha256.New()}
+	}
+	if output == nil {
+		return input, nil, nil, nil
+	}
+	sink, ok := output.(stream.ContextWriter)
+	if !ok {
+		return nil, nil, nil, domain.ErrNonCanonicalParameter
+	}
+	spool, err := s.spool(ctx, p)
+	return input, spool, sink, err
+}
+
+func (s *GuestService) finishGuest(ctx context.Context, p GuestOperationParams, config GuestConfiguration, out GuestOperationResult, rcpt *domain.Receipt, err error, dispatched, effectApplied bool, recordID string, spool *guestSpool, sink stream.ContextWriter) (GuestOperationResult, error) {
 	out.Receipt = rcpt
 	out.CachedReceipt = !dispatched && rcpt != nil
 	if !dispatched && err == nil && rcpt != nil {
@@ -171,18 +183,24 @@ func (s *GuestService) Execute(ctx context.Context, p GuestOperationParams, inpu
 		err = errors.Join(ErrGuestUncertain, err)
 	}
 	if err == nil && spool != nil && dispatched {
-		if rcpt == nil || rcpt.Validate() != nil || rcpt.Outcome.Status != domain.OutcomeSuccess || !spool.matches(out) {
-			return out, ErrGuestUncertain
-		}
-		_, fresh, checkErr := s.resolve(ctx, p)
-		if checkErr != nil || !reflect.DeepEqual(fresh, config) {
-			return out, ErrGuestUncertain
-		}
-		if publishErr := spool.publish(ctx, sink); publishErr != nil {
-			return out, errors.Join(ErrGuestUncertain, publishErr)
-		}
+		err = s.publishGuest(ctx, p, config, out, rcpt, spool, sink)
 	}
+
 	return out, err
+}
+
+func (s *GuestService) publishGuest(ctx context.Context, p GuestOperationParams, config GuestConfiguration, out GuestOperationResult, rcpt *domain.Receipt, spool *guestSpool, sink stream.ContextWriter) error {
+	if rcpt == nil || rcpt.Validate() != nil || rcpt.Outcome.Status != domain.OutcomeSuccess || !spool.matches(out) {
+		return ErrGuestUncertain
+	}
+	_, fresh, err := s.resolve(ctx, p)
+	if err != nil || !reflect.DeepEqual(fresh, config) {
+		return ErrGuestUncertain
+	}
+	if err = spool.publish(ctx, sink); err != nil {
+		return errors.Join(ErrGuestUncertain, err)
+	}
+	return nil
 }
 
 func checkGuestScopes(op domain.Operation) error {
@@ -193,9 +211,14 @@ func checkGuestScopes(op domain.Operation) error {
 	}
 	return nil
 }
-
 func guestArtifactPath(root, id string) string {
 	return strings.TrimRight(root, "\\") + "\\amc-" + id + ".bin"
 }
 func guestArtifactStoreID(id string) string { return guestDigest("guest-artifact:" + id) }
 func guestProtocolError() error             { return fmt.Errorf("%w: invalid guest result", ErrGuestOwnership) }
+func (s *GuestService) guestDependenciesAvailable() bool {
+	return s != nil && s.session != nil && s.resolver != nil && s.config != nil && s.transport != nil && s.store != nil && s.session.leaseMgr != nil
+}
+func validGuestConfiguration(config GuestConfiguration, caller domain.ActorContext) bool {
+	return config.Caller.Validate() == nil && config.Caller.AuthenticatedCaller == caller.AuthenticatedCaller && config.Caller.EffectiveActor == caller.EffectiveActor && config.Caller.EffectivePermissions.IsSubsetOf(caller.EffectivePermissions) && config.Caller.CallerPermissions.IsSubsetOf(caller.CallerPermissions) && domain.ValidateBoundedString(config.Generation, 1, 256, ErrGuestAuthority) == nil && validGuestRoot(config.WorkspaceIdentity)
+}

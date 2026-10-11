@@ -42,6 +42,17 @@ func validateGuestOperationParams(params map[string]any) error {
 	if !ok || len(ids) > 128 {
 		return ErrNonCanonicalParameter
 	}
+	if err := validateGuestArtifactIDs(ids); err != nil {
+		return err
+	}
+	op, ok := params["operation"].(string)
+	if !ok || !IsGuestOperation(OperationKind("guest."+op)) {
+		return ErrNonCanonicalParameter
+	}
+	return validateGuestShape(op, size, limit, len(ids))
+}
+
+func validateGuestArtifactIDs(ids []string) error {
 	seen := map[string]bool{}
 	for _, id := range ids {
 		if !canonicalHex(id, 32) || seen[id] {
@@ -49,29 +60,29 @@ func validateGuestOperationParams(params map[string]any) error {
 		}
 		seen[id] = true
 	}
-	op, ok := params["operation"].(string)
-	if !ok || !IsGuestOperation(OperationKind("guest."+op)) {
-		return ErrNonCanonicalParameter
-	}
+	return nil
+}
+
+func validateGuestShape(op string, size, limit int64, number int) error {
 	switch op {
 	case "prepare":
-		if size != 0 || limit != 0 || len(ids) != 0 {
+		if size != 0 || limit != 0 || number != 0 {
 			return ErrNonCanonicalParameter
 		}
 	case "put":
-		if limit != 0 || len(ids) != 0 {
+		if limit != 0 || number != 0 {
 			return ErrNonCanonicalParameter
 		}
 	case "exec":
-		if size > 16*1024*1024 || limit == 0 || limit > 16*1024*1024 || len(ids) != 0 {
+		if size > 16*1024*1024 || limit == 0 || limit > 16*1024*1024 || number != 0 {
 			return ErrNonCanonicalParameter
 		}
 	case "get":
-		if size != 0 || limit == 0 || len(ids) != 1 {
+		if size != 0 || limit == 0 || number != 1 {
 			return ErrNonCanonicalParameter
 		}
 	case "remove-owned":
-		if size != 0 || limit != 0 || len(ids) == 0 {
+		if size != 0 || limit != 0 || number == 0 {
 			return ErrNonCanonicalParameter
 		}
 	}

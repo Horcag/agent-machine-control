@@ -35,44 +35,10 @@ func (s *GuestService) checkRetirement(ctx context.Context, key string, worker g
 		if count > 128 {
 			return ErrGuestUncertain
 		}
-		priorKey := strings.TrimSuffix(entry.Name(), ".launch")
-		var launch guestWorkerRecord
-		if err = s.store.read(ctx, priorKey, ".launch", &launch); err != nil {
-			return ErrGuestUncertain
-		}
-		if launch.Target != worker.Target || launch.Actor != worker.Actor || launch.Caller != worker.Caller {
-			continue
-		}
-		var pending guestWorkerRecord
-		pendingErr := s.store.read(ctx, priorKey, ".retirement", &pending)
-		if pendingErr == nil {
-			if err = s.confirmRetirement(ctx, priorKey, pending); err != nil {
-				return err
-			}
-			if priorKey == key {
-				return ErrGuestNotPrepared
-			}
-			continue
-		}
-		if !errors.Is(pendingErr, os.ErrNotExist) {
-			return ErrGuestUncertain
-		}
-		s.mu.Lock()
-		active := s.workers[priorKey]
-		s.mu.Unlock()
-		if priorKey == key && active.RecordID != "" {
-			continue
-		}
-		var ready guestWorkerRecord
-		if err = s.store.read(ctx, priorKey, ".ready", &ready); err != nil {
-			return ErrGuestUncertain
-		}
-		if err = s.confirmRetirement(ctx, priorKey, ready); err != nil {
+		if err := s.checkPriorGuestLaunch(ctx, key, strings.TrimSuffix(entry.Name(), ".launch"), worker); err != nil {
 			return err
 		}
-		if priorKey == key {
-			return ErrGuestNotPrepared
-		}
+
 	}
 	return nil
 }
@@ -137,6 +103,48 @@ func (s *GuestService) recordReady(ctx context.Context, key string, worker guest
 		if readErr := s.store.read(ctx, key, ".ready", &prior); readErr != nil || prior.Identity != worker.Identity || prior.Target != worker.Target || prior.Caller != worker.Caller || prior.Actor != worker.Actor || prior.Generation != worker.Generation {
 			return ErrGuestUncertain
 		}
+	}
+	return nil
+}
+
+func (s *GuestService) checkPriorGuestLaunch(ctx context.Context, key, priorKey string, worker guestWorkerRecord) error {
+	var err error
+	var launch guestWorkerRecord
+	if err = s.store.read(ctx, priorKey, ".launch", &launch); err != nil {
+		return ErrGuestUncertain
+	}
+	if launch.Target != worker.Target || launch.Actor != worker.Actor || launch.Caller != worker.Caller {
+		return nil
+	}
+	var pending guestWorkerRecord
+	pendingErr := s.store.read(ctx, priorKey, ".retirement", &pending)
+	if pendingErr == nil {
+		if err = s.confirmRetirement(ctx, priorKey, pending); err != nil {
+			return err
+		}
+		if priorKey == key {
+			return ErrGuestNotPrepared
+		}
+		return nil
+	}
+	if !errors.Is(pendingErr, os.ErrNotExist) {
+		return ErrGuestUncertain
+	}
+	s.mu.Lock()
+	active := s.workers[priorKey]
+	s.mu.Unlock()
+	if priorKey == key && active.RecordID != "" {
+		return nil
+	}
+	var ready guestWorkerRecord
+	if err = s.store.read(ctx, priorKey, ".ready", &ready); err != nil {
+		return ErrGuestUncertain
+	}
+	if err = s.confirmRetirement(ctx, priorKey, ready); err != nil {
+		return err
+	}
+	if priorKey == key {
+		return ErrGuestNotPrepared
 	}
 	return nil
 }

@@ -81,7 +81,7 @@ func TestGuestInvalidOutputNeverEscapes(t *testing.T) {
 			p.ArtifactIDs = []string{artifact.ID}
 			p.MaxOutput = 4
 			if field == "overflow" {
-				h.transport.executeHook = func(_ context.Context, request stream.Request, _ io.Reader, output io.Writer) (stream.Result, error) {
+				h.transport.executeHook = func(_ context.Context, _ stream.Request, _ io.Reader, output io.Writer) (stream.Result, error) {
 					_, err := output.Write([]byte("overflow"))
 					return stream.Result{}, err
 				}

@@ -35,38 +35,14 @@ func (s *GuestService) run(ctx context.Context, p GuestOperationParams, op domai
 	if err := s.checkRetirement(ctx, key, guestWorkerRecord{Target: op.Target, Caller: op.Actor.AuthenticatedCaller, Actor: op.Actor.EffectiveActor, Generation: config.Generation}); err != nil {
 		return out, err
 	}
+	var err error
 	if p.Operation == "prepare" {
-		*effect = true
-		worker = guestWorkerRecord{Target: op.Target, Caller: op.Actor.AuthenticatedCaller, Actor: op.Actor.EffectiveActor, Generation: config.Generation, Root: config.WorkspaceIdentity, RecordID: id}
-		if err := s.recordLaunch(ctx, key, worker); err != nil {
-			return out, err
-		}
-		attempted = true
-		identity, err := s.transport.Prepare(ctx, op.Target, key, config.Generation)
-		if err != nil {
-			return out, ErrGuestUncertain
-		}
-		worker = guestWorkerRecord{Target: op.Target, Caller: op.Actor.AuthenticatedCaller, Actor: op.Actor.EffectiveActor, Generation: config.Generation, Identity: identity, Root: config.WorkspaceIdentity, RecordID: id}
-		if !validGuestWorker(identity) || identity.SID != config.WorkspaceIdentity.Owner {
-			return out, guestProtocolError()
-		}
-		if err = s.store.write(ctx, id, ".worker", worker); err != nil {
-			return out, ErrGuestUncertain
-		}
-		if err = s.recordReady(ctx, key, worker); err != nil {
-			return out, err
-		}
+		worker, attempted, err = s.prepareGuestWorker(ctx, op, config, key, id, effect)
 	} else {
-		s.mu.Lock()
-		worker = s.workers[key]
-		s.mu.Unlock()
-		if worker.RecordID == "" {
-			return out, ErrGuestNotPrepared
-		}
-		var persisted guestWorkerRecord
-		if err := s.store.read(ctx, worker.RecordID, ".worker", &persisted); err != nil || !reflect.DeepEqual(persisted, worker) {
-			return out, ErrGuestOwnership
-		}
+		worker, err = s.preparedGuestWorker(ctx, key)
+	}
+	if err != nil {
+		return out, err
 	}
 	if worker.Target != op.Target || worker.Actor != op.Actor.EffectiveActor || worker.Caller != op.Actor.AuthenticatedCaller || worker.Generation != config.Generation || worker.Root != config.WorkspaceIdentity {
 		return out, ErrGuestAuthority
@@ -99,30 +75,61 @@ func (s *GuestService) run(ctx context.Context, p GuestOperationParams, op domai
 	if spool, ok := output.(*guestSpool); ok && !spool.matches(out) {
 		return out, stream.ErrIntegrity
 	}
+	return s.applyGuestResult(ctx, p, op, config, key, id, request, owned, result, out)
+}
+
+func (s *GuestService) prepareGuestWorker(ctx context.Context, op domain.Operation, config GuestConfiguration, key, id string, effect *bool) (worker guestWorkerRecord, attempted bool, err error) {
+	worker = guestWorkerRecord{Target: op.Target, Caller: op.Actor.AuthenticatedCaller, Actor: op.Actor.EffectiveActor, Generation: config.Generation, Root: config.WorkspaceIdentity, RecordID: id}
+	if err = s.recordLaunch(ctx, key, worker); err != nil {
+		return worker, false, err
+	}
+	*effect = true
+	identity, err := s.transport.Prepare(ctx, op.Target, key, config.Generation)
+	worker.Identity = identity
+	if err != nil {
+		return worker, true, ErrGuestUncertain
+	}
+	if !validGuestWorker(identity) || identity.SID != config.WorkspaceIdentity.Owner {
+		return worker, true, guestProtocolError()
+	}
+	if err = s.store.write(ctx, id, ".worker", worker); err != nil {
+		return worker, true, ErrGuestUncertain
+	}
+	if err = s.recordReady(ctx, key, worker); err != nil {
+		return worker, true, err
+	}
+	return worker, true, nil
+}
+func (s *GuestService) preparedGuestWorker(ctx context.Context, key string) (guestWorkerRecord, error) {
+	s.mu.Lock()
+	worker := s.workers[key]
+	s.mu.Unlock()
+	if worker.RecordID == "" {
+		return worker, ErrGuestNotPrepared
+	}
+	var persisted guestWorkerRecord
+	if err := s.store.read(ctx, worker.RecordID, ".worker", &persisted); err != nil || !reflect.DeepEqual(persisted, worker) {
+		return worker, ErrGuestOwnership
+	}
+	return worker, nil
+}
+
+func (s *GuestService) applyGuestResult(ctx context.Context, p GuestOperationParams, op domain.Operation, config GuestConfiguration, key, id string, request stream.Request, owned []guestOwnedArtifact, result stream.Result, out GuestOperationResult) (GuestOperationResult, error) {
 	switch p.Operation {
 	case "prepare":
 		if result.Root == nil || *result.Root != config.WorkspaceIdentity {
 			return out, guestProtocolError()
 		}
+		var worker guestWorkerRecord
+		err := s.store.read(ctx, id, ".worker", &worker)
+		if err != nil {
+			return out, err
+		}
 		s.mu.Lock()
 		s.workers[key] = worker
 		s.mu.Unlock()
 	case "put":
-		if len(result.Files) != 1 {
-			return out, guestProtocolError()
-		}
-		file := result.Files[0]
-		if !validGuestFile(file, config.WorkspaceIdentity) || file.Path != request.Path || file.Size != p.Size || file.SHA256 != p.SHA256 {
-			return out, guestProtocolError()
-		}
-		artifact := GuestArtifact{ID: id[:32], Size: file.Size, SHA256: file.SHA256}
-		record := guestOwnedArtifact{Artifact: artifact, Target: op.Target, Caller: op.Actor.AuthenticatedCaller, Actor: op.Actor.EffectiveActor, Generation: config.Generation, Identity: file}
-		if err = s.store.write(ctx, guestArtifactStoreID(artifact.ID), ".artifact", record); err != nil {
-			return out, ErrGuestUncertain
-		}
-		out.Artifacts = []GuestArtifact{artifact}
-		out.Size = file.Size
-		out.SHA256 = file.SHA256
+		return s.applyGuestPut(ctx, p, op, config, id, request, result, out)
 	case "get":
 		if len(result.Files) != 1 || result.Files[0] != owned[0].Identity || result.Size != owned[0].Artifact.Size || result.SHA256 != owned[0].Artifact.SHA256 {
 			return out, guestProtocolError()
@@ -132,25 +139,49 @@ func (s *GuestService) run(ctx context.Context, p GuestOperationParams, op domai
 			return out, guestProtocolError()
 		}
 	case "remove-owned":
-		if len(result.Removed) != len(owned) {
-			return out, guestProtocolError()
-		}
-		for i, removed := range result.Removed {
-			if removed.Path != owned[i].Identity.Path {
-				return out, guestProtocolError()
-			}
-			switch removed.Status {
-			case "deleted", "preserved", "absence_unconfirmed", "expired":
-			default:
-				return out, guestProtocolError()
-			}
-			if removed.Status == "deleted" && !removed.Absent {
-				return out, guestProtocolError()
-			}
-			out.Removed = append(out.Removed, GuestRemoval{ArtifactID: owned[i].Artifact.ID, Attempted: true, Accepted: removed.Status == "deleted", Absent: removed.Absent, Status: removed.Status})
-		}
+		return applyGuestRemoval(owned, result, out)
 	}
 	return out, nil
+}
+func (s *GuestService) applyGuestPut(ctx context.Context, p GuestOperationParams, op domain.Operation, config GuestConfiguration, id string, request stream.Request, result stream.Result, out GuestOperationResult) (GuestOperationResult, error) {
+	if len(result.Files) != 1 {
+		return out, guestProtocolError()
+	}
+	file := result.Files[0]
+	if !validGuestFile(file, config.WorkspaceIdentity) || file.Path != request.Path || file.Size != p.Size || file.SHA256 != p.SHA256 {
+		return out, guestProtocolError()
+	}
+	artifact := GuestArtifact{ID: id[:32], Size: file.Size, SHA256: file.SHA256}
+	record := guestOwnedArtifact{Artifact: artifact, Target: op.Target, Caller: op.Actor.AuthenticatedCaller, Actor: op.Actor.EffectiveActor, Generation: config.Generation, Identity: file}
+	if err := s.store.write(ctx, guestArtifactStoreID(artifact.ID), ".artifact", record); err != nil {
+		return out, ErrGuestUncertain
+	}
+	out.Artifacts = []GuestArtifact{artifact}
+	out.Size = file.Size
+	out.SHA256 = file.SHA256
+	return out, nil
+}
+func applyGuestRemoval(owned []guestOwnedArtifact, result stream.Result, out GuestOperationResult) (GuestOperationResult, error) {
+	if len(result.Removed) != len(owned) {
+		return out, guestProtocolError()
+	}
+	for i, removed := range result.Removed {
+		if removed.Path != owned[i].Identity.Path || !validGuestRemoval(removed) {
+			return out, guestProtocolError()
+		}
+		out.Removed = append(out.Removed, GuestRemoval{ArtifactID: owned[i].Artifact.ID, Attempted: true, Accepted: removed.Status == "deleted", Absent: removed.Absent, Status: removed.Status})
+	}
+	return out, nil
+}
+func validGuestRemoval(removed stream.Removal) bool {
+	switch removed.Status {
+	case "deleted":
+		return removed.Absent
+	case "preserved", "absence_unconfirmed", "expired":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *GuestService) request(ctx context.Context, p GuestOperationParams, op domain.Operation, config GuestConfiguration, id string) (stream.Request, []guestOwnedArtifact, error) {
@@ -161,9 +192,10 @@ func (s *GuestService) request(ctx context.Context, p GuestOperationParams, op d
 		if err := s.store.read(ctx, guestArtifactStoreID(artifactID), ".artifact", &record); err != nil {
 			return request, nil, ErrGuestOwnership
 		}
-		if record.Artifact.ID != artifactID || record.Target != op.Target || record.Caller != op.Actor.AuthenticatedCaller || record.Actor != op.Actor.EffectiveActor || record.Generation != config.Generation || !validGuestFile(record.Identity, config.WorkspaceIdentity) || record.Identity.Path != guestArtifactPath(config.WorkspaceIdentity.Path, artifactID) || record.Artifact.Size != record.Identity.Size || record.Artifact.SHA256 != record.Identity.SHA256 {
+		if !validGuestOwned(record, artifactID, op, config) {
 			return request, nil, ErrGuestOwnership
 		}
+
 		owned = append(owned, record)
 		request.Owned = append(request.Owned, record.Identity)
 	}
@@ -182,4 +214,8 @@ func (s *GuestService) request(ctx context.Context, p GuestOperationParams, op d
 		}
 	}
 	return request, owned, nil
+}
+
+func validGuestOwned(record guestOwnedArtifact, artifactID string, op domain.Operation, config GuestConfiguration) bool {
+	return record.Artifact.ID == artifactID && record.Target == op.Target && record.Caller == op.Actor.AuthenticatedCaller && record.Actor == op.Actor.EffectiveActor && record.Generation == config.Generation && validGuestFile(record.Identity, config.WorkspaceIdentity) && record.Identity.Path == guestArtifactPath(config.WorkspaceIdentity.Path, artifactID) && record.Artifact.Size == record.Identity.Size && record.Artifact.SHA256 == record.Identity.SHA256
 }
