@@ -53,22 +53,7 @@ func publishGuestFileHandle(ctx context.Context, file *os.File, destination stri
 		if publicationErr != nil {
 			return
 		}
-		var installed, after unix.Stat_t
-		if publicationErr = unix.Fstatat(parent, leaf, &installed, unix.AT_SYMLINK_NOFOLLOW); publicationErr != nil {
-			publicationErr = fmt.Errorf("guest file published but destination inspection failed: %w", publicationErr)
-			return
-		}
-		if publicationErr = unix.Fstat(int(fd), &after); publicationErr != nil {
-			publicationErr = fmt.Errorf("guest file published but source inspection failed: %w", publicationErr)
-			return
-		}
-		if installed.Mode&unix.S_IFMT != unix.S_IFREG || installed.Dev != before.Dev || installed.Ino != before.Ino || after.Dev != before.Dev || after.Ino != before.Ino || after.Size != before.Size || after.Mtim != before.Mtim || installed.Size != before.Size || installed.Mtim != before.Mtim {
-			publicationErr = errors.New("guest file published but source or destination identity changed")
-			return
-		}
-		if publicationErr = unix.Fsync(parent); publicationErr != nil {
-			publicationErr = fmt.Errorf("guest file published but directory sync failed: %w", publicationErr)
-		}
+		publicationErr = verifyGuestPublishedFile(int(fd), parent, leaf, before)
 	})
 	if err != nil {
 		return err
@@ -125,4 +110,23 @@ func guestPublicationDestination(destination string) (string, error) {
 		return "", err
 	}
 	return absolute, nil
+}
+
+// Once the namespace commit succeeds, validate the held object and installed
+// entry together. Return effect-aware errors without unsafe pathname cleanup.
+func verifyGuestPublishedFile(fd, parent int, leaf string, before unix.Stat_t) error {
+	var installed, after unix.Stat_t
+	if err := unix.Fstatat(parent, leaf, &installed, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return fmt.Errorf("guest file published but destination inspection failed: %w", err)
+	}
+	if err := unix.Fstat(fd, &after); err != nil {
+		return fmt.Errorf("guest file published but source inspection failed: %w", err)
+	}
+	if installed.Mode&unix.S_IFMT != unix.S_IFREG || installed.Dev != before.Dev || installed.Ino != before.Ino || after.Dev != before.Dev || after.Ino != before.Ino || after.Size != before.Size || after.Mtim != before.Mtim || installed.Size != before.Size || installed.Mtim != before.Mtim {
+		return errors.New("guest file published but source or destination identity changed")
+	}
+	if err := unix.Fsync(parent); err != nil {
+		return fmt.Errorf("guest file published but directory sync failed: %w", err)
+	}
+	return nil
 }
