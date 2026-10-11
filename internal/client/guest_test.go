@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -83,14 +84,21 @@ func TestGuestBinaryTrailerIntegrity(t *testing.T) {
 	}
 }
 func TestGuestFilePublication(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "windows" {
+		testUnsupportedGuestFilePublication(t)
+		return
+	}
 	for _, mode := range []string{"valid", "hash", "missing"} {
 		t.Run(mode, func(t *testing.T) {
 			data := []byte("verified output")
-			cl, _ := guestFixture(t, data, mode)
+			cl, calls := guestFixture(t, data, mode)
 			directory := t.TempDir()
 			path := filepath.Join(directory, "result.bin")
 			_, err := cl.GuestOperationToFile(context.Background(), app.GuestOperationParams{Operation: "get", IdempotencyKey: "synthetic-request", MaxOutput: 100, Deadline: time.Now().Add(time.Second)}, nil, path)
 			entries, _ := os.ReadDir(directory)
+			if *calls != 1 {
+				t.Fatalf("publication dispatched %d times", *calls)
+			}
 			if mode != "valid" {
 				if err == nil || len(entries) != 0 {
 					t.Fatalf("failed stream published or leaked: %v %v", err, entries)
@@ -100,15 +108,31 @@ func TestGuestFilePublication(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, _ := os.ReadFile(path)
-			if !bytes.Equal(got, data) {
-				t.Fatal("published bytes differ")
-			}
-			if len(entries) != 1 {
-				t.Fatal("staging file leaked")
-			}
-
+			assertGuestPublishedOutput(t, path, data, entries)
 		})
+	}
+}
+
+func assertGuestPublishedOutput(t *testing.T, path string, expected []byte, entries []os.DirEntry) {
+	t.Helper()
+	got, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(got, expected) {
+		t.Fatalf("published bytes differ: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != filepath.Base(path) {
+		t.Fatalf("publication left unexpected entries: %v", entries)
+	}
+}
+
+func testUnsupportedGuestFilePublication(t *testing.T) {
+	t.Helper()
+	cl, calls := guestFixture(t, []byte("verified output"), "valid")
+	directory := t.TempDir()
+	path := filepath.Join(directory, "result.bin")
+	_, err := cl.GuestOperationToFile(t.Context(), app.GuestOperationParams{Operation: "get", IdempotencyKey: "synthetic-request", MaxOutput: 100, Deadline: time.Now().Add(time.Second)}, nil, path)
+	entries, readErr := os.ReadDir(directory)
+	if err == nil || *calls != 0 || readErr != nil || len(entries) != 0 {
+		t.Fatalf("unsupported publication dispatched or leaked: %v calls=%d entries=%v read=%v", err, *calls, entries, readErr)
 	}
 }
 func TestGuestDestinationExistsDoesNotDispatch(t *testing.T) {

@@ -15,6 +15,9 @@ func TestGuestPublicationUsesOriginalHeldObjectAfterStagingReplacement(t *testin
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows exclusive staging handles reject replacement; native platform tests verify sharing")
 	}
+	if runtime.GOOS != "linux" {
+		t.Skip("Unsupported hosts reject staging before dispatch; TestGuestFilePublication verifies that boundary")
+	}
 	original := []byte("verified original output")
 	cl, _ := guestFixture(t, original, "valid")
 	cl.guestBeforePublication = func(file *os.File) error {
