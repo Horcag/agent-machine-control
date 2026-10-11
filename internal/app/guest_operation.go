@@ -142,14 +142,17 @@ func guestEvidenceRefs(err error) []string {
 }
 
 func (s *GuestService) dispatchGuest(ctx context.Context, p GuestOperationParams, op domain.Operation, config GuestConfiguration, key, id string, input io.Reader, output io.Writer) (GuestOperationResult, bool, error) {
-	if err := s.validateEffectAuthority(ctx, p, config); err != nil {
-		return GuestOperationResult{}, false, err
+	plan := s.readonlyRetirementPlan(ctx, p, op, config, key)
+	if plan == nil {
+		if err := s.validateEffectAuthority(ctx, p, config); err != nil {
+			return GuestOperationResult{}, false, err
+		}
 	}
 	if err := checkGuestScopes(op); err != nil {
 		return GuestOperationResult{}, false, err
 	}
 	effect := false
-	out, err := s.run(ctx, p, op, config, key, id, input, output, &effect)
+	out, err := s.run(ctx, p, op, config, key, id, input, output, &effect, plan)
 	if err == nil {
 		if persistErr := s.store.write(ctx, id, ".result", out); persistErr != nil {
 			err = ErrGuestUncertain

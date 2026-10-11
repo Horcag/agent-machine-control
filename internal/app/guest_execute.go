@@ -24,7 +24,7 @@ func validGuestFile(file stream.FileIdentity, root stream.RootIdentity) bool {
 	return guestFileRoot(file) == root && file.Volume == root.Volume && len(file.FileID) == 32 && validLabDigest(file.FileID+file.FileID) && file.CreationTime > 0 && file.Owner == root.Owner && validLabDigest(file.SDDLHash) && file.Size >= 0 && validLabDigest(file.SHA256)
 }
 
-func (s *GuestService) run(ctx context.Context, p GuestOperationParams, op domain.Operation, config GuestConfiguration, key, id string, input io.Reader, output io.Writer, effect *bool) (out GuestOperationResult, runErr error) {
+func (s *GuestService) run(ctx context.Context, p GuestOperationParams, op domain.Operation, config GuestConfiguration, key, id string, input io.Reader, output io.Writer, effect *bool, plan *guestRetirementPlan) (out GuestOperationResult, runErr error) {
 	attempted := false
 	var worker guestWorkerRecord
 	defer func() {
@@ -32,7 +32,11 @@ func (s *GuestService) run(ctx context.Context, p GuestOperationParams, op domai
 			runErr = errors.Join(runErr, s.retireWorker(ctx, key, worker))
 		}
 	}()
-	if err := s.checkRetirement(ctx, key, p.Operation != "prepare", guestWorkerRecord{Target: op.Target, Caller: op.Actor.AuthenticatedCaller, Actor: op.Actor.EffectiveActor, Generation: config.Generation}); err != nil {
+	if plan != nil {
+		if !plan.consume(op, config, key) {
+			return out, ErrGuestAuthority
+		}
+	} else if err := s.checkRetirement(ctx, key, p.Operation != "prepare", guestWorkerRecord{Target: op.Target, Caller: op.Actor.AuthenticatedCaller, Actor: op.Actor.EffectiveActor, Generation: config.Generation}); err != nil {
 		return out, err
 	}
 	var err error
