@@ -10,20 +10,21 @@ import (
 )
 
 // Linux compilation checks C# and PowerShell API usage without executing a
-// Windows worker or any native methods. The .NET Framework JSON API is shimmed
-// only in this compiler fixture, never in the production source.
+// native methods. The Windows SID and .NET Framework JSON API are shimmed only
+// in this compiler fixture, never in the production source.
 func TestWorkerSourceCompilesAndBootstrapParses(t *testing.T) {
 	path, err := exec.LookPath("pwsh")
 	if err != nil {
 		t.Skip("Linux PowerShell compiler unavailable")
 	}
 	source := sourceBytes()
+	source = bytes.ReplaceAll(source, []byte("WindowsIdentity.GetCurrent().User.Value"), []byte(`"synthetic-sid"`))
 	source = append(source, []byte(`
 namespace System.Web.Script.Serialization {
  public sealed class JavaScriptSerializer {
   public int MaxJsonLength {get;set;}
-  public string Serialize(object value){throw new System.NotSupportedException();}
-  public T Deserialize<T>(string value){throw new System.NotSupportedException();}
+  public string Serialize(object value){return "{}";}
+  public T Deserialize<T>(string value){return (T)(object)new System.Collections.Generic.Dictionary<string,object>{{"id",""}};}
  }
 }
 namespace AMCStream {
@@ -93,14 +94,17 @@ namespace AMCStream {
    foreach(var key in keys){b[key]="changed";if(Native.Same(a,b))throw new System.Exception("changed identity accepted "+key);b[key]="original";}
    b.Remove("owner");if(Native.Same(a,b))throw new System.Exception("incomplete identity accepted");
 
-   foreach(uint mode in new uint[]{0,1,2,4,8,64})if(!Lifetime.CheckedAsyncMode(0,4,mode))throw new System.Exception("async mode rejected");
-   foreach(uint mode in new uint[]{0x10,0x20,0x11,0x22})if(Lifetime.CheckedAsyncMode(0,4,mode))throw new System.Exception("sync mode accepted as async");
-   foreach(var item in new[]{new object[]{-1,4UL,0u,211u},new object[]{0x103,4UL,0u,214u},new object[]{1,4UL,0u,211u},new object[]{0,3UL,0u,212u},new object[]{0,5UL,0u,212u},new object[]{0,4UL,0x30u,211u}}){
-    uint marker=0;int closedMode=0;
-    var owned=new Lifetime.OwnTermination(delegate(uint code){marker=code;return false;},delegate{closedMode++;});
-    try{Lifetime.RunWorker(delegate{Lifetime.CheckedAsyncMode((int)item[0],(ulong)item[1],(uint)item[2]);},owned);throw new System.Exception("invalid mode accepted");}
-    catch(Lifetime.PipeFailure error){if(error.ExitCode!=(uint)item[3])throw;}
-    owned.Stop(219);if(marker!=(uint)item[3]||closedMode!=1)throw new System.Exception("mode refusal marker overwritten");
+   // Execute the real hello and control reader on supplied streams. An invalid
+   // first request stops before native operations; the adjacent frame survives.
+   using(var suppliedInput=new System.IO.MemoryStream(new byte[]{0,0,0,2,123,125,0,0,0,1,65}))
+   using(var suppliedOutput=new System.IO.MemoryStream()){
+    var run=typeof(Worker).GetMethod("RunOwned",System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Static);
+    try{run.Invoke(null,new object[]{suppliedInput,suppliedOutput,null});throw new System.Exception("invalid request accepted");}
+    catch(System.Reflection.TargetInvocationException error){if(!(error.InnerException is System.IO.InvalidDataException))throw;}
+    if(!suppliedInput.CanRead||!suppliedOutput.CanWrite||suppliedInput.Position!=6)throw new System.Exception("supplied stream closed or replaced");
+    byte[] hello=suppliedOutput.ToArray();
+    if(hello.Length!=6||hello[0]!=0||hello[1]!=0||hello[2]!=0||hello[3]!=2||hello[4]!=123||hello[5]!=125)throw new System.Exception("hello bypassed supplied output");
+    if((string)Worker.ReadControl(suppliedInput,decoded)["id"]!="A"||suppliedInput.Position!=suppliedInput.Length)throw new System.Exception("adjacent frame lost or replayed");
    }
    // Real managed buffering must preserve adjacent binary frames and exact EOF.
    using(var raw=new System.IO.MemoryStream(new byte[]{0,0,0,1,65,0,0,0,1,66,0,0,0,2,67}))
@@ -186,7 +190,7 @@ namespace AMCStream {
 	if err != nil || !strings.Contains(string(output), "compiled") {
 		t.Fatalf("C# declarations: %v %s", err, output)
 	}
-	if len(StartupCommand) > 8192 || len(source) > MaxControl {
+	if len(StartupCommand) > 8191 || len(source) > MaxControl {
 		t.Fatal("startup/source bounds exceeded")
 	}
 	bootstrap := strings.TrimSuffix(strings.SplitN(StartupCommand, `-Command "`, 2)[1], `"`)

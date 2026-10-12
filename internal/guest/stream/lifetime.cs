@@ -29,24 +29,6 @@ internal static class Lifetime {
     [DllImport("kernel32.dll",SetLastError=true)] static extern IntPtr GetStdHandle(int id);
     [DllImport("kernel32.dll",SetLastError=true)] static extern uint GetFileType(IntPtr handle);
     [DllImport("ntdll.dll")] static extern int NtQueryInformationFile(IntPtr handle,out IOStatus status,out PipeLocal pipe,uint length,int type);
-    [DllImport("ntdll.dll")] static extern int NtQueryInformationFile(IntPtr handle,out IOStatus status,out uint mode,uint length,int type);
-    internal static bool CheckedAsyncMode(int status,ulong information,uint mode) {
-        if(status==0x103)throw new PipeFailure(PendingExit);
-        if(status!=0)throw new PipeFailure(QueryFailureExit);
-        if(information!=4)throw new PipeFailure(ShortInformationExit);
-        uint synchronous=mode&0x30u;
-        if(synchronous==0x30u)throw new PipeFailure(QueryFailureExit);
-        return synchronous==0;
-    }
-    internal static FileStream StandardStream(int id,FileAccess access) {
-        IntPtr handle=GetStdHandle(id);
-        if(handle==IntPtr.Zero||handle==new IntPtr(-1)||GetFileType(handle)!=3)throw new PipeFailure(QueryFailureExit);
-        IOStatus status;uint mode;
-        int result=NtQueryInformationFile(handle,out status,out mode,4,16); // FileModeInformation
-        bool async=CheckedAsyncMode(result,status.Information.ToUInt64(),mode);
-        var borrowed=new SafeFileHandle(handle,false);
-        try{return new FileStream(borrowed,access,65536,async);}catch{borrowed.Dispose();throw;}
-    }
     internal static uint PipeState(IntPtr handle) {
         IOStatus status;PipeLocal pipe;
         int result=NtQueryInformationFile(handle,out status,out pipe,40,24); // FilePipeLocalInformation

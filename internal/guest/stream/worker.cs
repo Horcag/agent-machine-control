@@ -70,11 +70,8 @@ public static class Worker {
         identity=new Dictionary<string,object>{{"pid",process.Id},{"birthTicks",process.StartTime.ToUniversalTime().Ticks},{"image",process.MainModule.FileName},{"sid",WindowsIdentity.GetCurrent().User.Value}};
         Control(identity);
         try {
-            // Open the binary streams after the original hello. The inherited
-            // pipe's native mode determines whether overlapped I/O is required.
-            using(var binaryInput=Lifetime.StandardStream(-10,FileAccess.Read))
-            using(var binaryOutput=Lifetime.StandardStream(-11,FileAccess.Write)) {
-            input=binaryInput;output=binaryOutput;
+            // Bootstrap owns these mode-aware streams across source and hello.
+            // Keep their completion-port bindings for every operation frame.
             for(;;) {
                 Dictionary<string,object> request;
                 try{request=ReadControl(input,delegate(string text){return JSON.Deserialize<Dictionary<string,object>>(text);});}
@@ -110,7 +107,6 @@ public static class Worker {
                     var result=Result(id,"failed",0,EmptyDigest,1);
                     result["failure"]=Failure.Metadata(error,stage);Empty(result);Lifetime.DrainTerminal(input);return;
                 }
-            }
             }
         } finally {if(runspace!=null)runspace.Dispose();}
     }

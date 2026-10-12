@@ -5,11 +5,32 @@ import (
 	_ "embed"
 	"encoding/binary"
 	"io"
+	"strings"
 )
 
 // The small fixed command reads source as bytes before any operation frames.
 // Payloads never enter PowerShell command-line encoding or a terminal buffer.
-const StartupCommand = `powershell.exe -NoLogo -NoProfile -NonInteractive -Command "$i=[Console]::OpenStandardInput();[Console]::Error.WriteLine('AMC_STARTUP_V1:1:before_header_read');$h=New-Object byte[] 4;$n=0;while($n -lt 4){$r=$i.Read($h,$n,4-$n);if($r -eq 0){exit 1};$n+=$r};[Array]::Reverse($h);$l=[BitConverter]::ToUInt32($h,0);if($l -gt 262144){exit 1};[Console]::Error.WriteLine('AMC_STARTUP_V1:2:before_source_read');$b=New-Object byte[] $l;$n=0;while($n -lt $l){$r=$i.Read($b,$n,$l-$n);if($r -eq 0){exit 1};$n+=$r};[Console]::Error.WriteLine('AMC_STARTUP_V1:3:before_compile');Add-Type -TypeDefinition ([Text.Encoding]::UTF8.GetString($b)) -ReferencedAssemblies @('System.dll','System.Core.dll','System.Web.Extensions.dll',[Management.Automation.PowerShell].Assembly.Location);[Console]::Error.WriteLine('AMC_STARTUP_V1:4:before_worker_run');[AMCStream.Worker]::Run($i,[Console]::OpenStandardOutput())"`
+var StartupCommand = startupCommand()
+
+//go:embed startup_pipe.ps1
+var startupPipe string
+
+func startupCommand() string {
+	var lines []string
+	for line := range strings.SplitSeq(startupPipe, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			lines = append(lines, line)
+		}
+	}
+	script := strings.Join(lines, " ")
+	command := `powershell.exe -NoLogo -NoProfile -NonInteractive -Command "` + script + `"`
+	// This fixed source must fit the Windows command envelope without escaping.
+	if strings.ContainsAny(script, "\"\r") || len(command) > 8191 {
+		panic("invalid fixed startup command")
+	}
+	return command
+}
 
 //go:embed worker.cs
 var workerSource []byte

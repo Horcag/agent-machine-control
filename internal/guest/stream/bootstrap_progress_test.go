@@ -23,7 +23,7 @@ func TestStartupMarkersUseStderrBeforeEachClosedPhase(t *testing.T) {
 		}
 		previous = at
 	}
-	if strings.Count(StartupCommand, "[Console]::Error.WriteLine(") != 4 || !strings.Contains(StartupCommand, "[Console]::OpenStandardOutput()") {
+	if strings.Count(StartupCommand, "[Console]::Error.WriteLine(") != 4 || !strings.Contains(StartupCommand, "$o=Open-AMCStandardStream -11 ([IO.FileAccess]::Write)") {
 		t.Fatal("startup stream contract changed")
 	}
 }
