@@ -46,7 +46,10 @@ func (s *GuestService) IssueApprovalFor(ctx context.Context, p GuestOperationPar
 	if err != nil {
 		return nil, nil, err
 	}
-	op.Classification = s.session.resolveSafety(ctx, op.Target).Classification
+	op.Classification = s.approvalClassification(ctx, op.Target)
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	if !op.Classification.RequiresApproval() {
 		return nil, nil, fmt.Errorf("%w: guest operation does not require approval", domain.ErrSessionAccessDenied)
 	}
@@ -66,6 +69,21 @@ func (s *GuestService) IssueApprovalFor(ctx context.Context, p GuestOperationPar
 		return nil, &rcpt, err
 	}
 	return sessionApprovalGrant(issued, op), &rcpt, nil
+}
+
+func (s *GuestService) approvalClassification(ctx context.Context, target domain.MachineRef) domain.OperationClass {
+	resolver, ok := s.session.safetyResolver.(approvalClassificationResolver)
+	if !ok {
+		return s.session.resolveSafety(ctx, target).Classification
+	}
+	if locator, err := domain.ParseMachineLocator(string(target)); err == nil {
+		target = domain.MachineRef(locator.VMID)
+	}
+	classification, err := resolver.resolveApprovalClassification(ctx, target)
+	if err != nil {
+		return domain.ClassDestructivePrivileged
+	}
+	return classification
 }
 
 func guestApprovalBeneficiary(issuer domain.ActorContext, beneficiary string) (domain.ActorContext, error) {
