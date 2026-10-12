@@ -54,6 +54,17 @@ func TestDuplexExecNeverAllocatesPTY(t *testing.T) {
 	if _, err = io.ReadFull(ch, got); err != nil || !bytes.Equal(payload, got) {
 		t.Fatal(got, err)
 	}
+	observer, ok := ch.(interface{ StartupStage() string })
+	if !ok {
+		t.Fatal("duplex omitted startup observation")
+	}
+	for observer.StartupStage() != "before_worker_run" {
+		select {
+		case <-ctx.Done():
+			t.Fatal("stderr markers not observed", observer.StartupStage())
+		case <-time.After(time.Millisecond):
+		}
+	}
 	if pty.Load() != 0 || execRequests.Load() != 1 {
 		t.Fatalf("PTY=%d exec=%d", pty.Load(), execRequests.Load())
 	}
@@ -79,6 +90,7 @@ func serveDuplexProtocol(conn net.Conn, config *gossh.ServerConfig, pty, execReq
 			case "exec":
 				execRequests.Add(1)
 				_ = request.Reply(true, nil)
+				_, _ = io.WriteString(channel.Stderr(), "private error/path\nAMC_STARTUP_V1:1:before_header_read\r\nAMC_STARTUP_V1:2:before_source_read\nAMC_STARTUP_V1:3:before_compile\nAMC_STARTUP_V1:4:before_worker_run\n")
 				_, _ = io.Copy(channel, channel)
 				_ = channel.Close()
 				return

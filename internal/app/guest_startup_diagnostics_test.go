@@ -26,7 +26,7 @@ func (f *startupFailureTransport) Prepare(context.Context, domain.MachineRef, st
 
 func TestGuestPrepareStartupDiagnosticPreservesSanitizedReceipt(t *testing.T) {
 	h := newGuestHarness(t)
-	failure := &stream.StartupFailure{Stage: "hello", Category: "eof", OpenMillis: 3, SourceWriteMillis: 4, HelloMillis: 5, ExitObserved: true, ExitCode: 1}
+	failure := &stream.StartupFailure{Stage: "hello", Category: "eof", OpenMillis: 3, SourceWriteMillis: 4, HelloMillis: 5, ExitObserved: true, ExitCode: 1, RemoteStage: "before_compile"}
 	h.service.transport = &startupFailureTransport{guestTestTransport: h.transport, err: fmt.Errorf("private path and credentials: %w", failure)}
 	out, err := h.service.Execute(t.Context(), h.params("prepare", "startup-failed"), nil, nil)
 	copied, ok := errors.AsType[*stream.StartupFailure](err)
@@ -88,6 +88,7 @@ func startupObligationRecords(t *testing.T, h *guestHarness) map[string][]guestW
 func TestGuestStartupDiagnosticRejectsUntrustedFields(t *testing.T) {
 	for _, failure := range []*stream.StartupFailure{
 		{Stage: "private", Category: "eof"}, {Stage: "hello", Category: "private"},
+		{Stage: "hello", Category: "eof", RemoteStage: "private-path"},
 		{Stage: "hello", Category: "eof", HelloMillis: -1}, {Stage: "hello", Category: "eof", ExitObserved: true, ExitCode: -1},
 	} {
 		err := safeGuestTransportError(fmt.Errorf("private: %w", failure))

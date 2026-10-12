@@ -138,3 +138,35 @@ func TestStartupCancellationDuringExitObservationTakesPrecedence(t *testing.T) {
 		t.Fatal("exit observation hid cancellation", err)
 	}
 }
+
+type observedStartupChannel struct {
+	*startupChannel
+	stage string
+}
+
+func (c *observedStartupChannel) StartupStage() string { return c.stage }
+
+func TestStartupFailureRemoteStageIsClosedObservationOnly(t *testing.T) {
+	for _, stage := range []string{"before_compile", "private/path/data"} {
+		channel := &observedStartupChannel{startupChannel: &startupChannel{Reader: bytes.NewReader(nil)}, stage: stage}
+		opener := &startupOpener{channel: channel}
+		client := NewClient(opener)
+		identity, err := client.Prepare(t.Context(), "synthetic", "actor", "generation")
+		_ = client.Close()
+		failure, ok := errors.AsType[*StartupFailure](err)
+		if !ok || !failure.Valid() || identity != (WorkerIdentity{}) || opener.calls != 1 {
+			t.Fatal(identity, err)
+		}
+		if stage == "before_compile" {
+			if failure.RemoteStage != stage || !strings.Contains(failure.Error(), ":remote_stage=before_compile") {
+				t.Fatal(failure)
+			}
+		} else if failure.RemoteStage != "" || strings.Contains(failure.Error(), "private") {
+			t.Fatal("unsafe remote stage retained", failure)
+		}
+	}
+	invalid := &StartupFailure{Stage: "hello", Category: "deadline", RemoteStage: "private/path/data"}
+	if invalid.Valid() || strings.Contains(invalid.Error(), "private") || invalid.Unwrap() != nil {
+		t.Fatal("invalid field escaped", invalid)
+	}
+}

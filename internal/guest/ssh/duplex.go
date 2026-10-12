@@ -28,6 +28,7 @@ type duplex struct {
 	err      error
 	exitDone chan struct{}
 	waitErr  error
+	progress *startupProgress
 }
 
 func (d *duplex) Read(p []byte) (int, error)  { return d.reader.Read(p) }
@@ -37,6 +38,14 @@ func (d *duplex) Close() error {
 	return d.err
 }
 func (d *duplex) Wait() error { <-d.exitDone; return d.waitErr }
+
+// StartupStage is a closed remote observation, not proof of identity or absence.
+func (d *duplex) StartupStage() string {
+	if d.progress == nil {
+		return ""
+	}
+	return d.progress.Stage()
+}
 
 // ExitStatus observes only this channel's cached remote exit, never stderr text.
 func (d *duplex) ExitStatus(ctx context.Context) (int, bool) {
@@ -105,8 +114,9 @@ func (t *NativeTransport) OpenDuplex(ctx context.Context, target domain.MachineR
 	if err != nil {
 		return nil, ErrCommandFailed
 	}
-	// Draining stderr prevents SSH flow-control deadlock without retaining secrets.
-	session.Stderr = io.Discard
+	// Drain all stderr, retaining only exact ordered startup markers, never text.
+	progress := &startupProgress{}
+	session.Stderr = progress
 	if err = session.Start(command); err != nil {
 		return nil, commandError(ctx)
 	}
@@ -118,7 +128,7 @@ func (t *NativeTransport) OpenDuplex(ctx context.Context, target domain.MachineR
 		return nil, commandError(handshakeCtx)
 	}
 	failed = false
-	d := &duplex{reader: stdout, writer: stdin, session: session, client: client, exitDone: make(chan struct{})}
+	d := &duplex{reader: stdout, writer: stdin, session: session, client: client, exitDone: make(chan struct{}), progress: progress}
 	go func() { d.waitErr = session.Wait(); close(d.exitDone) }()
 	return d, nil
 }
