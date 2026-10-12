@@ -19,6 +19,10 @@ func (s *SessionService) evaluatePolicy(ctx context.Context, op domain.Operation
 		return policy.Decision{}, err
 	}
 
+	capabilities := domain.SessionCapabilities()
+	if domain.IsGuestOperation(op.Kind) {
+		capabilities[domain.CapabilityGuestOperation] = struct{}{}
+	}
 	evalInput := policy.EvaluationInput{
 		Operation:               op,
 		Now:                     now,
@@ -26,7 +30,7 @@ func (s *SessionService) evaluatePolicy(ctx context.Context, op domain.Operation
 		RollbackState:           rollbackState,
 		Approval:                approval,
 		RollbackPolicy:          policy.RollbackPolicyEscalateToDestructive,
-		AvailableCapabilities:   domain.SessionCapabilities(),
+		AvailableCapabilities:   capabilities,
 		SensitiveEvidenceScopes: domain.NewScopeSet("evidence:sensitive", policy.DefaultSensitiveEvidenceScope),
 	}
 
@@ -308,6 +312,9 @@ func (s *SessionService) admitSessionMutation(
 	now := s.now()
 	safety := s.resolveSafety(ctx, op.Target)
 	op.Classification = safety.Classification
+	if domain.IsGuestOperation(op.Kind) && op.Classification != domain.ClassReversibleMutation && op.Classification != domain.ClassDestructivePrivileged {
+		return nil, nil, errors.Join(ErrGuestAuthority, releaseLease())
+	}
 	fp, idFp, err := s.validateAndFingerprint(op)
 	if err != nil {
 		return nil, nil, errors.Join(err, releaseLease())
@@ -430,7 +437,7 @@ func (s *SessionService) coordinateSessionMutation(
 		return sessionMutationResult{}, nil, err
 	}
 
-	result, rcpt, mutErr := s.executeMutation(ctx, admitted.op, admitted.fp, admitted.idFp, admitted.safety, execute)
+	result, rcpt, mutErr := s.executeMutation(withGuestAdmission(ctx, admitted), admitted.op, admitted.fp, admitted.idFp, admitted.safety, execute)
 	mutErr = errors.Join(mutErr, s.releaseUnexecutedApproval(ctx, admitted, approval, result))
 	releaseErr := admitted.releaseLease()
 

@@ -344,6 +344,8 @@ func (a *App) RunWithContext(ctx context.Context, args []string, stdout, stderr 
 			stderr,
 		)
 
+	case "guest":
+		return runGuest(ctx, a.prompter, directMode, stateDir, cmdArgs, stdout, stderr)
 	case "session":
 		return runSession(
 			ctx,

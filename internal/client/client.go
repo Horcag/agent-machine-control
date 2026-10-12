@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -38,9 +39,10 @@ func WithHTTPClient(c *http.Client) Option {
 
 // Client provides typed HTTP communication with the amcd daemon.
 type Client struct {
-	endpoint   string
-	token      string
-	httpClient *http.Client
+	guestBeforePublication func(*os.File) error
+	endpoint               string
+	token                  string
+	httpClient             *http.Client
 }
 
 // New creates a new Client configured with the target endpoint and bearer token.

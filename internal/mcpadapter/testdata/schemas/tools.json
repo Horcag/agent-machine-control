@@ -1703,6 +1703,7 @@
             },
             "response": {
               "additionalProperties": false,
+              "description": "Guest helper response for semantic actions only; absent for native input",
               "properties": {
                 "clipboard": {
                   "additionalProperties": false,
@@ -1931,8 +1932,7 @@
               "type": [
                 "null",
                 "object"
-              ],
-              "description": "Guest helper response for semantic actions only; absent for native input"
+              ]
             }
           },
           "required": [
@@ -2348,6 +2348,1336 @@
         "message",
         "capabilities",
         "observed_at"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Execute an explicit local UTF-8 script and publish verified output to a new local destination",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": {
+          "type": "string"
+        },
+        "artifact_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "deadline": {
+          "description": "Exact canonical RFC3339Nano operation deadline",
+          "type": "string"
+        },
+        "destination": {
+          "description": "Explicit new local output path",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "type": "string"
+        },
+        "max_output": {
+          "type": "integer"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "source": {
+          "description": "Explicit local payload path, never sent to the guest",
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "max_output",
+        "reason",
+        "idempotency_key",
+        "deadline"
+      ],
+      "type": "object"
+    },
+    "name": "guest_exec",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "artifacts": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "sha256": {
+                "type": "string"
+              },
+              "size": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "size",
+              "sha256"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "cached_receipt": {
+          "type": "boolean"
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "receipt": {
+          "additionalProperties": false,
+          "properties": {
+            "Actor": {
+              "type": "string"
+            },
+            "Class": {
+              "type": "string"
+            },
+            "CompletedAt": {
+              "type": "string"
+            },
+            "EffectiveBackend": {
+              "type": "string"
+            },
+            "EvidenceRefs": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "Fingerprint": {
+              "type": "string"
+            },
+            "IdempotencyFingerprint": {
+              "type": "string"
+            },
+            "IdempotencyKey": {
+              "type": "string"
+            },
+            "ObservationType": {
+              "type": "string"
+            },
+            "OperationKind": {
+              "type": "string"
+            },
+            "Outcome": {
+              "additionalProperties": false,
+              "properties": {
+                "ErrorCategory": {
+                  "type": "string"
+                },
+                "ErrorMessage": {
+                  "type": "string"
+                },
+                "ExitCode": {
+                  "type": "integer"
+                },
+                "Status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "Status",
+                "ExitCode",
+                "ErrorCategory",
+                "ErrorMessage"
+              ],
+              "type": "object"
+            },
+            "ReceiptID": {
+              "type": "string"
+            },
+            "RedactionStatus": {
+              "type": "string"
+            },
+            "RollbackRef": {
+              "type": "string"
+            },
+            "StartedAt": {
+              "type": "string"
+            },
+            "Target": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "ReceiptID",
+            "OperationKind",
+            "Fingerprint",
+            "IdempotencyFingerprint",
+            "IdempotencyKey",
+            "Actor",
+            "Target",
+            "Class",
+            "EffectiveBackend",
+            "StartedAt",
+            "CompletedAt",
+            "Outcome",
+            "ObservationType",
+            "EvidenceRefs",
+            "RollbackRef",
+            "RedactionStatus"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "removed": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "absent": {
+                "type": "boolean"
+              },
+              "accepted": {
+                "type": "boolean"
+              },
+              "artifact_id": {
+                "type": "string"
+              },
+              "attempted": {
+                "type": "boolean"
+              },
+              "status": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "artifact_id",
+              "attempted",
+              "accepted",
+              "absent",
+              "status"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer"
+        },
+        "worker": {
+          "additionalProperties": false,
+          "properties": {
+            "birthTicks": {
+              "type": "integer"
+            },
+            "image": {
+              "type": "string"
+            },
+            "pid": {
+              "type": "integer"
+            },
+            "sid": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "pid",
+            "birthTicks",
+            "image",
+            "sid"
+          ],
+          "type": "object"
+        },
+        "worker_record_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "cached_receipt",
+        "worker",
+        "size",
+        "sha256",
+        "exit_code"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Download an opaque owned artifact to a new local destination after verification",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": {
+          "type": "string"
+        },
+        "artifact_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "deadline": {
+          "description": "Exact canonical RFC3339Nano operation deadline",
+          "type": "string"
+        },
+        "destination": {
+          "description": "Explicit new local output path",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "type": "string"
+        },
+        "max_output": {
+          "type": "integer"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "source": {
+          "description": "Explicit local payload path, never sent to the guest",
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "max_output",
+        "reason",
+        "idempotency_key",
+        "deadline"
+      ],
+      "type": "object"
+    },
+    "name": "guest_get",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "artifacts": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "sha256": {
+                "type": "string"
+              },
+              "size": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "size",
+              "sha256"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "cached_receipt": {
+          "type": "boolean"
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "receipt": {
+          "additionalProperties": false,
+          "properties": {
+            "Actor": {
+              "type": "string"
+            },
+            "Class": {
+              "type": "string"
+            },
+            "CompletedAt": {
+              "type": "string"
+            },
+            "EffectiveBackend": {
+              "type": "string"
+            },
+            "EvidenceRefs": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "Fingerprint": {
+              "type": "string"
+            },
+            "IdempotencyFingerprint": {
+              "type": "string"
+            },
+            "IdempotencyKey": {
+              "type": "string"
+            },
+            "ObservationType": {
+              "type": "string"
+            },
+            "OperationKind": {
+              "type": "string"
+            },
+            "Outcome": {
+              "additionalProperties": false,
+              "properties": {
+                "ErrorCategory": {
+                  "type": "string"
+                },
+                "ErrorMessage": {
+                  "type": "string"
+                },
+                "ExitCode": {
+                  "type": "integer"
+                },
+                "Status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "Status",
+                "ExitCode",
+                "ErrorCategory",
+                "ErrorMessage"
+              ],
+              "type": "object"
+            },
+            "ReceiptID": {
+              "type": "string"
+            },
+            "RedactionStatus": {
+              "type": "string"
+            },
+            "RollbackRef": {
+              "type": "string"
+            },
+            "StartedAt": {
+              "type": "string"
+            },
+            "Target": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "ReceiptID",
+            "OperationKind",
+            "Fingerprint",
+            "IdempotencyFingerprint",
+            "IdempotencyKey",
+            "Actor",
+            "Target",
+            "Class",
+            "EffectiveBackend",
+            "StartedAt",
+            "CompletedAt",
+            "Outcome",
+            "ObservationType",
+            "EvidenceRefs",
+            "RollbackRef",
+            "RedactionStatus"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "removed": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "absent": {
+                "type": "boolean"
+              },
+              "accepted": {
+                "type": "boolean"
+              },
+              "artifact_id": {
+                "type": "string"
+              },
+              "attempted": {
+                "type": "boolean"
+              },
+              "status": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "artifact_id",
+              "attempted",
+              "accepted",
+              "absent",
+              "status"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer"
+        },
+        "worker": {
+          "additionalProperties": false,
+          "properties": {
+            "birthTicks": {
+              "type": "integer"
+            },
+            "image": {
+              "type": "string"
+            },
+            "pid": {
+              "type": "integer"
+            },
+            "sid": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "pid",
+            "birthTicks",
+            "image",
+            "sid"
+          ],
+          "type": "object"
+        },
+        "worker_record_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "cached_receipt",
+        "worker",
+        "size",
+        "sha256",
+        "exit_code"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Explicitly prepare the enrolled guest worker using server-provisioned workspace identity",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": {
+          "type": "string"
+        },
+        "artifact_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "deadline": {
+          "description": "Exact canonical RFC3339Nano operation deadline",
+          "type": "string"
+        },
+        "destination": {
+          "description": "Explicit new local output path",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "type": "string"
+        },
+        "max_output": {
+          "type": "integer"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "source": {
+          "description": "Explicit local payload path, never sent to the guest",
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "max_output",
+        "reason",
+        "idempotency_key",
+        "deadline"
+      ],
+      "type": "object"
+    },
+    "name": "guest_prepare",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "artifacts": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "sha256": {
+                "type": "string"
+              },
+              "size": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "size",
+              "sha256"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "cached_receipt": {
+          "type": "boolean"
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "receipt": {
+          "additionalProperties": false,
+          "properties": {
+            "Actor": {
+              "type": "string"
+            },
+            "Class": {
+              "type": "string"
+            },
+            "CompletedAt": {
+              "type": "string"
+            },
+            "EffectiveBackend": {
+              "type": "string"
+            },
+            "EvidenceRefs": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "Fingerprint": {
+              "type": "string"
+            },
+            "IdempotencyFingerprint": {
+              "type": "string"
+            },
+            "IdempotencyKey": {
+              "type": "string"
+            },
+            "ObservationType": {
+              "type": "string"
+            },
+            "OperationKind": {
+              "type": "string"
+            },
+            "Outcome": {
+              "additionalProperties": false,
+              "properties": {
+                "ErrorCategory": {
+                  "type": "string"
+                },
+                "ErrorMessage": {
+                  "type": "string"
+                },
+                "ExitCode": {
+                  "type": "integer"
+                },
+                "Status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "Status",
+                "ExitCode",
+                "ErrorCategory",
+                "ErrorMessage"
+              ],
+              "type": "object"
+            },
+            "ReceiptID": {
+              "type": "string"
+            },
+            "RedactionStatus": {
+              "type": "string"
+            },
+            "RollbackRef": {
+              "type": "string"
+            },
+            "StartedAt": {
+              "type": "string"
+            },
+            "Target": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "ReceiptID",
+            "OperationKind",
+            "Fingerprint",
+            "IdempotencyFingerprint",
+            "IdempotencyKey",
+            "Actor",
+            "Target",
+            "Class",
+            "EffectiveBackend",
+            "StartedAt",
+            "CompletedAt",
+            "Outcome",
+            "ObservationType",
+            "EvidenceRefs",
+            "RollbackRef",
+            "RedactionStatus"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "removed": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "absent": {
+                "type": "boolean"
+              },
+              "accepted": {
+                "type": "boolean"
+              },
+              "artifact_id": {
+                "type": "string"
+              },
+              "attempted": {
+                "type": "boolean"
+              },
+              "status": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "artifact_id",
+              "attempted",
+              "accepted",
+              "absent",
+              "status"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer"
+        },
+        "worker": {
+          "additionalProperties": false,
+          "properties": {
+            "birthTicks": {
+              "type": "integer"
+            },
+            "image": {
+              "type": "string"
+            },
+            "pid": {
+              "type": "integer"
+            },
+            "sid": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "pid",
+            "birthTicks",
+            "image",
+            "sid"
+          ],
+          "type": "object"
+        },
+        "worker_record_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "cached_receipt",
+        "worker",
+        "size",
+        "sha256",
+        "exit_code"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Stream an explicit local source file and return an opaque guest ownership reference",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": {
+          "type": "string"
+        },
+        "artifact_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "deadline": {
+          "description": "Exact canonical RFC3339Nano operation deadline",
+          "type": "string"
+        },
+        "destination": {
+          "description": "Explicit new local output path",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "type": "string"
+        },
+        "max_output": {
+          "type": "integer"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "source": {
+          "description": "Explicit local payload path, never sent to the guest",
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "max_output",
+        "reason",
+        "idempotency_key",
+        "deadline"
+      ],
+      "type": "object"
+    },
+    "name": "guest_put",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "artifacts": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "sha256": {
+                "type": "string"
+              },
+              "size": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "size",
+              "sha256"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "cached_receipt": {
+          "type": "boolean"
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "receipt": {
+          "additionalProperties": false,
+          "properties": {
+            "Actor": {
+              "type": "string"
+            },
+            "Class": {
+              "type": "string"
+            },
+            "CompletedAt": {
+              "type": "string"
+            },
+            "EffectiveBackend": {
+              "type": "string"
+            },
+            "EvidenceRefs": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "Fingerprint": {
+              "type": "string"
+            },
+            "IdempotencyFingerprint": {
+              "type": "string"
+            },
+            "IdempotencyKey": {
+              "type": "string"
+            },
+            "ObservationType": {
+              "type": "string"
+            },
+            "OperationKind": {
+              "type": "string"
+            },
+            "Outcome": {
+              "additionalProperties": false,
+              "properties": {
+                "ErrorCategory": {
+                  "type": "string"
+                },
+                "ErrorMessage": {
+                  "type": "string"
+                },
+                "ExitCode": {
+                  "type": "integer"
+                },
+                "Status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "Status",
+                "ExitCode",
+                "ErrorCategory",
+                "ErrorMessage"
+              ],
+              "type": "object"
+            },
+            "ReceiptID": {
+              "type": "string"
+            },
+            "RedactionStatus": {
+              "type": "string"
+            },
+            "RollbackRef": {
+              "type": "string"
+            },
+            "StartedAt": {
+              "type": "string"
+            },
+            "Target": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "ReceiptID",
+            "OperationKind",
+            "Fingerprint",
+            "IdempotencyFingerprint",
+            "IdempotencyKey",
+            "Actor",
+            "Target",
+            "Class",
+            "EffectiveBackend",
+            "StartedAt",
+            "CompletedAt",
+            "Outcome",
+            "ObservationType",
+            "EvidenceRefs",
+            "RollbackRef",
+            "RedactionStatus"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "removed": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "absent": {
+                "type": "boolean"
+              },
+              "accepted": {
+                "type": "boolean"
+              },
+              "artifact_id": {
+                "type": "string"
+              },
+              "attempted": {
+                "type": "boolean"
+              },
+              "status": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "artifact_id",
+              "attempted",
+              "accepted",
+              "absent",
+              "status"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer"
+        },
+        "worker": {
+          "additionalProperties": false,
+          "properties": {
+            "birthTicks": {
+              "type": "integer"
+            },
+            "image": {
+              "type": "string"
+            },
+            "pid": {
+              "type": "integer"
+            },
+            "sid": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "pid",
+            "birthTicks",
+            "image",
+            "sid"
+          ],
+          "type": "object"
+        },
+        "worker_record_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "cached_receipt",
+        "worker",
+        "size",
+        "sha256",
+        "exit_code"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Remove only artifacts identified by immutable opaque ownership references",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": {
+          "type": "string"
+        },
+        "artifact_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "deadline": {
+          "description": "Exact canonical RFC3339Nano operation deadline",
+          "type": "string"
+        },
+        "destination": {
+          "description": "Explicit new local output path",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "type": "string"
+        },
+        "max_output": {
+          "type": "integer"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "source": {
+          "description": "Explicit local payload path, never sent to the guest",
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "max_output",
+        "reason",
+        "idempotency_key",
+        "deadline"
+      ],
+      "type": "object"
+    },
+    "name": "guest_remove_owned",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "artifacts": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "sha256": {
+                "type": "string"
+              },
+              "size": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "size",
+              "sha256"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "cached_receipt": {
+          "type": "boolean"
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "receipt": {
+          "additionalProperties": false,
+          "properties": {
+            "Actor": {
+              "type": "string"
+            },
+            "Class": {
+              "type": "string"
+            },
+            "CompletedAt": {
+              "type": "string"
+            },
+            "EffectiveBackend": {
+              "type": "string"
+            },
+            "EvidenceRefs": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "Fingerprint": {
+              "type": "string"
+            },
+            "IdempotencyFingerprint": {
+              "type": "string"
+            },
+            "IdempotencyKey": {
+              "type": "string"
+            },
+            "ObservationType": {
+              "type": "string"
+            },
+            "OperationKind": {
+              "type": "string"
+            },
+            "Outcome": {
+              "additionalProperties": false,
+              "properties": {
+                "ErrorCategory": {
+                  "type": "string"
+                },
+                "ErrorMessage": {
+                  "type": "string"
+                },
+                "ExitCode": {
+                  "type": "integer"
+                },
+                "Status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "Status",
+                "ExitCode",
+                "ErrorCategory",
+                "ErrorMessage"
+              ],
+              "type": "object"
+            },
+            "ReceiptID": {
+              "type": "string"
+            },
+            "RedactionStatus": {
+              "type": "string"
+            },
+            "RollbackRef": {
+              "type": "string"
+            },
+            "StartedAt": {
+              "type": "string"
+            },
+            "Target": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "ReceiptID",
+            "OperationKind",
+            "Fingerprint",
+            "IdempotencyFingerprint",
+            "IdempotencyKey",
+            "Actor",
+            "Target",
+            "Class",
+            "EffectiveBackend",
+            "StartedAt",
+            "CompletedAt",
+            "Outcome",
+            "ObservationType",
+            "EvidenceRefs",
+            "RollbackRef",
+            "RedactionStatus"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "removed": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "absent": {
+                "type": "boolean"
+              },
+              "accepted": {
+                "type": "boolean"
+              },
+              "artifact_id": {
+                "type": "string"
+              },
+              "attempted": {
+                "type": "boolean"
+              },
+              "status": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "artifact_id",
+              "attempted",
+              "accepted",
+              "absent",
+              "status"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer"
+        },
+        "worker": {
+          "additionalProperties": false,
+          "properties": {
+            "birthTicks": {
+              "type": "integer"
+            },
+            "image": {
+              "type": "string"
+            },
+            "pid": {
+              "type": "integer"
+            },
+            "sid": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "pid",
+            "birthTicks",
+            "image",
+            "sid"
+          ],
+          "type": "object"
+        },
+        "worker_record_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "cached_receipt",
+        "worker",
+        "size",
+        "sha256",
+        "exit_code"
       ],
       "type": "object"
     }

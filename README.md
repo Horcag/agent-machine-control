@@ -74,6 +74,10 @@ operations, receipts, audit records, and persistent guest SSH/PTTY sessions. See
 `session open`, `read`, `write`, `control`, `wait`, `list`, `show`, `close`, and operator-only
 `session approve` commands.
 
+Whole guest file transfers, bounded script execution and owned-file cleanup use a persistent binary
+worker through the same daemon service. See [Whole guest operations](docs/guest-operations.md) for
+workspace provisioning, ownership references, approval and completion contracts.
+
 Guest window/UIA actions, cursor and clipboard access, application launch, bounded GIF recordings,
 and operator-enabled agent lab sessions are available through `desktop_observe`, `desktop_act`,
 and `console_record`. See [Guest desktop control](docs/guest-desktop.md) for the interaction loop
@@ -154,7 +158,7 @@ The repository does not claim live Windows acceptance for these capabilities.
 
 ## Build the bootstrap
 
-Go 1.26 or newer is required.
+Go 1.26.9 or newer is required.
 
 ```sh
 go test ./...

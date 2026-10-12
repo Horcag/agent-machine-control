@@ -42,37 +42,39 @@ var (
 
 // Server is the HTTP/1.1 daemon server for Agent Machine Control.
 type Server struct {
-	cfg               Config
-	stateDir          *statedir.StateDir
-	authStore         *auth.Store
-	leaseMgr          *lease.Manager
-	auditStore        *audit.Store
-	receiptStore      *receipt.Store
-	approvalStore     *approval.Store
-	recoveryService   *app.RecoveryService
-	consoleService    *app.ConsoleService
-	desktopService    *app.DesktopService
-	targetService     *app.TargetService
-	targetCoordinator *app.TargetCoordinator
-	eventHub          *events.Hub
-	opMgr             *operations.Manager
-	sessionMgr        *sessions.Manager
-	sessionService    *app.SessionService
-	singletonLock     *SingletonLock
-	httpServer        *http.Server
-	listener          net.Listener
-	endpoint          string
-	startedAt         time.Time
-	pid               int
-	runtimeID         string
-	startTime         string
-	shutdownChan      chan struct{}
-	shutdownOnce      sync.Once
-	admissionClosed   atomic.Bool
-	semaphore         chan struct{}
-	identityProvider  lease.IdentityProvider
-	shutdownHTTP      func(context.Context) error
-	closeHTTP         func() error
+	guestService          *app.GuestService
+	cfg                   Config
+	stateDir              *statedir.StateDir
+	authStore             *auth.Store
+	leaseMgr              *lease.Manager
+	auditStore            *audit.Store
+	receiptStore          *receipt.Store
+	approvalStore         *approval.Store
+	recoveryService       *app.RecoveryService
+	consoleService        *app.ConsoleService
+	desktopService        *app.DesktopService
+	targetService         *app.TargetService
+	targetCoordinator     *app.TargetCoordinator
+	eventHub              *events.Hub
+	opMgr                 *operations.Manager
+	sessionMgr            *sessions.Manager
+	sessionService        *app.SessionService
+	singletonLock         *SingletonLock
+	httpServer            *http.Server
+	listener              net.Listener
+	endpoint              string
+	startedAt             time.Time
+	pid                   int
+	runtimeID             string
+	startTime             string
+	shutdownChan          chan struct{}
+	shutdownOnce          sync.Once
+	admissionClosed       atomic.Bool
+	guestShutdownComplete atomic.Bool
+	semaphore             chan struct{}
+	identityProvider      lease.IdentityProvider
+	shutdownHTTP          func(context.Context) error
+	closeHTTP             func() error
 
 	afterEarlyMutationAdmissionCheck func()
 
@@ -201,6 +203,7 @@ func NewServer(cfg Config) (*Server, error) {
 		}))
 		srv.desktopService = app.NewDesktopService(guestdesktop.New(guestssh.NewTransport(keyProvider)), srv.consoleService)
 	}
+	srv.initializeGuestService(sessionSvc, targetService, keyProvider)
 	srv.setupHTTPServer()
 	return srv, nil
 }
@@ -279,6 +282,10 @@ func (s *Server) dispatchV1(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) dispatchOtherV1(w http.ResponseWriter, r *http.Request, path string) {
 	switch {
+	case path == "guest/operations":
+		s.handleGuestOperation(w, r)
+	case path == "guest/approvals":
+		s.handleGuestApproval(w, r)
 	case strings.HasPrefix(path, "desktop/"):
 		s.dispatchDesktop(w, r, path)
 	case path == "audit":
