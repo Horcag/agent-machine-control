@@ -18,7 +18,7 @@ func (s *Server) dispatchConsole(w http.ResponseWriter, r *http.Request, path st
 		writeError(w, http.StatusUnauthorized, "unauthorized", "unauthenticated caller")
 		return
 	}
-	if s.consoleService == nil {
+	if s.consoleService == nil || s.desktopService == nil {
 		writeError(w, http.StatusNotImplemented, "capability_unavailable", "console provider unavailable")
 		return
 	}

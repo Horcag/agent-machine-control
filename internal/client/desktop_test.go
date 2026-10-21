@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Horcag/agent-machine-control/internal/app"
+	"github.com/Horcag/agent-machine-control/internal/daemon"
 	"github.com/Horcag/agent-machine-control/internal/domain"
 )
 
@@ -56,6 +57,11 @@ func TestDesktopClientAuthenticatedContracts(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++
 				assertDesktopClientRequest(t, r, tc.path, tc.request)
+				if tc.name == "issue" || tc.name == "status" || tc.name == "active" {
+					if r.Header.Get(daemon.LabGrantModeHeader) != "1" {
+						t.Error("lab response extension was not negotiated")
+					}
+				}
 				if err := json.NewEncoder(w).Encode(tc.response); err != nil {
 					t.Error(err)
 				}
