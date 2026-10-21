@@ -3,8 +3,8 @@ package app
 import (
 	"context"
 	"github.com/Horcag/agent-machine-control/internal/domain"
+	"github.com/Horcag/agent-machine-control/internal/statedir"
 	"github.com/Horcag/agent-machine-control/internal/target"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -47,11 +47,16 @@ func persistentGuestAuthority(t *testing.T, h *guestHarness) (*ConsoleService, d
 	if err := inventory.ApplySnapshot(HostSnapshot{HostID: domain.LocalHostID, Health: HostHealthObserved, Machines: []domain.MachineObservation{observed}}); err != nil {
 		t.Fatal(err)
 	}
-	state := t.TempDir()
-	if err := os.Mkdir(filepath.Join(state, "targets"), 0700); err != nil {
+	state, err := statedir.Resolve(filepath.Join(t.TempDir(), "state"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := target.NewStore(filepath.Join(state, "targets"))
+	// Use the canonical state initializer so Windows creates the directory with
+	// the current user owner and protected DACL from the start.
+	if err := state.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := target.NewStore(state.TargetsDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +74,7 @@ func persistentGuestAuthority(t *testing.T, h *guestHarness) (*ConsoleService, d
 	recovery := &RecoveryService{backend: &guestApprovalBackend{}, leaseManager: coordinator.leaseMgr, auditStore: coordinator.auditStore, receiptStore: coordinator.receiptStore, approvalStore: coordinator.approvalStore}
 	epoch := strings.Repeat("a", 64)
 	options := []ConsoleOption{WithConsoleLabEnrollmentIdentity(func(_ context.Context, _ domain.MachineRef) (string, error) { return epoch, nil })}
-	authority := NewConsoleService(nil, recovery, targets, filepath.Join(state, "console-frames"), options...)
+	authority := NewConsoleService(nil, recovery, targets, filepath.Join(state.Root(), "console-frames"), options...)
 	scopes := domain.NewScopeSet(domain.ScopeOperationAdmin)
 	operator, err := domain.NewActorContext("operator:synthetic", "operator:synthetic", scopes, scopes)
 	if err != nil {
