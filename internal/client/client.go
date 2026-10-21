@@ -112,6 +112,10 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, o
 	}
 
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.token))
+	switch path {
+	case "/v1/desktop/lab/issue", "/v1/desktop/lab/status", "/v1/desktop/lab/active":
+		req.Header.Set(daemon.LabGrantModeHeader, "1")
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

@@ -64,6 +64,7 @@ type MutationRequest struct {
 
 // RecoveryService orchestrates in-process direct recovery operations, policy, leases, and receipts.
 type RecoveryService struct {
+	labAuthority   *ConsoleService
 	backend        Backend
 	targetResolver interface {
 		ResolveTarget(context.Context, string) (TargetResolution, error)

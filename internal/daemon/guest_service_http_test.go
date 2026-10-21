@@ -35,6 +35,9 @@ type guestHTTPServiceFixture struct {
 	files      map[string]stream.FileIdentity
 	data       map[string][]byte
 	operations []string
+	configErr  error
+	privileged bool
+	prepareErr error
 }
 
 func (f *guestHTTPServiceFixture) ResolveTarget(context.Context, string) (app.TargetResolution, error) {
@@ -42,13 +45,17 @@ func (f *guestHTTPServiceFixture) ResolveTarget(context.Context, string) (app.Ta
 	return app.TargetResolution{Locator: domain.MachineLocator{HostID: domain.LocalHostID, VMID: guid}, ProviderVMID: guid}, nil
 }
 func (f *guestHTTPServiceFixture) Current(_ context.Context, _ domain.MachineRef, caller domain.ActorContext) (app.GuestConfiguration, error) {
-	return app.GuestConfiguration{Generation: "synthetic-generation", Caller: caller, WorkspaceIdentity: f.root}, nil
+	return app.GuestConfiguration{Generation: "synthetic-generation", Caller: caller, WorkspaceIdentity: f.root}, f.configErr
 }
 func (f *guestHTTPServiceFixture) ResolveSafety(context.Context, domain.MachineRef) (app.SafetyResolution, error) {
-	return app.SafetyResolution{Classification: domain.ClassReversibleMutation, Contained: true, RollbackRef: "synthetic-checkpoint", RollbackState: policy.RollbackState{Available: true, Verified: true, CheckpointID: "synthetic-checkpoint"}}, nil
+	classification := domain.ClassReversibleMutation
+	if f.privileged {
+		classification = domain.ClassDestructivePrivileged
+	}
+	return app.SafetyResolution{Classification: classification, Contained: true, RollbackRef: "synthetic-checkpoint", RollbackState: policy.RollbackState{Available: true, Verified: true, CheckpointID: "synthetic-checkpoint"}}, nil
 }
 func (f *guestHTTPServiceFixture) Prepare(context.Context, domain.MachineRef, string, string) (stream.WorkerIdentity, error) {
-	return f.worker, nil
+	return f.worker, f.prepareErr
 }
 func (f *guestHTTPServiceFixture) Retire(domain.MachineRef, string, string) error { return nil }
 func (f *guestHTTPServiceFixture) Execute(_ context.Context, _ domain.MachineRef, _ string, _ string, p stream.Request, input io.Reader, output io.Writer) (stream.Result, error) {
@@ -122,6 +129,25 @@ func TestGuestHTTPAllOperationsReachRealSharedService(t *testing.T) {
 }
 func invokeGuestHTTPFixture(t *testing.T, endpoint, token string, p app.GuestOperationParams, payload []byte) (GuestFinal, []byte) {
 	t.Helper()
+	response := guestHTTPFixtureResponse(t, endpoint, token, p, payload, true)
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trailer, err := base64.RawStdEncoding.DecodeString(response.Trailer.Get(GuestResultTrailer))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var final GuestFinal
+	if err = json.Unmarshal(trailer, &final); err != nil {
+		t.Fatalf("final trailer: %v status=%d body=%q", err, response.StatusCode, body)
+	}
+	return final, body
+}
+
+func guestHTTPFixtureResponse(t *testing.T, endpoint, token string, p app.GuestOperationParams, payload []byte, typed bool) *http.Response {
+	t.Helper()
 	metadata, err := json.Marshal(p)
 	if err != nil {
 		t.Fatal(err)
@@ -139,24 +165,14 @@ func invokeGuestHTTPFixture(t *testing.T, endpoint, token string, p app.GuestOpe
 	}
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Content-Type", GuestContentType)
+	if typed {
+		request.Header.Set(GuestErrorProtocolHeader, GuestErrorProtocolVersion)
+	}
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close()
-	body, err := io.ReadAll(response.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	trailer, err := base64.RawStdEncoding.DecodeString(response.Trailer.Get(GuestResultTrailer))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var final GuestFinal
-	if err = json.Unmarshal(trailer, &final); err != nil {
-		t.Fatalf("final trailer: %v status=%d body=%q", err, response.StatusCode, body)
-	}
-	return final, body
+	return response
 }
 
 func guestHTTPCase(operation, artifactID string) (app.GuestOperationParams, []byte) {

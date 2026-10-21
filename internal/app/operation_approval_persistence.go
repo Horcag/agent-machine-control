@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/domain"
@@ -60,7 +61,7 @@ func operationApprovalGrant(issued domain.Approval, approved domain.Operation) *
 
 // LoadOperationApprovalReference resolves immutable authority after the exact operation is canonical.
 func (s *RecoveryService) LoadOperationApprovalReference(ctx context.Context, op domain.Operation, approvalID string) (*domain.Approval, error) {
-	if s == nil || s.approvalStore == nil || approvalID == "" {
+	if s == nil || s.approvalStore == nil || approvalID == "" || strings.HasPrefix(approvalID, ConsoleLabApprovalPrefix) {
 		return nil, ErrInvalidOperationApprovalReference
 	}
 	if err := domain.ValidateApprovalID(approvalID); err != nil {

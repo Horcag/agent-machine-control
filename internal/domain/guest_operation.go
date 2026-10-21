@@ -31,25 +31,22 @@ func validateGuestOperationParams(params map[string]any) error {
 		return ErrNonCanonicalParameter
 	}
 	size, err := guestParameterInt(params["size"])
-	if err != nil || size < 0 || int64(size) > 1<<40 {
+	if err != nil {
 		return ErrNonCanonicalParameter
 	}
 	limit, err := guestParameterInt(params["max_output"])
-	if err != nil || limit < 0 || int64(limit) > 1<<40 {
+	if err != nil {
 		return ErrNonCanonicalParameter
 	}
 	ids, ok := params["artifact_ids"].([]string)
-	if !ok || len(ids) > 128 {
+	if !ok {
 		return ErrNonCanonicalParameter
-	}
-	if err := validateGuestArtifactIDs(ids); err != nil {
-		return err
 	}
 	op, ok := params["operation"].(string)
 	if !ok || !IsGuestOperation(OperationKind("guest."+op)) {
 		return ErrNonCanonicalParameter
 	}
-	return validateGuestShape(op, size, limit, len(ids))
+	return ValidateGuestOperationShape(op, size, limit, ids)
 }
 
 func validateGuestArtifactIDs(ids []string) error {
@@ -61,6 +58,17 @@ func validateGuestArtifactIDs(ids []string) error {
 		seen[id] = true
 	}
 	return nil
+}
+
+// ValidateGuestOperationShape applies the shared bounds and artifact contract before I/O.
+func ValidateGuestOperationShape(op string, size, limit int64, ids []string) error {
+	if size < 0 || size > 1<<40 || limit < 0 || limit > 1<<40 || len(ids) > 128 {
+		return ErrNonCanonicalParameter
+	}
+	if err := validateGuestArtifactIDs(ids); err != nil {
+		return err
+	}
+	return validateGuestShape(op, size, limit, len(ids))
 }
 
 func validateGuestShape(op string, size, limit int64, number int) error {

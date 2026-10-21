@@ -43,7 +43,7 @@ func TestConsoleLabActiveDiscoverySelectsOwnNewestAuthority(t *testing.T) {
 	}
 }
 
-func TestConsoleLabActiveDiscoveryRejectsStaleAndOversizedDirectory(t *testing.T) {
+func TestConsoleLabActiveDiscoveryRejectsStaleAndStreamsHistoricalDirectory(t *testing.T) {
 	f := newConsoleFixture(t)
 	_, epoch := configureLab(f)
 	issueLab(t, f)
@@ -62,7 +62,7 @@ func TestConsoleLabActiveDiscoveryRejectsStaleAndOversizedDirectory(t *testing.T
 			t.Fatal(err)
 		}
 	}
-	if _, err := f.service.ActiveLabGrant(context.Background(), labActor(t), "default"); err == nil {
-		t.Fatal("unbounded directory discovery accepted")
+	if _, err := f.service.ActiveLabGrant(context.Background(), labActor(t), "default"); err != nil {
+		t.Fatalf("historical directory blocked discovery: %v", err)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/Horcag/agent-machine-control/internal/domain"
 	"github.com/Horcag/agent-machine-control/internal/policy"
@@ -23,7 +24,7 @@ func (s *SessionService) loadSessionApprovalReference(ctx context.Context, appro
 	if approvalID == "" {
 		return nil, nil
 	}
-	if s.approvalStore == nil {
+	if s.approvalStore == nil || strings.HasPrefix(approvalID, ConsoleLabApprovalPrefix) {
 		return nil, invalidSessionApprovalReference()
 	}
 	loaded, err := s.approvalStore.LoadIssuedContext(ctx, approvalID)

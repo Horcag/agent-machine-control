@@ -8,7 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"io"
 	"net/http"
 
@@ -42,9 +42,10 @@ func (c *Client) GuestOperation(ctx context.Context, p app.GuestOperationParams,
 	req.ContentLength = int64(len(prefix)) + p.Size
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", daemon.GuestContentType)
+	req.Header.Set(daemon.GuestErrorProtocolHeader, daemon.GuestErrorProtocolVersion)
 	resp, err := c.guestHTTPClient().Do(req)
 	if err != nil {
-		return zero, fmt.Errorf("%w: %v", app.ErrGuestUncertain, err)
+		return zero, app.ErrGuestUncertain
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -55,14 +56,14 @@ func (c *Client) GuestOperation(ctx context.Context, p app.GuestOperationParams,
 	}
 	total, digest, err := readGuestHTTPOutput(ctx, resp, cancel, p.MaxOutput, output)
 	if err != nil {
-		return zero, err
+		return zero, errors.Join(app.ErrGuestUncertain, err)
 	}
 	final, err := decodeGuestFinal(resp)
 	if err != nil {
-		return zero, err
+		return zero, errors.Join(app.ErrGuestUncertain, err)
 	}
-	if final.Error != "" {
-		return final.Result, fmt.Errorf("%w: %s", app.ErrGuestUncertain, final.Error)
+	if final.Error != "" || final.Category != "" {
+		return final.Result, guestFinalError(final.Category)
 	}
 	if err = validateGuestFinal(p, final.Result, total, digest); err != nil {
 		return final.Result, err

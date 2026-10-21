@@ -12,6 +12,7 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/daemon"
 	"github.com/Horcag/agent-machine-control/internal/domain"
 	"github.com/Horcag/agent-machine-control/internal/lease"
+	"github.com/Horcag/agent-machine-control/internal/policy"
 	"github.com/Horcag/agent-machine-control/internal/receipt"
 )
 
@@ -94,6 +95,19 @@ func runCheckpointRestore(
 			},
 		)
 	}
+	return executeDirectCheckpointRestore(ctx, recoverySvc, actor, prompter, nowFn, targetID, checkpointID, common, stdout, stderr)
+}
+
+func executeDirectCheckpointRestore(
+	ctx context.Context,
+	recoverySvc *app.RecoveryService,
+	actor domain.ActorContext,
+	prompter Prompter,
+	nowFn func() time.Time,
+	targetID, checkpointID string,
+	common *CommonFlags,
+	stdout, stderr io.Writer,
+) int {
 	if rejectDirectApprovalReference(common, stderr, "checkpoint restore") {
 		return ExitUsage
 	}
@@ -102,22 +116,22 @@ func runCheckpointRestore(
 		return mapMutationError(err, stderr, "checkpoint restore")
 	}
 
-	appr, reqDeadline, approvalExit := prepareCheckpointRestoreApproval(ctx, recoverySvc, actor, prompter, nowFn, string(canonicalTarget), checkpointID, common, stderr)
-	if approvalExit != ExitSuccess {
-		return approvalExit
-	}
-
 	req := app.MutationRequest{
-		TargetID:       string(canonicalTarget),
-		Actor:          actor,
-		Reason:         common.Reason,
-		IdempotencyKey: common.IdempotencyKey,
-		Timeout:        common.Timeout,
-		Deadline:       reqDeadline,
-		Approval:       appr,
+		TargetID: string(canonicalTarget), Actor: actor, Reason: common.Reason,
+		IdempotencyKey: common.IdempotencyKey, Timeout: common.Timeout, Approval: common.Approval,
 	}
-
 	rcpt, obs, err := recoverySvc.RestoreCheckpoint(ctx, req, checkpointID)
+	var denied *app.PolicyDeniedError
+	if errors.As(err, &denied) && denied.Reason == policy.DenialApprovalRequired && common.Approval == nil && prompter != nil {
+		promptFlags := *common
+		promptFlags.IdempotencyKey = domain.DeriveApprovalIdempotencyKey(common.IdempotencyKey)
+		approval, deadline, code := prepareCheckpointRestoreApproval(ctx, recoverySvc, actor, prompter, nowFn, string(canonicalTarget), checkpointID, &promptFlags, stderr)
+		if code != ExitSuccess {
+			return code
+		}
+		req.Approval, req.Deadline, req.IdempotencyKey = approval, deadline, promptFlags.IdempotencyKey
+		rcpt, obs, err = recoverySvc.RestoreCheckpoint(ctx, req, checkpointID)
+	}
 	if err != nil {
 		return mapMutationError(err, stderr, "checkpoint restore")
 	}

@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"time"
@@ -18,11 +17,17 @@ import (
 
 const GuestMetadataLimit = 64 * 1024
 const GuestResultTrailer = "X-Amc-Guest-Result"
+
+// GuestErrorProtocolHeader opts into typed trailer failures; older clients decode
+// trailers strictly and receive ordinary HTTP errors for early rejections.
+const GuestErrorProtocolHeader = "X-Amc-Guest-Errors"
+const GuestErrorProtocolVersion = "categories-v1"
 const GuestContentType = "application/vnd.amc.guest-stream"
 
 type GuestFinal struct {
-	Result app.GuestOperationResult `json:"result"`
-	Error  string                   `json:"error,omitempty"`
+	Result   app.GuestOperationResult `json:"result"`
+	Error    string                   `json:"error,omitempty"`
+	Category string                   `json:"category,omitempty"`
 }
 type GuestApprovalRequest struct {
 	Params         app.GuestOperationParams `json:"params"`
@@ -95,9 +100,17 @@ func (r guestHTTPInput) ReadContext(ctx context.Context, p []byte) (int, error) 
 	return r.Read(p)
 }
 
-type guestHTTPOutput struct{ http.ResponseWriter }
+type guestHTTPOutput struct {
+	http.ResponseWriter
+	started bool
+}
 
-func (w guestHTTPOutput) WriteContext(ctx context.Context, p []byte) (int, error) {
+func (w *guestHTTPOutput) Write(p []byte) (int, error) {
+	w.started = true
+	return w.ResponseWriter.Write(p)
+}
+
+func (w *guestHTTPOutput) WriteContext(ctx context.Context, p []byte) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -140,17 +153,28 @@ func (s *Server) handleGuestOperation(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Trailer", GuestResultTrailer)
 	var input io.Reader
 	var output io.Writer
+	streamOutput := &guestHTTPOutput{ResponseWriter: w}
 	if p.Operation == "put" || p.Operation == "exec" {
 		input = guestHTTPInput{r.Body}
 	}
 	if p.Operation == "get" || p.Operation == "exec" {
-		output = guestHTTPOutput{w}
+		output = streamOutput
 	}
 	result, opErr := s.guestService.Execute(ctx, p, input, output)
+	writeGuestHTTPFinal(w, r.Header.Get(GuestErrorProtocolHeader), result, opErr, streamOutput.started)
+}
+
+func writeGuestHTTPFinal(w http.ResponseWriter, errorProtocol string, result app.GuestOperationResult, opErr error, started bool) {
 	final := GuestFinal{Result: result}
 	if opErr != nil {
-		final.Error = "guest operation failed; verify the receipt before taking another action"
-		if errors.Is(opErr, app.ErrGuestWorkspaceUnprovisioned) {
+		category := guestFailureCategory(opErr)
+		if errorProtocol == GuestErrorProtocolVersion {
+			final.Category = category
+		} else if writeGuestEarlyError(w, category, result, started) {
+			return
+		}
+		final.Error = "guest operation failed; inspect its category and receipt before taking another action"
+		if category == "guest_workspace_unprovisioned" {
 			final.Error = "guest workspace is not provisioned; an operator must install original authorized workspace identity metadata"
 		}
 	}

@@ -197,10 +197,13 @@ func NewServer(cfg Config) (*Server, error) {
 		identityProvider:  ident,
 	}
 
-	if provider, ok := backend.(app.ConsoleProvider); ok {
-		srv.consoleService = app.NewConsoleService(provider, recoverySvc, targetService, filepath.Join(sd.Root(), "console-frames"), app.WithConsoleLabSafetyResolver(safetyResolver), app.WithConsoleLabEnrollmentIdentity(func(ctx context.Context, ref domain.MachineRef) (string, error) {
-			return targetService.EnrollmentIdentity(ctx, string(ref))
-		}))
+	provider, _ := backend.(app.ConsoleProvider)
+	srv.consoleService = app.NewConsoleService(provider, recoverySvc, targetService, filepath.Join(sd.Root(), "console-frames"), app.WithConsoleLabSafetyResolver(safetyResolver), app.WithConsoleLabEnrollmentIdentity(func(ctx context.Context, ref domain.MachineRef) (string, error) {
+		return targetService.EnrollmentIdentity(ctx, string(ref))
+	}))
+	app.WithSessionLabAuthority(srv.consoleService)(sessionSvc)
+	app.WithRecoveryLabAuthority(srv.consoleService)(recoverySvc)
+	if provider != nil {
 		srv.desktopService = app.NewDesktopService(guestdesktop.New(guestssh.NewTransport(keyProvider)), srv.consoleService)
 	}
 	srv.initializeGuestService(sessionSvc, targetService, keyProvider)

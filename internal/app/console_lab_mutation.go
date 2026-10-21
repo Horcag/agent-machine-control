@@ -32,22 +32,9 @@ func (s *ConsoleService) executeLabMutation(ctx context.Context, actor domain.Ac
 		return result, err
 	}
 	defer func() { resultErr = errors.Join(resultErr, release()) }()
-	grant, err := s.loadLabGrant(ctx, id)
-	if err != nil || grant.Beneficiary != actor.EffectiveActor || op.Target != grant.Target {
-		return result, ErrInvalidConsoleLabGrant
-	}
-	binding, err := s.resolveLabBindingWithResolution(ctx, grant, resolution)
-	if err == nil {
-		err = s.labActivation(ctx, grant.GrantID)
-	}
+	grant, err := s.admitLabMutation(ctx, actor, id, op, providerID, resolution)
 	if err != nil {
 		return result, err
-	}
-	if !op.Deadline.After(s.recovery.now()) || op.Deadline.After(grant.ExpiresAt) {
-		return result, ErrInvalidConsoleLabGrant
-	}
-	if binding.ProviderVMID != providerID {
-		return result, ErrInvalidConsoleLabGrant
 	}
 	issued, err := s.deriveLabApproval(ctx, grant, op)
 	if err != nil {
@@ -128,4 +115,26 @@ func labMutationIdentityMatches(actor domain.ActorContext, op domain.Operation, 
 	return op.Actor.AuthenticatedCaller == actor.AuthenticatedCaller && op.Actor.EffectiveActor == actor.EffectiveActor &&
 		op.Target == domain.MachineRef(req.TargetID) && op.Reason == req.Reason && op.IdempotencyKey == req.IdempotencyKey && op.Deadline.Equal(req.Deadline) &&
 		req.Actor.AuthenticatedCaller == actor.AuthenticatedCaller && req.Actor.EffectiveActor == actor.EffectiveActor
+}
+
+func (s *ConsoleService) admitLabMutation(ctx context.Context, actor domain.ActorContext, id string, op domain.Operation, providerID string, resolution *TargetResolution) (ConsoleLabGrant, error) {
+	grant, err := s.loadLabGrant(ctx, id)
+	if err != nil || grant.Beneficiary != actor.EffectiveActor || op.Target != grant.Target {
+		return ConsoleLabGrant{}, ErrInvalidConsoleLabGrant
+	}
+	binding, err := s.resolveLabBindingWithResolution(ctx, grant, resolution)
+	if err == nil {
+		err = s.labActivation(ctx, grant.GrantID)
+	}
+	if err != nil {
+		return ConsoleLabGrant{}, err
+	}
+	if !op.Deadline.After(s.recovery.now()) || (grant.Mode == "" && op.Deadline.After(grant.ExpiresAt)) {
+		return ConsoleLabGrant{}, ErrInvalidConsoleLabGrant
+	}
+	if binding.ProviderVMID != providerID {
+		return ConsoleLabGrant{}, ErrInvalidConsoleLabGrant
+	}
+
+	return grant, nil
 }
