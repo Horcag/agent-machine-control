@@ -110,12 +110,16 @@ func assertGuestMCPUploadBinding(t *testing.T, p app.GuestOperationParams, input
 }
 
 func guestMCPCaseInput(operation, source, directory string) GuestInput {
-	in := GuestInput{Target: "synthetic-target", Reason: "contract", ApprovalID: "synthetic-grant", IdempotencyKey: "request-" + operation, Deadline: time.Now().Add(time.Minute).Format(time.RFC3339Nano), MaxOutput: 64}
+	in := GuestInput{Target: "synthetic-target", Reason: "contract", ApprovalID: "synthetic-grant", IdempotencyKey: "request-" + operation, Deadline: time.Now().Add(time.Minute).Format(time.RFC3339Nano)}
 	if operation == "put" || operation == "exec" {
 		in.Source = source
 	}
 	if operation == "get" || operation == "exec" {
 		in.Destination = filepath.Join(directory, operation+".bin")
+		in.MaxOutput = 64
+	}
+	if operation == "get" || operation == "remove-owned" {
+		in.ArtifactIDs = []string{strings.Repeat("a", 32)}
 	}
 	return in
 }

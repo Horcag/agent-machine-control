@@ -2356,38 +2356,35 @@
     "description": "Execute an explicit local UTF-8 script and publish verified output to a new local destination",
     "inputSchema": {
       "additionalProperties": false,
+      "description": "guest_exec requires source, destination, max_output between 1 and 16777216 and no artifact_ids",
       "properties": {
         "approval_id": {
           "type": "string"
-        },
-        "artifact_ids": {
-          "items": {
-            "type": "string"
-          },
-          "type": [
-            "null",
-            "array"
-          ]
         },
         "deadline": {
           "description": "Exact canonical RFC3339Nano operation deadline",
           "type": "string"
         },
         "destination": {
-          "description": "Explicit new local output path",
+          "description": "Explicit new local output path; existing files are never replaced",
+          "minLength": 1,
           "type": "string"
         },
         "idempotency_key": {
           "type": "string"
         },
         "max_output": {
+          "description": "Positive maximum output bytes; output exceeding this limit is rejected",
+          "maximum": 16777216,
+          "minimum": 1,
           "type": "integer"
         },
         "reason": {
           "type": "string"
         },
         "source": {
-          "description": "Explicit local payload path, never sent to the guest",
+          "description": "Explicit local payload path, never sent to the guest; exec accepts UTF-8 scripts up to 16 MiB",
+          "minLength": 1,
           "type": "string"
         },
         "target": {
@@ -2395,10 +2392,12 @@
         }
       },
       "required": [
-        "max_output",
         "reason",
         "idempotency_key",
-        "deadline"
+        "deadline",
+        "source",
+        "max_output",
+        "destination"
       ],
       "type": "object"
     },
@@ -2622,38 +2621,41 @@
     "description": "Download an opaque owned artifact to a new local destination after verification",
     "inputSchema": {
       "additionalProperties": false,
+      "description": "guest_get requires one artifact_id, positive max_output, destination and no source",
       "properties": {
         "approval_id": {
           "type": "string"
         },
         "artifact_ids": {
+          "description": "Opaque ownership references returned by guest_put",
           "items": {
+            "pattern": "^[0-9a-f]{32}$",
             "type": "string"
           },
-          "type": [
-            "null",
-            "array"
-          ]
+          "maxItems": 1,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
         },
         "deadline": {
           "description": "Exact canonical RFC3339Nano operation deadline",
           "type": "string"
         },
         "destination": {
-          "description": "Explicit new local output path",
+          "description": "Explicit new local output path; existing files are never replaced",
+          "minLength": 1,
           "type": "string"
         },
         "idempotency_key": {
           "type": "string"
         },
         "max_output": {
+          "description": "Positive maximum output bytes; output exceeding this limit is rejected",
+          "maximum": 1099511627776,
+          "minimum": 1,
           "type": "integer"
         },
         "reason": {
-          "type": "string"
-        },
-        "source": {
-          "description": "Explicit local payload path, never sent to the guest",
           "type": "string"
         },
         "target": {
@@ -2661,10 +2663,12 @@
         }
       },
       "required": [
-        "max_output",
         "reason",
         "idempotency_key",
-        "deadline"
+        "deadline",
+        "max_output",
+        "destination",
+        "artifact_ids"
       ],
       "type": "object"
     },
@@ -2888,38 +2892,25 @@
     "description": "Explicitly prepare the enrolled guest worker using server-provisioned workspace identity",
     "inputSchema": {
       "additionalProperties": false,
+      "description": "guest_prepare requires max_output=0 and no source, destination or artifact_ids",
       "properties": {
         "approval_id": {
           "type": "string"
         },
-        "artifact_ids": {
-          "items": {
-            "type": "string"
-          },
-          "type": [
-            "null",
-            "array"
-          ]
-        },
         "deadline": {
           "description": "Exact canonical RFC3339Nano operation deadline",
-          "type": "string"
-        },
-        "destination": {
-          "description": "Explicit new local output path",
           "type": "string"
         },
         "idempotency_key": {
           "type": "string"
         },
         "max_output": {
+          "description": "Must be zero; this operation produces no output stream",
+          "maximum": 0,
+          "minimum": 0,
           "type": "integer"
         },
         "reason": {
-          "type": "string"
-        },
-        "source": {
-          "description": "Explicit local payload path, never sent to the guest",
           "type": "string"
         },
         "target": {
@@ -2927,7 +2918,6 @@
         }
       },
       "required": [
-        "max_output",
         "reason",
         "idempotency_key",
         "deadline"
@@ -3154,38 +3144,30 @@
     "description": "Stream an explicit local source file and return an opaque guest ownership reference",
     "inputSchema": {
       "additionalProperties": false,
+      "description": "guest_put requires source, max_output=0 and no destination or artifact_ids",
       "properties": {
         "approval_id": {
           "type": "string"
         },
-        "artifact_ids": {
-          "items": {
-            "type": "string"
-          },
-          "type": [
-            "null",
-            "array"
-          ]
-        },
         "deadline": {
           "description": "Exact canonical RFC3339Nano operation deadline",
-          "type": "string"
-        },
-        "destination": {
-          "description": "Explicit new local output path",
           "type": "string"
         },
         "idempotency_key": {
           "type": "string"
         },
         "max_output": {
+          "description": "Must be zero; this operation produces no output stream",
+          "maximum": 0,
+          "minimum": 0,
           "type": "integer"
         },
         "reason": {
           "type": "string"
         },
         "source": {
-          "description": "Explicit local payload path, never sent to the guest",
+          "description": "Explicit local payload path, never sent to the guest; exec accepts UTF-8 scripts up to 16 MiB",
+          "minLength": 1,
           "type": "string"
         },
         "target": {
@@ -3193,10 +3175,10 @@
         }
       },
       "required": [
-        "max_output",
         "reason",
         "idempotency_key",
-        "deadline"
+        "deadline",
+        "source"
       ],
       "type": "object"
     },
@@ -3420,38 +3402,36 @@
     "description": "Remove only artifacts identified by immutable opaque ownership references",
     "inputSchema": {
       "additionalProperties": false,
+      "description": "guest_remove_owned requires 1 to 128 unique artifact_ids, max_output=0 and no source or destination",
       "properties": {
         "approval_id": {
           "type": "string"
         },
         "artifact_ids": {
+          "description": "Opaque ownership references returned by guest_put",
           "items": {
+            "pattern": "^[0-9a-f]{32}$",
             "type": "string"
           },
-          "type": [
-            "null",
-            "array"
-          ]
+          "maxItems": 128,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
         },
         "deadline": {
           "description": "Exact canonical RFC3339Nano operation deadline",
-          "type": "string"
-        },
-        "destination": {
-          "description": "Explicit new local output path",
           "type": "string"
         },
         "idempotency_key": {
           "type": "string"
         },
         "max_output": {
+          "description": "Must be zero; this operation produces no output stream",
+          "maximum": 0,
+          "minimum": 0,
           "type": "integer"
         },
         "reason": {
-          "type": "string"
-        },
-        "source": {
-          "description": "Explicit local payload path, never sent to the guest",
           "type": "string"
         },
         "target": {
@@ -3459,10 +3439,10 @@
         }
       },
       "required": [
-        "max_output",
         "reason",
         "idempotency_key",
-        "deadline"
+        "deadline",
+        "artifact_ids"
       ],
       "type": "object"
     },

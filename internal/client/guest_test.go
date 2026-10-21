@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -196,7 +197,7 @@ func (w shortGuestWriter) WriteContext(_ context.Context, p []byte) (int, error)
 func TestGuestShortOutputRejected(t *testing.T) {
 	cl, _ := guestFixture(t, []byte("output"), "valid")
 	_, err := cl.GuestOperation(context.Background(), app.GuestOperationParams{Operation: "get", IdempotencyKey: "synthetic-request", MaxOutput: 20, Deadline: time.Now().Add(time.Second)}, nil, shortGuestWriter{})
-	if err != io.ErrShortWrite {
+	if !errors.Is(err, io.ErrShortWrite) || !errors.Is(err, app.ErrGuestUncertain) {
 		t.Fatalf("error=%v", err)
 	}
 }

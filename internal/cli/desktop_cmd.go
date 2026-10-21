@@ -61,7 +61,7 @@ func readDesktopRequestFile(path string, out *domain.DesktopRequest) error {
 type desktopFlags struct {
 	pos                                               []string
 	target, reason, key, grant, requestFile, deadline string
-	forMCP, ack                                       bool
+	forMCP, ack, persistent                           bool
 	validFor                                          time.Duration
 }
 
@@ -75,6 +75,7 @@ func parseDesktopFlags(args []string, stderr io.Writer) (desktopFlags, bool) {
 	grant := fs.String("lab-grant-id", "", "active operator-issued grant")
 	requestFile := fs.String("request-file", "", "JSON DesktopRequest file")
 	forMCP := fs.Bool("for-mcp", false, "grant agent:mcp-local instead of self")
+	persistent := fs.Bool("persistent-vm", false, "authorize this enrolled VM until revoked")
 	ack := fs.Bool("acknowledge-external-effects", false, "acknowledge guest external effects are not rolled back")
 	validFor := fs.Duration("valid-for", time.Hour, "grant lifetime (up to 8h)")
 	deadline := fs.String("deadline", "", "exact operation deadline")
@@ -82,7 +83,7 @@ func parseDesktopFlags(args []string, stderr io.Writer) (desktopFlags, bool) {
 	if fs.Parse(flags) != nil || len(pos) > 1 {
 		return desktopFlags{}, false
 	}
-	return desktopFlags{pos: pos, target: *target, reason: *reason, key: *key, grant: *grant, requestFile: *requestFile, forMCP: *forMCP, ack: *ack, validFor: *validFor, deadline: *deadline}, true
+	return desktopFlags{pos: pos, target: *target, reason: *reason, key: *key, grant: *grant, requestFile: *requestFile, forMCP: *forMCP, ack: *ack, persistent: *persistent, validFor: *validFor, deadline: *deadline}, true
 }
 
 func (a *App) observeDesktop(ctx context.Context, cl *client.Client, target string, pos []string) (app.DesktopActionResult, error) {
@@ -123,12 +124,20 @@ func (a *App) dispatchDesktopCommand(ctx context.Context, cl *client.Client, com
 		if *forMCP {
 			beneficiary = "agent:mcp-local"
 		}
-		out, err = cl.IssueConsoleLabGrant(ctx, app.ConsoleLabGrantIssueRequest{Target: *target, Reason: *reason, IdempotencyKey: *key, Beneficiary: beneficiary, ValidForMillis: validFor.Milliseconds(), AcknowledgeExternalEffects: *ack})
+		mode := ""
+		if options.persistent {
+			mode = app.ConsoleLabModePersistentVM
+		}
+		out, err = cl.IssueConsoleLabGrant(ctx, app.ConsoleLabGrantIssueRequest{Mode: mode, Target: *target, Reason: *reason, IdempotencyKey: *key, Beneficiary: beneficiary, ValidForMillis: validFor.Milliseconds(), AcknowledgeExternalEffects: *ack})
 	case "status":
 		if len(pos) == 1 {
 			*grant = pos[0]
 		}
-		out, err = cl.ConsoleLabGrantStatus(ctx, *grant)
+		if *grant == "" {
+			out, err = cl.ActiveConsoleLabGrant(ctx, *target)
+		} else {
+			out, err = cl.ConsoleLabGrantStatus(ctx, *grant)
+		}
 	case "disable":
 		if len(pos) == 1 {
 			*grant = pos[0]

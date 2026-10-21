@@ -69,14 +69,7 @@ func TestGuestCLIDiscoveryStreamsExactAuthorityAndMapsFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, operation := range []string{"prepare", "put", "get", "exec", "remove-owned"} {
-		deadline := time.Now().Add(time.Minute).Format(time.RFC3339Nano)
-		args := []string{operation, "--target", "synthetic-target", "--reason", "contract", "--approval-id", "synthetic-grant", "--idempotency-key", "request-" + operation, "--deadline", deadline, "--max-output", "64"}
-		if operation == "put" || operation == "exec" {
-			args = append(args, "--source", source)
-		}
-		if operation == "get" || operation == "exec" {
-			args = append(args, "--destination", filepath.Join(directory, operation+".bin"))
-		}
+		args := guestCLICaseArguments(operation, source, directory)
 		var out, stderr bytes.Buffer
 		if code := runGuest(t.Context(), nil, false, state, args, &out, &stderr); code == ExitSuccess || out.Len() != 0 {
 			t.Fatalf("%s returned success or output after failure: %d %s", operation, code, out.String())
@@ -94,6 +87,21 @@ func TestGuestCLIDiscoveryStreamsExactAuthorityAndMapsFailure(t *testing.T) {
 		t.Fatalf("failed downloads leaked outputs or stages: %v %v", entries, err)
 	}
 }
+func guestCLICaseArguments(operation, source, directory string) []string {
+	deadline := time.Now().Add(time.Minute).Format(time.RFC3339Nano)
+	args := []string{operation, "--target", "synthetic-target", "--reason", "contract", "--approval-id", "synthetic-grant", "--idempotency-key", "request-" + operation, "--deadline", deadline}
+	if operation == "put" || operation == "exec" {
+		args = append(args, "--source", source)
+	}
+	if operation == "get" || operation == "exec" {
+		args = append(args, "--destination", filepath.Join(directory, operation+".bin"), "--max-output", "64")
+	}
+	if operation == "get" || operation == "remove-owned" {
+		args = append(args, "--artifact-ids", strings.Repeat("a", 32))
+	}
+	return args
+}
+
 func guestCLIFailureHandler(t *testing.T, captured *[]app.GuestOperationParams) http.HandlerFunc {
 	t.Helper()
 	return func(w http.ResponseWriter, r *http.Request) {

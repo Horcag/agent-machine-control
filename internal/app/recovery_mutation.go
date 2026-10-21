@@ -102,7 +102,7 @@ func (s *RecoveryService) executeMutation(
 	req MutationRequest,
 	providerTargetID string,
 	execFn func(context.Context) error,
-) (domain.Receipt, error) {
+) (result domain.Receipt, resultErr error) {
 	execCtx, cancelExecution := s.mutationExecutionContext(ctx, op, req)
 	defer cancelExecution()
 	ctx = execCtx
@@ -117,15 +117,18 @@ func (s *RecoveryService) executeMutation(
 	}
 
 	// 1. Idempotency Check & 2. Audit Writability Check
-	if cached, err := s.checkPreconditions(ctx, op); err != nil || cached != nil {
+	if cached, err := s.checkPreconditions(ctx, op, req); err != nil || cached != nil {
 		if cached != nil {
-			if req.cachedReceipt != nil {
-				*req.cachedReceipt = true
-			}
 			return *cached, cachedRecoveryOutcomeError(cached.Outcome)
 		}
 		return s.preProviderFailure(ctx, op, fp, policy.Decision{}, s.now(), err, "", req.ApprovalID)
 	}
+
+	req, execFn, releaseGrant, err := s.coordinatePersistentRecovery(ctx, op, req, execFn)
+	if err != nil {
+		return domain.Receipt{}, err
+	}
+	defer func() { resultErr = errors.Join(resultErr, releaseGrant()) }()
 
 	now := s.now()
 
@@ -181,30 +184,6 @@ func (s *RecoveryService) executeMutation(
 	releaseErr := releaseLease()
 
 	return s.finalizeMutation(receiptRecord, runErr, persistErr, releaseErr)
-}
-
-func (s *RecoveryService) checkPreconditions(ctx context.Context, op domain.Operation) (*domain.Receipt, error) {
-	if s.receiptStore != nil {
-		// Durable terminal truth wins over caller cancellation for an exact retry.
-		lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		cached, err := s.receiptStore.LookupIdempotencyContext(lookupCtx, op)
-		cancel()
-		if err != nil {
-			return nil, err
-		}
-		if cached != nil {
-			return cached, nil
-		}
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if s.auditStore != nil {
-		if err := s.auditStore.CheckWritableContext(ctx); err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrAuditUnavailable, err)
-		}
-	}
-	return nil, nil
 }
 
 func (s *RecoveryService) acquireMutationLease(

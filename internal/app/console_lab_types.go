@@ -10,6 +10,8 @@ import (
 
 const MaxConsoleLabGrantValidity = 8 * time.Hour
 
+const ConsoleLabModePersistentVM = "persistent-vm"
+
 const ConsoleLabApprovalPrefix = "app-lab-operation-"
 
 var ErrInvalidConsoleLabGrant = errors.New("app: console lab grant is unavailable or invalid")
@@ -30,6 +32,7 @@ func WithConsoleLabEnrollmentIdentity(identity ConsoleLabEnrollmentIdentity) Con
 
 // ConsoleLabGrantIssueRequest requests only guest console authority.
 type ConsoleLabGrantIssueRequest struct {
+	Mode                       string `json:"mode,omitempty"`
 	AcknowledgeExternalEffects bool   `json:"acknowledge_external_effects"`
 	Target                     string `json:"target"`
 	Reason                     string `json:"reason"`
@@ -40,6 +43,7 @@ type ConsoleLabGrantIssueRequest struct {
 
 // ConsoleLabGrant is immutable server-owned authority, never a bearer credential.
 type ConsoleLabGrant struct {
+	Mode                       string            `json:"mode,omitempty"`
 	AcknowledgeExternalEffects bool              `json:"acknowledge_external_effects"`
 	SchemaVersion              int               `json:"schema_version"`
 	GrantID                    string            `json:"grant_id"`

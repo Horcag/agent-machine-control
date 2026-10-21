@@ -23,7 +23,7 @@ func (s *ConsoleService) labLock(ctx context.Context, id string) (func() error, 
 	if !validFrameID(id) {
 		return nil, ErrInvalidConsoleLabGrant
 	}
-	if err := s.validateDependencies(); err != nil {
+	if err := s.recovery.validateDependencies(); err != nil {
 		return nil, err
 	}
 	lock, err := s.recovery.leaseManager.Acquire(ctx, "console-lab-"+id, "console.lab", id, 6*time.Minute)
@@ -158,7 +158,7 @@ func (s *ConsoleService) loadLabGrant(ctx context.Context, id string) (ConsoleLa
 	}
 	if grant.SchemaVersion != 1 || grant.GrantID != id || !validLabDigest(grant.EnrollmentIdentity) ||
 		!validLabGrantAuthority(grant) ||
-		grant.IssuedAt.IsZero() || !grant.ExpiresAt.After(grant.IssuedAt) || grant.ExpiresAt.Sub(grant.IssuedAt) > MaxConsoleLabGrantValidity {
+		grant.IssuedAt.IsZero() || !validLabGrantLifetime(grant) {
 		return ConsoleLabGrant{}, ErrInvalidConsoleLabGrant
 	}
 	return grant, nil
@@ -253,4 +253,15 @@ func reserveProtectedLabFile(ctx context.Context, root *os.Root, dir, name strin
 		return nil, nil, ErrInvalidConsoleLabGrant
 	}
 	return file, info, nil
+}
+
+func validLabGrantLifetime(grant ConsoleLabGrant) bool {
+	switch grant.Mode {
+	case "":
+		return grant.ExpiresAt.After(grant.IssuedAt) && grant.ExpiresAt.Sub(grant.IssuedAt) <= MaxConsoleLabGrantValidity
+	case ConsoleLabModePersistentVM:
+		return grant.ExpiresAt.IsZero() && grant.AcknowledgeExternalEffects
+	default:
+		return false
+	}
 }

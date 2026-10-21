@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/app"
 	"github.com/Horcag/agent-machine-control/internal/daemon"
 	"github.com/Horcag/agent-machine-control/internal/domain"
+	"github.com/Horcag/agent-machine-control/internal/policy"
 	"github.com/Horcag/agent-machine-control/internal/receipt"
 )
 
@@ -174,6 +176,19 @@ func runCheckpointCreate(
 	if !directMode {
 		return executeDaemonCheckpointCreate(ctx, stateDir, targetID, *name, common, stdout, stderr)
 	}
+	return executeDirectCheckpointCreate(ctx, recoverySvc, actor, prompter, nowFn, targetID, *name, common, stdout, stderr)
+}
+
+func executeDirectCheckpointCreate(
+	ctx context.Context,
+	recoverySvc *app.RecoveryService,
+	actor domain.ActorContext,
+	prompter Prompter,
+	nowFn func() time.Time,
+	targetID, name string,
+	common *CommonFlags,
+	stdout, stderr io.Writer,
+) int {
 	if rejectDirectApprovalReference(common, stderr, "checkpoint create") {
 		return ExitUsage
 	}
@@ -182,35 +197,27 @@ func runCheckpointCreate(
 		return mapMutationError(err, stderr, "checkpoint create")
 	}
 
-	appr := common.Approval
-	var reqDeadline time.Time
-	if appr == nil && prompter != nil {
+	req := app.MutationRequest{
+		TargetID: string(canonicalTarget), Actor: actor, Reason: common.Reason,
+		IdempotencyKey: common.IdempotencyKey, Timeout: common.Timeout, Approval: common.Approval,
+	}
+	rcpt, snap, err := recoverySvc.CreateCheckpoint(ctx, req, name)
+	var denied *app.PolicyDeniedError
+	if errors.As(err, &denied) && denied.Reason == policy.DenialApprovalRequired && common.Approval == nil && prompter != nil {
 		promptMsg := fmt.Sprintf("Destructive operation checkpoint.create on %s requires confirmation", canonicalTarget)
-		params := map[string]any{"name": *name}
-		promptedAppr, dl, ok := promptForApproval(prompter, nowFn, actor, string(canonicalTarget), "checkpoint.create", domain.CapabilityCheckpointCreate, domain.ClassDestructivePrivileged, common.Reason, common.IdempotencyKey, common.Timeout, params, promptMsg)
+		params := map[string]any{"name": name}
+		req.IdempotencyKey = domain.DeriveApprovalIdempotencyKey(common.IdempotencyKey)
+		approval, deadline, ok := promptForApproval(prompter, nowFn, actor, string(canonicalTarget), "checkpoint.create", domain.CapabilityCheckpointCreate, domain.ClassDestructivePrivileged, common.Reason, req.IdempotencyKey, common.Timeout, params, promptMsg)
 		if !ok {
 			fmt.Fprintln(stderr, "amc checkpoint create: operation aborted by operator")
 			return ExitDenied
 		}
-		appr = promptedAppr
-		if err := recoverySvc.IssueApproval(ctx, *appr); err != nil {
-			fmt.Fprintln(stderr, "amc checkpoint create: failed to issue server approval")
-			return ExitBackendUnavailable
+		if err := recoverySvc.IssueApproval(ctx, *approval); err != nil {
+			return mapMutationError(err, stderr, "checkpoint create")
 		}
-		reqDeadline = dl
+		req.Approval, req.Deadline = approval, deadline
+		rcpt, snap, err = recoverySvc.CreateCheckpoint(ctx, req, name)
 	}
-
-	req := app.MutationRequest{
-		TargetID:       string(canonicalTarget),
-		Actor:          actor,
-		Reason:         common.Reason,
-		IdempotencyKey: common.IdempotencyKey,
-		Timeout:        common.Timeout,
-		Deadline:       reqDeadline,
-		Approval:       appr,
-	}
-
-	rcpt, snap, err := recoverySvc.CreateCheckpoint(ctx, req, *name)
 	if err != nil {
 		return mapMutationError(err, stderr, "checkpoint create")
 	}

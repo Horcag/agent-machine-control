@@ -21,6 +21,10 @@ Each operation carries a reason, idempotency key and exact deadline. On protecte
 operator issues a one-use approval for the exact operation and beneficiary. Issuance supports the
 current operator or the canonical local MCP actor; MCP cannot issue approvals.
 
+An operator may instead enable [persistent disposable VM authority](guest-desktop.md#persistent-disposable-vm-authority)
+once for the enrolled test VM and beneficiary. The daemon then supplies exact operation approvals
+automatically until that authority is revoked or the enrollment changes.
+
 ## Operation contracts
 
 | Operation | Result and boundary |
@@ -30,6 +34,13 @@ current operator or the canonical local MCP actor; MCP cannot issue approvals.
 | `get` | Reads one original file by ownership reference; verifies identity, security, size and digest before returning bytes. |
 | `exec` | Runs a bounded UTF-8 script in the persistent runspace, with bounded output and a final receipt. |
 | `remove-owned` | Removes up to 128 referenced original files in one request; reports accepted deletion and observed absence separately. |
+
+MCP tools advertise operation-specific input schemas. `prepare` requires `max_output: 0` and no
+source, destination, or artifact IDs. `put` also requires zero output and no artifact IDs or
+destination. `get` requires one artifact ID, a new local destination, and positive output limit.
+`exec` requires a local script, a new destination, and a positive output limit up to 16 MiB, with
+no artifact IDs. `remove-owned` requires one or more artifact IDs and zero output, without local
+source or destination paths. Invalid shapes are rejected before dispatch with an actionable error.
 
 Transfers use bounded binary buffers. File content is not encoded into terminal commands, clipboard
 messages or control JSON. Script and command output limits are 16 MiB each. Download and command
@@ -47,6 +58,10 @@ An incomplete request, wrong worker identity, deadline expiration, canceled I/O 
 result closes the affected worker and preserves durable uncertainty. Retrying an idempotency key
 returns receipt metadata; it does not repeat effects or replay output bytes. Download publication
 requires verified bytes and the final result, and never replaces an existing local destination.
+
+Known validation and authorization failures retain their typed categories across daemon, CLI and
+MCP. Arbitrary provider messages are not exposed. A known rejection is distinct from an uncertain
+transport outcome; incomplete responses still require inspecting the receipt before another action.
 
 The low-level Go `Client.GuestOperation` method writes provisional output to its supplied sink
 before validating the final trailer. Callers must keep that sink unpublished and discard its

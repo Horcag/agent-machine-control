@@ -16,6 +16,7 @@ import (
 
 // SessionService coordinates session mutation admissions, policy, idempotency, audit, and receipts.
 type SessionService struct {
+	labAuthority    *ConsoleService
 	sessionMgr      *sessions.Manager
 	safetyResolver  SafetyResolver
 	targetResolver  SessionTargetResolver

@@ -72,12 +72,12 @@ func assertDesktopCLIRequest(t *testing.T, r *http.Request, route string, expect
 
 func desktopCLIResponse(name string) any {
 	switch name {
-	case "enable":
+	case "enable", "persistent":
 		return struct {
 			Grant   app.ConsoleLabGrant `json:"grant"`
 			Receipt domain.Receipt      `json:"receipt"`
 		}{Grant: app.ConsoleLabGrant{GrantID: "synthetic-receipt"}}
-	case "status":
+	case "status", "active":
 		return app.ConsoleLabGrantStatus{Grant: app.ConsoleLabGrant{GrantID: "synthetic-receipt"}, State: "active"}
 	case "disable":
 		return domain.Receipt{ReceiptID: "synthetic-receipt"}
@@ -103,6 +103,8 @@ func TestDesktopCLIRequestsAndFlags(t *testing.T) {
 		want        any
 	}{
 		{"enable", "/v1/desktop/lab/issue", []string{"enable", "--target", "default", "--reason", "synthetic grant", "--idempotency-key", "issue-key", "--for-mcp", "--valid-for", "2m", "--acknowledge-external-effects"}, app.ConsoleLabGrantIssueRequest{Target: "default", Reason: "synthetic grant", IdempotencyKey: "issue-key", Beneficiary: "agent:mcp-local", ValidForMillis: 120000, AcknowledgeExternalEffects: true}},
+		{"persistent", "/v1/desktop/lab/issue", []string{"enable", "--persistent-vm", "--for-mcp", "--acknowledge-external-effects", "--reason", "persistent fixture", "--idempotency-key", "persistent-key"}, app.ConsoleLabGrantIssueRequest{Mode: app.ConsoleLabModePersistentVM, Reason: "persistent fixture", IdempotencyKey: "persistent-key", Beneficiary: "agent:mcp-local", ValidForMillis: 3600000, AcknowledgeExternalEffects: true}},
+		{"active", "/v1/desktop/lab/active", []string{"status"}, map[string]string{}},
 		{"status", "/v1/desktop/lab/status", []string{"status", "own-grant"}, map[string]string{"grant_id": "own-grant"}},
 		{"disable", "/v1/desktop/lab/revoke", []string{"disable", "own-grant", "--reason", "synthetic revoke", "--idempotency-key", "revoke-key", "--deadline", deadline}, app.ConsoleLabGrantRevokeRequest{GrantID: "own-grant", Reason: "synthetic revoke", IdempotencyKey: "revoke-key", Deadline: deadline}},
 		{"action", "/v1/desktop/action", []string{"action", "--request-file", path, "--target", "default", "--reason", "synthetic action", "--idempotency-key", "action-key", "--lab-grant-id", "own-grant"}, app.DesktopActionRequest{Target: "default", Request: request, Reason: "synthetic action", IdempotencyKey: "action-key", LabGrantID: "own-grant"}},

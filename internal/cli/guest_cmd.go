@@ -13,6 +13,7 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/app"
 	"github.com/Horcag/agent-machine-control/internal/client"
 	"github.com/Horcag/agent-machine-control/internal/daemon"
+	"github.com/Horcag/agent-machine-control/internal/domain"
 	"github.com/Horcag/agent-machine-control/internal/guest/stream"
 )
 
@@ -116,6 +117,14 @@ func parseGuestCLI(operation string, args []string, approve bool, stderr io.Writ
 		if err != nil {
 			return guestCLIFlags{}, fmt.Errorf("invalid guest arguments")
 		}
+	}
+	if err := domain.ValidateGuestOperationShape(operation, 0, p.MaxOutput, p.ArtifactIDs); err != nil {
+		return guestCLIFlags{}, fmt.Errorf("invalid guest %s shape: use zero max-output for prepare, put and remove-owned; get requires one artifact, exec requires output from 1 to 16777216 bytes", operation)
+	}
+	payload := operation == "put" || operation == "exec"
+	output := operation == "get" || operation == "exec"
+	if (sourcePath != "") != payload || (!output && destination != "") || (!approve && output && destination == "") {
+		return guestCLIFlags{}, fmt.Errorf("invalid guest %s paths: source is required only for put/exec; new destination is required only for get/exec", operation)
 	}
 	return guestCLIFlags{p, sourcePath, destination, validity, beneficiary}, nil
 }
