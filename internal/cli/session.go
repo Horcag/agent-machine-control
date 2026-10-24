@@ -73,7 +73,7 @@ func printSessionUsage(w io.Writer) {
 	fmt.Fprintln(w, "Subcommands:")
 	fmt.Fprintln(w, "  open [target]      Open a new persistent SSH terminal session on the enrolled target")
 	fmt.Fprintln(w, "  read <session-id>  Read output chunks from a session")
-	fmt.Fprintln(w, "  write <session-id> <data> Write input to a session")
+	fmt.Fprintln(w, "  write <session-id> <data> Type terminal input or a short command (up to 64 KiB)")
 	fmt.Fprintln(w, "  control <session-id> <key> Send a control key (ctrl-c, ctrl-d, enter, etc.)")
 	fmt.Fprintln(w, "  wait <session-id>  Wait for output settle or regex match")
 	fmt.Fprintln(w, "  list               List active and recent sessions")
@@ -81,6 +81,9 @@ func printSessionUsage(w io.Writer) {
 	fmt.Fprintln(w, "  close <session-id> Close a persistent session")
 	fmt.Fprintln(w, "  approve <operation> Issue one exact, short-lived approval for agent:mcp-local")
 	fmt.Fprintln(w, "  attach <session-id> Interactively attach to a session")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Files: amc guest prepare, then amc guest put --source <local file> (binary streaming, up to 1 TiB).")
+	fmt.Fprintln(w, "Local PowerShell scripts: amc guest exec --source <local script> (up to 16 MiB).")
 }
 
 func runSessionOpen(ctx context.Context, cl *client.Client, args []string, stdout, stderr io.Writer) int {

@@ -5,6 +5,16 @@ binary SSH worker. CLI and MCP call the same authenticated daemon application se
 PTY sessions remain available for terminal interaction, and `amc --direct` remains independent of
 the daemon and guest SSH.
 
+Use `guest_put` (CLI: `amc guest put --source <local file>`) for every file upload, including
+gigabyte archives and installers. It sends the entire file in one operation with bounded memory,
+SHA-256 verification and a final durable receipt. Uploads support files up to 1 TiB. Prepare the
+worker once with `guest_prepare`, then reuse it across transfers. `session_write` is terminal text
+input with a 64 KiB per-call limit; splitting a file into terminal append commands adds a separate
+dispatch, approval and receipt for each piece. That overhead can dominate the transfer time.
+
+For a local PowerShell script up to 16 MiB, use `amc guest exec --source <local script>` with a new local
+output destination. This sends and executes the complete script in one operation.
+
 ## Authority and workspace
 
 The daemon resolves the enrolled target and its pinned SSH configuration. A client cannot supply
