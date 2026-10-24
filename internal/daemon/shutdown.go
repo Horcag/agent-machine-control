@@ -31,7 +31,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 func (s *Server) shutdownManagers(ctx context.Context) error {
-	var operationErr, sessionErr error
+	var operationErr, sessionErr, guestErr error
+	if s.guestService != nil {
+		guestErr = s.guestService.Shutdown(ctx)
+		s.guestShutdownComplete.Store(guestErr == nil)
+	}
 	if s.opMgr != nil {
 		if err := s.opMgr.Shutdown(ctx); err != nil {
 			operationErr = fmt.Errorf("daemon: operations manager shutdown error: %w", err)
@@ -42,7 +46,7 @@ func (s *Server) shutdownManagers(ctx context.Context) error {
 			sessionErr = fmt.Errorf("daemon: session manager shutdown error: %w", err)
 		}
 	}
-	return errors.Join(operationErr, sessionErr)
+	return errors.Join(operationErr, sessionErr, guestErr)
 }
 
 func (s *Server) closeEventHub() error {
@@ -96,5 +100,5 @@ func (s *Server) readServeError() error {
 func (s *Server) managersDrained() bool {
 	operationsDrained := s.opMgr == nil || s.opMgr.Drained()
 	sessionsDrained := s.sessionMgr == nil || s.sessionMgr.Drained()
-	return operationsDrained && sessionsDrained
+	return operationsDrained && sessionsDrained && (s.guestService == nil || s.guestShutdownComplete.Load())
 }

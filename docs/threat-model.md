@@ -198,6 +198,15 @@ logical principal identity of the caller:
   untrusted agent from implicitly inheriting the operator's OS-level rights simply by communicating
   through a local adapter.
 
+An operator can explicitly enable persistent authority for an enrolled disposable VM and a
+specific beneficiary. This uses the protected lab-grant store and derives exact server-owned
+operation approvals; it does not change the caller identity or declare external effects contained.
+The opt-in `persistent-vm` mode covers guest operations, terminal sessions, VM console/desktop,
+start/stop and checkpoint create/restore. It has no time-based expiry, is revocable, and is bound to
+the current enrollment epoch. It grants no host administration, enrollment/configuration changes
+or approval-issuance scope. Default and legacy bounded-grant behavior remain unchanged. See
+[persistent disposable VM authority](guest-desktop.md#persistent-disposable-vm-authority).
+
 ### Authenticated Caller versus Effective Actor
 
 - **Authenticated Caller**: The direct transport entity communicating with `amcd` (e.g., the

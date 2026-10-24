@@ -140,7 +140,7 @@ func TestServer_StartDefaultListenAddr(t *testing.T) {
 	dir := missingDaemonStateRoot(t)
 	srv, err := NewServer(Config{
 		StateDir:   dir,
-		ListenAddr: "", // tests default 127.0.0.1:0
+		ListenAddr: "", // tests automatic IPv6/IPv4 loopback selection
 	})
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)

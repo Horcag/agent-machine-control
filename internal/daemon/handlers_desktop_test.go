@@ -38,7 +38,7 @@ func assertDesktopDaemonInvalidEnvelope(t *testing.T, url, token, body string) {
 func TestDesktopDaemonStrictRequestBoundary(t *testing.T) {
 	backend := &consoleDaemonBackend{mockDaemonBackend: &mockDaemonBackend{}}
 	endpoint, _, agent := setupConsoleDaemon(t, backend)
-	for _, path := range []string{"desktop/action", "desktop/lab/issue", "desktop/lab/status", "desktop/lab/active", "desktop/lab/revoke", "console/record"} {
+	for _, path := range []string{"desktop/action", "console/record"} {
 		for _, body := range []string{`{"actor":"operator:forged"}`, `{"unknown":true}`, `{} {}`, `null`, `[]`, `{`, `{"target":"` + strings.Repeat("x", 128*1024) + `"}`} {
 			t.Run(path+"/"+body[:min(len(body), 24)], func(t *testing.T) {
 				assertDesktopDaemonInvalidEnvelope(t, endpoint+"/v1/"+path, agent, body)
@@ -67,7 +67,7 @@ func TestDesktopDaemonStrictRequestBoundary(t *testing.T) {
 func TestDesktopDaemonUnavailableRoutes(t *testing.T) {
 	srv, endpoint, _, agent := setupTestServer(t)
 	defer func() { _ = srv.Shutdown(context.Background()) }()
-	for _, path := range []string{"desktop/action", "desktop/lab/issue", "desktop/lab/status", "desktop/lab/active", "desktop/lab/revoke", "console/record"} {
+	for _, path := range []string{"desktop/action", "console/record"} {
 		status, body := doJSONReq(t, http.MethodPost, endpoint+"/v1/"+path, agent, map[string]any{})
 		if status != http.StatusNotImplemented || !bytes.Contains(body, []byte("capability_unavailable")) {
 			t.Fatalf("%s status=%d body=%s", path, status, body)

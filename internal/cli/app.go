@@ -196,6 +196,11 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		approvalStore,
 		app.WithRecoveryTargetResolver(targetService),
 	)
+	consoleAuthority := app.NewConsoleService(adapter, recoveryService, targetService, filepath.Join(sd.Root(), "console-frames"),
+		app.WithConsoleLabEnrollmentIdentity(func(ctx context.Context, ref domain.MachineRef) (string, error) {
+			return targetService.EnrollmentIdentity(ctx, string(ref))
+		}))
+	app.WithRecoveryLabAuthority(consoleAuthority)(recoveryService)
 
 	actorResolver := &actor.DefaultResolver{}
 	actCtx, err := actorResolver.Resolve()
@@ -207,7 +212,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	appInstance := NewApp(
 		discoveryService,
 		WithRecoveryService(recoveryService),
-		WithConsoleService(app.NewConsoleService(adapter, recoveryService, targetService, filepath.Join(sd.Root(), "console-frames"))),
+		WithConsoleService(consoleAuthority),
 		WithTargetService(targetService),
 		WithTargetCoordinator(targetCoordinator),
 		WithActor(actCtx),
@@ -344,6 +349,8 @@ func (a *App) RunWithContext(ctx context.Context, args []string, stdout, stderr 
 			stderr,
 		)
 
+	case "guest":
+		return runGuest(ctx, a.prompter, directMode, stateDir, cmdArgs, stdout, stderr)
 	case "session":
 		return runSession(
 			ctx,
@@ -367,6 +374,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Commands:")
 	fmt.Fprintln(w, "  console screenshot|key|type|move|click|drag  Capture or control the enrolled VM console")
 	fmt.Fprintln(w, "  desktop observe|action|enable|status|disable     Guest windows/UIA and bounded autonomous control")
+	fmt.Fprintln(w, "  guest prepare|put|get|exec|remove-owned|approve  Stream owned guest artifacts and bounded scripts")
 	fmt.Fprintln(w, "  doctor                                   Check Hyper-V and host readiness")
 	fmt.Fprintln(w, "  machine list                             List discovered virtual machines")
 	fmt.Fprintln(w, "  machine inspect <guid>                   Inspect virtual machine configuration and state")

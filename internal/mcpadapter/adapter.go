@@ -187,6 +187,7 @@ func (a *Adapter) BuildServer() *mcp.Server {
 		},
 	})
 
+	a.addGuestTools(server)
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "doctor",
 		Description: "Return host diagnostics and provider capabilities",
@@ -264,7 +265,7 @@ func (a *Adapter) BuildServer() *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "session_write",
-		Description: "Write input data to a persistent terminal session",
+		Description: "Type terminal input or launch a short command (up to 64 KiB). Upload whole local files with guest_put; execute local scripts with guest_exec. Prepare their binary worker once with guest_prepare.",
 	}, a.SessionWrite)
 
 	mcp.AddTool(server, &mcp.Tool{

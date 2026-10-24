@@ -79,17 +79,37 @@ func openSubSecondSetupSession(t *testing.T, endpoint, token string) string {
 type deadlineCaptureTransport struct {
 	mu        sync.Mutex
 	remaining map[string]time.Duration
+	applied   map[string]bool
 }
 
-func (t *deadlineCaptureTransport) record(ctx context.Context, name string) {
+// record observes entry separately from the fake's effect acceptance.
+func (t *deadlineCaptureTransport) record(ctx context.Context, name string) error {
 	deadline, ok := ctx.Deadline()
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if !ok {
-		t.remaining[name] = -1
-		return
+	remaining := time.Duration(-1)
+	if ok {
+		remaining = time.Until(deadline)
 	}
-	t.remaining[name] = time.Until(deadline)
+	t.remaining[name] = remaining
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Timer delivery can lag the actual deadline under test-host load.
+	if ok && remaining <= 0 {
+		return context.DeadlineExceeded
+	}
+	if t.applied == nil {
+		t.applied = make(map[string]bool)
+	}
+	t.applied[name] = true
+	return nil
+}
+
+func (t *deadlineCaptureTransport) appliedFor(name string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.applied[name]
 }
 
 func (t *deadlineCaptureTransport) remainingFor(name string) (time.Duration, bool) {
@@ -104,13 +124,13 @@ func assertSubSecondTransportOutcome(t *testing.T, transport *deadlineCaptureTra
 	remaining, called := transport.remainingFor(operation)
 	switch status {
 	case http.StatusOK:
-		if !called || remaining <= 0 || remaining > 250*time.Millisecond {
+		if !called || !transport.appliedFor(operation) || remaining <= 0 || remaining > 250*time.Millisecond {
 			t.Fatalf("%s transport deadline remaining=%v present=%v, want (0, 250ms]; body=%s", operation, remaining, called, body)
 		}
 		return
 	case http.StatusGatewayTimeout:
-		if called {
-			t.Fatalf("%s transport was called after admission exhausted its budget: remaining=%v; body=%s", operation, remaining, body)
+		if transport.appliedFor(operation) {
+			t.Fatalf("%s transport applied an effect after budget exhaustion: remaining=%v called=%v; body=%s", operation, remaining, called, body)
 		}
 		return
 	default:
@@ -120,7 +140,9 @@ func assertSubSecondTransportOutcome(t *testing.T, transport *deadlineCaptureTra
 }
 
 func (t *deadlineCaptureTransport) Dial(ctx context.Context, _ domain.MachineRef, _, _ uint16, _ string) (guestssh.Channel, error) {
-	t.record(ctx, "open")
+	if err := t.record(ctx, "open"); err != nil {
+		return nil, err
+	}
 	reader, writer := io.Pipe()
 	channel := &deadlineCaptureChannel{parent: t, reader: reader, writer: writer, waitCh: make(chan struct{})}
 	go func() { _, _ = writer.Write([]byte("synthetic prompt> ")) }()
@@ -137,17 +159,23 @@ type deadlineCaptureChannel struct {
 
 func (c *deadlineCaptureChannel) Read(p []byte) (int, error) { return c.reader.Read(p) }
 func (c *deadlineCaptureChannel) Write(ctx context.Context, p []byte) (int, error) {
-	c.parent.record(ctx, "write")
+	if err := c.parent.record(ctx, "write"); err != nil {
+		return 0, err
+	}
 	return len(p), nil
 }
 func (c *deadlineCaptureChannel) SendControl(ctx context.Context, _ domain.ControlKey) (guestssh.ControlResult, error) {
-	c.parent.record(ctx, "control")
+	if err := c.parent.record(ctx, "control"); err != nil {
+		return guestssh.ControlResult{}, err
+	}
 	return guestssh.ControlResult{AcceptedBytes: 1, EffectApplied: true}, nil
 }
 func (c *deadlineCaptureChannel) Resize(uint16, uint16) error { return nil }
 func (c *deadlineCaptureChannel) Close(ctx context.Context) error {
+	if err := c.parent.record(ctx, "close"); err != nil {
+		return err
+	}
 	c.once.Do(func() {
-		c.parent.record(ctx, "close")
 		_ = c.writer.Close()
 		_ = c.reader.Close()
 		close(c.waitCh)
@@ -306,4 +334,37 @@ func TestDaemonSessions_ActiveBearerTokensAreMandatoryExactSecrets(t *testing.T)
 	assertExactValuesRedacted(t, waitForSanitizedOutput(t, sessionPath, operatorToken), exactValues)
 	closeSanitizerSession(t, sessionPath, operatorToken)
 	assertTokensAbsentFromEvidence(t, stateDir, []string{operatorToken, agentToken})
+}
+
+func TestDeadlineCaptureWriteSeparatesObservationFromEffect(t *testing.T) {
+	for _, mode := range []string{"expired", "canceled", "active"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx := t.Context()
+			expected := error(nil)
+			switch mode {
+			case "expired":
+				deadline, cancel := context.WithDeadline(ctx, time.Now().Add(-time.Second))
+				defer cancel()
+				ctx, expected = deadline, context.DeadlineExceeded
+			case "canceled":
+				canceled, cancel := context.WithCancel(ctx)
+				cancel()
+				ctx, expected = canceled, context.Canceled
+			}
+			transport := &deadlineCaptureTransport{remaining: make(map[string]time.Duration)}
+			channel := &deadlineCaptureChannel{parent: transport}
+			count, err := channel.Write(ctx, []byte("synthetic payload"))
+			_, called := transport.remainingFor("write")
+			if !called {
+				t.Fatal("mock entry observation missing")
+			}
+			if expected != nil {
+				if !errors.Is(err, expected) || count != 0 || transport.appliedFor("write") {
+					t.Fatalf("expired/canceled write accepted an effect: n=%d err=%v", count, err)
+				}
+			} else if err != nil || count != len("synthetic payload") || !transport.appliedFor("write") {
+				t.Fatalf("active write not accepted: n=%d err=%v", count, err)
+			}
+		})
+	}
 }

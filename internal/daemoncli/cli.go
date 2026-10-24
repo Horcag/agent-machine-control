@@ -60,7 +60,7 @@ func runDaemon(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 
 	stateDir := fs.String("state-dir", "", "state directory path")
-	listenAddr := fs.String("listen", "127.0.0.1:0", "HTTP listen address")
+	listenAddr := fs.String("listen", "", "HTTP loopback address (automatic; shared Windows state uses IPv4)")
 	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
 
 	if err := fs.Parse(args); err != nil {
@@ -225,7 +225,7 @@ func printDaemonUsage(w io.Writer) {
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Flags:")
 	fmt.Fprintln(w, "  --state-dir <path>  Override state directory path")
-	fmt.Fprintln(w, "  --listen <addr>     Listen address (default 127.0.0.1:0)")
+	fmt.Fprintln(w, "  --listen <addr>     Exact loopback address (default: automatic; shared Windows state uses IPv4)")
 	fmt.Fprintln(w, "  --json              Emit machine-readable JSON")
 	fmt.Fprintln(w, "  --help, -h          Show help")
 	fmt.Fprintln(w, "  --version, -v       Show version")

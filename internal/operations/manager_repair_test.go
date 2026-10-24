@@ -108,7 +108,7 @@ func (b *repairBlockingBackend) RestoreCheckpoint(_ context.Context, _ string, _
 
 func TestManager_PendingAdmittedRunningObservationAndExactRetry(t *testing.T) {
 	blockCh := make(chan struct{})
-	backend := &repairBlockingBackend{blockChannel: blockCh}
+	backend := &repairBlockingBackend{blockChannel: blockCh, entered: make(chan struct{}, 1)}
 
 	state := testManagerStateDir(t)
 	dir := state.OperationsDir()
@@ -153,19 +153,18 @@ func TestManager_PendingAdmittedRunningObservationAndExactRetry(t *testing.T) {
 		t.Fatalf("expected initial state pending, got %s", rec.State)
 	}
 
-	// Wait until operation transitions to running
-	var runningRec *domain.OperationRecord
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		r, err := mgr.Get(rec.ID, actor)
-		if err == nil && r.State == domain.OpStateRunning {
-			runningRec = r
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
+	// Backend entry proves admission completed. Verify the public state once;
+	// polling durable files adds I/O and couples this invariant to host load.
+	waitCtx, cancel := context.WithDeadline(t.Context(), op.Deadline)
+	defer cancel()
+	select {
+	case <-backend.entered:
+	case <-waitCtx.Done():
+		t.Fatalf("operation did not reach the backend: %v", waitCtx.Err())
 	}
-	if runningRec == nil {
-		t.Fatalf("timed out waiting for operation to reach running state")
+	runningRec, err := mgr.Get(rec.ID, actor)
+	if err != nil || runningRec.State != domain.OpStateRunning {
+		t.Fatalf("backend entered before a running observation: %+v, %v", runningRec, err)
 	}
 
 	// Exact retry while running must return fresh running record

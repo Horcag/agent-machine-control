@@ -30,30 +30,25 @@ func (s *ConsoleService) IssueLabGrant(ctx context.Context, actor domain.ActorCo
 	if err != nil {
 		return grant, result, err
 	}
-	if err := s.requireLabSafety(ctx, resolution, req.AcknowledgeExternalEffects); err != nil {
+	if err := s.requireGrantSafety(ctx, resolution, req.Mode, req.AcknowledgeExternalEffects); err != nil {
 		return grant, result, err
 	}
 	existing, err := s.loadLabGrant(ctx, id)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return grant, result, err
 	}
-	now := s.recovery.now()
-	grant = ConsoleLabGrant{AcknowledgeExternalEffects: req.AcknowledgeExternalEffects, SchemaVersion: 1, GrantID: id, Target: domain.MachineRef(resolution.Locator.String()), EnrollmentIdentity: identity,
-		Issuer: actor.EffectiveActor, Beneficiary: beneficiary, Reason: req.Reason, IdempotencyKey: req.IdempotencyKey,
-		IssuedAt: now, ExpiresAt: now.Add(time.Duration(req.ValidForMillis) * time.Millisecond)}
-	if err == nil {
-		grant.IssuedAt, grant.ExpiresAt = existing.IssuedAt, existing.ExpiresAt
-		if grant != existing || existing.ExpiresAt.Sub(existing.IssuedAt).Milliseconds() != req.ValidForMillis {
-			return ConsoleLabGrant{}, result, receipt.ErrIdempotencyCollision
-		}
-		if err := s.validateLabBinding(ctx, existing); err != nil {
-			return ConsoleLabGrant{}, result, err
-		}
+	grant, err = s.prepareLabGrant(ctx, actor, req, beneficiary, resolution, identity, id, existing, err == nil)
+	if err != nil {
+		return ConsoleLabGrant{}, result, err
 	}
-	op := labGrantOperation("console.lab.grant.issue", actor, grant, req.Reason, req.IdempotencyKey, grant.ExpiresAt)
+	issuanceDeadline := grant.ExpiresAt
+	if grant.Mode == ConsoleLabModePersistentVM {
+		issuanceDeadline = grant.IssuedAt.Add(5 * time.Minute)
+	}
+	op := labGrantOperation("console.lab.grant.issue", actor, grant, req.Reason, req.IdempotencyKey, issuanceDeadline)
 	op.Parameters = map[string]any{"grant_id": id, "beneficiary": string(beneficiary), "enrollment_identity": identity, "expires_at": grant.ExpiresAt.UTC().Format(time.RFC3339Nano), "acknowledge_external_effects": grant.AcknowledgeExternalEffects}
 	result, resultErr = s.persistLabAuthority(ctx, op, grant.IssuedAt, id, func() error {
-		if err == nil {
+		if existing.GrantID != "" {
 			return nil
 		}
 		return s.writeLabDocument(ctx, id, ".json", grant)
@@ -91,7 +86,7 @@ func labGrantID(actor domain.ActorID, key string) string {
 }
 
 func (s *ConsoleService) labIdentity(ctx context.Context, reference string) (TargetResolution, string, error) {
-	if s.labEnrollment == nil || s.labSafety == nil {
+	if s.labEnrollment == nil {
 		return TargetResolution{}, "", ErrInvalidConsoleLabGrant
 	}
 	resolution, err := s.target.ResolveTarget(ctx, reference)
@@ -137,7 +132,7 @@ func (s *ConsoleService) resolveLabBinding(ctx context.Context, grant ConsoleLab
 
 func (s *ConsoleService) resolveLabBindingWithResolution(ctx context.Context, grant ConsoleLabGrant, observed *TargetResolution) (TargetResolution, error) {
 	now := s.recovery.now()
-	if now.Before(grant.IssuedAt) || !now.Before(grant.ExpiresAt) {
+	if now.Before(grant.IssuedAt) || (grant.Mode == "" && !now.Before(grant.ExpiresAt)) {
 		return TargetResolution{}, ErrInvalidConsoleLabGrant
 	}
 	revoked, err := s.labRevoked(ctx, grant.GrantID)
@@ -150,7 +145,7 @@ func (s *ConsoleService) resolveLabBindingWithResolution(ctx context.Context, gr
 		resolution, identity, err = s.labIdentity(ctx, string(grant.Target))
 	} else {
 		resolution = *observed
-		if s.labEnrollment == nil || s.labSafety == nil || resolution.Validate() != nil {
+		if s.labEnrollment == nil || resolution.Validate() != nil {
 			return TargetResolution{}, ErrInvalidConsoleLabGrant
 		}
 		identity, err = s.labEnrollment(ctx, domain.MachineRef(resolution.Locator.String()))
@@ -161,7 +156,7 @@ func (s *ConsoleService) resolveLabBindingWithResolution(ctx context.Context, gr
 	if err != nil || resolution.Locator.String() != string(grant.Target) || identity != grant.EnrollmentIdentity {
 		return TargetResolution{}, ErrInvalidConsoleLabGrant
 	}
-	return resolution, s.requireLabSafety(ctx, resolution, grant.AcknowledgeExternalEffects)
+	return resolution, s.requireGrantSafety(ctx, resolution, grant.Mode, grant.AcknowledgeExternalEffects)
 }
 
 func labGrantOperation(kind domain.OperationKind, actor domain.ActorContext, grant ConsoleLabGrant, reason, key string, deadline time.Time) domain.Operation {
@@ -198,8 +193,39 @@ func validateLabIssueRequest(actor domain.ActorContext, req ConsoleLabGrantIssue
 	if err := labOperator(actor); err != nil {
 		return "", err
 	}
-	if domain.ValidateReason(req.Reason) != nil || domain.ValidateIdempotencyKey(req.IdempotencyKey) != nil || req.ValidForMillis < 1000 || req.ValidForMillis > MaxConsoleLabGrantValidity.Milliseconds() {
+	if domain.ValidateReason(req.Reason) != nil || domain.ValidateIdempotencyKey(req.IdempotencyKey) != nil || (req.Mode == "" && (req.ValidForMillis < 1000 || req.ValidForMillis > MaxConsoleLabGrantValidity.Milliseconds())) || (req.Mode != "" && (req.Mode != ConsoleLabModePersistentVM || !req.AcknowledgeExternalEffects)) {
 		return "", ErrInvalidConsoleLabGrant
 	}
 	return labBeneficiary(actor, req.Beneficiary)
+}
+
+func (s *ConsoleService) requireGrantSafety(ctx context.Context, resolution TargetResolution, mode string, acknowledge bool) error {
+	if mode == ConsoleLabModePersistentVM {
+		return nil
+	}
+	if s.labSafety == nil {
+		return ErrInvalidConsoleLabGrant
+	}
+	return s.requireLabSafety(ctx, resolution, acknowledge)
+}
+
+func (s *ConsoleService) prepareLabGrant(ctx context.Context, actor domain.ActorContext, req ConsoleLabGrantIssueRequest, beneficiary domain.ActorID, resolution TargetResolution, identity, id string, existing ConsoleLabGrant, exists bool) (ConsoleLabGrant, error) {
+	now := s.recovery.now()
+	grant := ConsoleLabGrant{Mode: req.Mode, AcknowledgeExternalEffects: req.AcknowledgeExternalEffects, SchemaVersion: 1, GrantID: id, Target: domain.MachineRef(resolution.Locator.String()), EnrollmentIdentity: identity,
+		Issuer: actor.EffectiveActor, Beneficiary: beneficiary, Reason: req.Reason, IdempotencyKey: req.IdempotencyKey,
+		IssuedAt: now, ExpiresAt: now.Add(time.Duration(req.ValidForMillis) * time.Millisecond)}
+	if req.Mode == ConsoleLabModePersistentVM {
+		grant.ExpiresAt = time.Time{}
+	}
+	if exists {
+		grant.IssuedAt, grant.ExpiresAt = existing.IssuedAt, existing.ExpiresAt
+		if grant != existing || (req.Mode == "" && existing.ExpiresAt.Sub(existing.IssuedAt).Milliseconds() != req.ValidForMillis) {
+			return ConsoleLabGrant{}, receipt.ErrIdempotencyCollision
+		}
+		if err := s.validateLabBinding(ctx, existing); err != nil {
+			return ConsoleLabGrant{}, err
+		}
+	}
+
+	return grant, nil
 }

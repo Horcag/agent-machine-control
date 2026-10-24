@@ -34,7 +34,7 @@ func consoleArgs(args []string) ([]string, []string) {
 		}
 		flags = append(flags, arg)
 		name := strings.TrimLeft(arg, "-")
-		if !strings.Contains(name, "=") && name != "json" && name != "async" && name != "for-mcp" && name != "acknowledge-external-effects" && i+1 < len(args) {
+		if !strings.Contains(name, "=") && name != "json" && name != "async" && name != "persistent-vm" && name != "for-mcp" && name != "acknowledge-external-effects" && i+1 < len(args) {
 			flags = append(flags, args[i+1])
 			i++
 		}

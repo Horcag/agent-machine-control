@@ -1,0 +1,203 @@
+package stream
+
+import (
+	"bytes"
+	"context"
+	"os/exec"
+	"strings"
+	"testing"
+	"time"
+)
+
+// Linux compilation checks C# and PowerShell API usage without executing a
+// native methods. The Windows SID and .NET Framework JSON API are shimmed only
+// in this compiler fixture, never in the production source.
+func TestWorkerSourceCompilesAndBootstrapParses(t *testing.T) {
+	path, err := exec.LookPath("pwsh")
+	if err != nil {
+		t.Skip("Linux PowerShell compiler unavailable")
+	}
+	source := sourceBytes()
+	source = bytes.ReplaceAll(source, []byte("WindowsIdentity.GetCurrent().User.Value"), []byte(`"synthetic-sid"`))
+	source = append(source, []byte(`
+namespace System.Web.Script.Serialization {
+ public sealed class JavaScriptSerializer {
+  public int MaxJsonLength {get;set;}
+  public string Serialize(object value){return "{}";}
+  public T Deserialize<T>(string value){return (T)(object)new System.Collections.Generic.Dictionary<string,object>{{"id",""}};}
+ }
+}
+namespace AMCStream {
+ public sealed class ThrowingControlStream : System.IO.MemoryStream {
+  public override int Read(byte[] bytes,int offset,int count){throw new System.IO.IOException("private failure text");}
+ }
+ public static class IdentityRegression {
+  static void ControlRefusal(System.IO.Stream input,string stage,System.Func<string,System.Collections.Generic.Dictionary<string,object>> decode){
+   try{Worker.ReadControl(input,decode);throw new System.Exception("control failure accepted");}
+   catch(Worker.ControlFailure failure){if(failure.Stage!=stage)throw new System.Exception("wrong control stage");}
+  }
+
+  public static void Check(){
+   System.Func<string,System.Collections.Generic.Dictionary<string,object>> decoded=delegate(string text){return new System.Collections.Generic.Dictionary<string,object>{{"id",text}};};
+   ControlRefusal(new System.IO.MemoryStream(),"control_eof",decoded);
+   ControlRefusal(new ThrowingControlStream(),"control_read",decoded);
+   ControlRefusal(new System.IO.MemoryStream(new byte[]{0,0,0,0}),"control_header",decoded);
+   ControlRefusal(new System.IO.MemoryStream(new byte[]{0,4,0,1}),"control_header",decoded);
+   ControlRefusal(new System.IO.MemoryStream(new byte[]{0,0,0,2,1}),"control_eof",decoded);
+   ControlRefusal(new System.IO.MemoryStream(new byte[]{0,0,0,1,255}),"control_decode",decoded);
+   ControlRefusal(new System.IO.MemoryStream(new byte[]{0,0,0,1,65}),"control_decode",delegate(string text){throw new System.Exception("private JSON parser text");});
+   if((string)Worker.ReadControl(new System.IO.MemoryStream(new byte[]{0,0,0,1,65}),decoded)["id"]!="A")throw new System.Exception("valid control changed");
+   var failure=Failure.Metadata(new System.Exception(@"C:\private\secret SDDL token"),"observe");
+   if(failure.Count!=2||(string)failure["stage"]!="observe"||(uint)failure["nativeError"]!=0)throw new System.Exception("exception text retained");
+   failure=Failure.Metadata(new NativeFailure("security_enable",1300),"observe");
+   if(failure.Count!=2||(string)failure["stage"]!="security_enable"||(uint)failure["nativeError"]!=1300)throw new System.Exception("native diagnostic lost");
+   string[] stages={"runspace_open","request","observe","put","get","exec","remove_owned","security_token","security_lookup","security_enable","security_restore","ancestor_open","workspace_open","file_open","metadata_read","file_id_read","security_size","security_read","security_parse","file_commit","file_delete","control_eof","control_read","control_header","control_decode","file_owner_set"};
+   for(int i=0;i<stages.Length;i++){
+    uint plain=Failure.TimerExit(new System.Exception("private text"),stages[i]);
+    uint nativeCode=Failure.TimerExit(new NativeFailure(stages[i],65535),"request");
+    if(plain!=(0x01000000u|((uint)(i+1)<<16))||nativeCode!=(plain|65535u))throw new System.Exception("closed timer stage encoding changed");
+   }
+   if(Failure.TimerExit(new System.Exception("secret"),"unknown")!=217||Failure.TimerExit(new NativeFailure("unknown",1),"observe")!=217||Failure.TimerExit(new NativeFailure("observe",65536),"request")!=217)throw new System.Exception("unsafe timer cause encoded");
+   using(var hash=System.Security.Cryptography.SHA256.Create()){
+    if(Worker.EmptyDigest!=Worker.Hex(hash.ComputeHash(new byte[0])))throw new System.Exception("empty payload digest changed");
+   }
+   using(var fired=new System.Threading.ManualResetEvent(false)){
+    uint marker=0;int closures=0;uint encoded=Failure.TimerExit(new NativeFailure("security_enable",1300),"observe");
+    var owned=new Lifetime.OwnTermination(delegate(uint code){marker=code;return false;},delegate{closures++;fired.Set();});
+    using(var timer=Lifetime.ArmOwnedFailure(owned,System.DateTime.UtcNow.AddMilliseconds(30),encoded)){
+     if(!fired.WaitOne(5000))throw new System.Exception("encoded cause timer missed bound");
+     owned.Stop(219);
+    }
+    if(marker!=0x010A0514u||closures!=1)throw new System.Exception("encoded timer cause overwritten");
+   }
+   int creates=0,ownerSets=0,ownerCloses=0;byte[] originalSid={1,1,0,0,0,0,0,5,21,0,0,0};
+   var held=new System.IO.MemoryStream();
+   System.Func<System.IO.MemoryStream> create=delegate{creates++;return held;};
+   System.Action<System.IO.MemoryStream> close=delegate(System.IO.MemoryStream file){ownerCloses++;file.Dispose();};
+   try{Native.CreateOwned("synthetic-user","synthetic-other",originalSid,create,delegate(System.IO.MemoryStream file,byte[] sid){ownerSets++;return 0u;},close);throw new System.Exception("foreign owner accepted");}
+   catch(System.IO.InvalidDataException){}
+   if(creates!=0||ownerSets!=0||ownerCloses!=0)throw new System.Exception("mismatched owner created file");
+   foreach(bool throws in new[]{false,true}){
+    held=new System.IO.MemoryStream();creates=ownerSets=ownerCloses=0;
+    try{Native.CreateOwned("synthetic-user","synthetic-user",originalSid,create,delegate(System.IO.MemoryStream file,byte[] sid){ownerSets++;if(!object.ReferenceEquals(file,held)||!object.ReferenceEquals(sid,originalSid)||file.Length!=0)throw new System.Exception("owner handle/input drift");if(throws)throw new System.IO.IOException("synthetic setter failure");return 5u;},close);throw new System.Exception("failed setter published file");}
+    catch(NativeFailure error){if(throws||error.Stage!="file_owner_set"||error.Code!=5)throw;}
+    catch(System.IO.IOException){if(!throws)throw;}
+    if(creates!=1||ownerSets!=1||ownerCloses!=1||held.CanWrite)throw new System.Exception("failed setter leaked original");
+   }
+   held=new System.IO.MemoryStream();creates=ownerSets=ownerCloses=0;
+   var published=Native.CreateOwned("synthetic-user","synthetic-user",originalSid,create,delegate(System.IO.MemoryStream file,byte[] sid){ownerSets++;if(!object.ReferenceEquals(file,held)||file.Length!=0||!object.ReferenceEquals(sid,originalSid))throw new System.Exception("owner set after payload");return 0u;},close);
+   published.WriteByte(42);if(creates!=1||ownerSets!=1||ownerCloses!=0||published.Length!=1)throw new System.Exception("owned file not published after setter");published.Dispose();
+   var a=new System.Collections.Generic.Dictionary<string,object>();var b=new System.Collections.Generic.Dictionary<string,object>();
+   string[] keys={"path","volume","fileId","creationTime","owner","sddlHash","size","sha256","rootPath","rootVolume","rootFileId","rootCreationTime","rootOwner","rootSDDLHash"};
+   foreach(var key in keys){a[key]="original";b[key]="original";}
+   if(!Native.Same(a,b))throw new System.Exception("original rejected");
+   foreach(var key in keys){b[key]="changed";if(Native.Same(a,b))throw new System.Exception("changed identity accepted "+key);b[key]="original";}
+   b.Remove("owner");if(Native.Same(a,b))throw new System.Exception("incomplete identity accepted");
+
+   // Execute the real hello and control reader on supplied streams. An invalid
+   // first request stops before native operations; the adjacent frame survives.
+   using(var suppliedInput=new System.IO.MemoryStream(new byte[]{0,0,0,2,123,125,0,0,0,1,65}))
+   using(var suppliedOutput=new System.IO.MemoryStream()){
+    var run=typeof(Worker).GetMethod("RunOwned",System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Static);
+    try{run.Invoke(null,new object[]{suppliedInput,suppliedOutput,null});throw new System.Exception("invalid request accepted");}
+    catch(System.Reflection.TargetInvocationException error){if(!(error.InnerException is System.IO.InvalidDataException))throw;}
+    if(!suppliedInput.CanRead||!suppliedOutput.CanWrite||suppliedInput.Position!=6)throw new System.Exception("supplied stream closed or replaced");
+    byte[] hello=suppliedOutput.ToArray();
+    if(hello.Length!=6||hello[0]!=0||hello[1]!=0||hello[2]!=0||hello[3]!=2||hello[4]!=123||hello[5]!=125)throw new System.Exception("hello bypassed supplied output");
+    if((string)Worker.ReadControl(suppliedInput,decoded)["id"]!="A"||suppliedInput.Position!=suppliedInput.Length)throw new System.Exception("adjacent frame lost or replayed");
+   }
+   // Real managed buffering must preserve adjacent binary frames and exact EOF.
+   using(var raw=new System.IO.MemoryStream(new byte[]{0,0,0,1,65,0,0,0,1,66,0,0,0,2,67}))
+   using(var buffered=new System.IO.BufferedStream(raw,65536)){
+    if((string)Worker.ReadControl(buffered,decoded)["id"]!="A"||(string)Worker.ReadControl(buffered,decoded)["id"]!="B")throw new System.Exception("buffered framing changed");
+    ControlRefusal(buffered,"control_eof",decoded);
+    if(raw.Position!=raw.Length)throw new System.Exception("partial frame replayed");
+   }
+   if(Lifetime.CheckedPipeState(0,40,3)!=3)throw new System.Exception("connected pipe rejected");
+   foreach(var item in new[]{new object[]{-1,40UL,211u},new object[]{0,39UL,212u},new object[]{0x103,40UL,214u}}){
+    try{Lifetime.CheckedPipeState((int)item[0],(ulong)item[1],3);throw new System.Exception("invalid query accepted");}
+    catch(Lifetime.PipeFailure pipeFailure){if(pipeFailure.ExitCode!=(uint)item[2])throw new System.Exception("wrong query exit");}
+   }
+   int kills=0,closes=0;
+   var termination=new Lifetime.OwnTermination(delegate(uint code){if(code!=213u)throw new System.Exception("wrong kill marker");kills++;return false;},delegate{closes++;});
+   termination.Stop(213);termination.Stop(211);
+   if(kills!=1||closes!=1)throw new System.Exception("failed kill did not close exactly once");
+   kills=0;closes=0;
+   termination=new Lifetime.OwnTermination(delegate(uint code){kills++;throw new System.Exception("native invocation failed");},delegate{closes++;});
+   termination.Stop(211);termination.Stop(212);
+   if(kills!=1||closes!=1)throw new System.Exception("throwing kill leaked owned job");
+   foreach(bool nativeSuccess in new[]{true,false}){
+    uint marker=0;int closures=0;
+    var owned=new Lifetime.OwnTermination(delegate(uint code){marker=code;return nativeSuccess;},delegate{closures++;});
+    using(var stop=new System.Threading.ManualResetEvent(false)){
+     Lifetime.ObserveOwned(stop,delegate(){throw new System.Exception("synthetic observer failure");},owned);
+    }
+    owned.Stop(219);if(marker!=215||closures!=1)throw new System.Exception("observer marker lost");
+   }
+   uint first=0;int closed=0;
+   var primary=new Lifetime.OwnTermination(delegate(uint code){first=code;throw new System.Exception("synthetic terminate failure");},delegate{closed++;});
+   var originalFailure=new System.Exception("synthetic worker failure");
+   try{Lifetime.RunWorker(delegate(){throw originalFailure;},primary);throw new System.Exception("worker failure swallowed");}
+   catch(System.Exception error){if(!object.ReferenceEquals(error,originalFailure))throw;}
+   primary.Stop(219);if(first!=216||closed!=1)throw new System.Exception("using cleanup replaced first marker");
+   var order=new System.Collections.Generic.List<string>();
+   var normal=new Lifetime.OwnTermination(delegate(uint code){order.Add("marker:"+code);return false;},delegate{order.Add("close");});
+   Lifetime.RunWorker(delegate{order.Add("run");},normal);
+   Lifetime.FinishObserver(delegate{order.Add("stop");},delegate{order.Add("join");return true;},delegate{order.Add("release");},delegate{order.Add("timer");},normal);
+   if(string.Join(",",order.ToArray())!="run,stop,join,release,marker:219,close,timer")throw new System.Exception("normal stop order changed");
+   order.Clear();normal=new Lifetime.OwnTermination(delegate(uint code){order.Add("marker:"+code);return false;},delegate{order.Add("close");});
+   Lifetime.FinishObserver(delegate{order.Add("stop");},delegate{order.Add("join");return false;},delegate{order.Add("release");},delegate{order.Add("timer");},normal);
+   if(string.Join(",",order.ToArray())!="stop,join,marker:218,close,timer")throw new System.Exception("join timeout did not close before timer release");
+   using(var fired=new System.Threading.ManualResetEvent(false)){
+    first=0;closed=0;
+    var timed=new Lifetime.OwnTermination(delegate(uint code){first=code;return false;},delegate{System.Threading.Interlocked.Increment(ref closed);fired.Set();});
+    using(var timer=Lifetime.ArmOwnedFailure(timed,System.DateTime.UtcNow.AddMilliseconds(30))){
+     Lifetime.FinishObserver(delegate{},delegate{if(!fired.WaitOne(5000))throw new System.Exception("failure timer missed bound");return false;},delegate{},delegate{},timed);
+    }
+    if(first!=217||closed!=1)throw new System.Exception("join cleanup replaced prearmed timer marker");
+   }
+   var now=new System.DateTime(2026,1,1,0,0,0,System.DateTimeKind.Utc);
+   if(Lifetime.FailureBudget(now.AddSeconds(30),now)!=System.TimeSpan.FromSeconds(1))throw new System.Exception("failure bound exceeded one second");
+   if(Lifetime.FailureBudget(now.AddMilliseconds(20),now)!=System.TimeSpan.FromMilliseconds(20))throw new System.Exception("request deadline extended");
+   if(Lifetime.FailureBudget(now.AddTicks(-1),now)!=System.TimeSpan.Zero)throw new System.Exception("expired request extended");
+   // Output backpressure and terminal input cannot cancel the prearmed bound.
+   using(var released=new System.Threading.ManualResetEvent(false)){
+    int closures=0;
+    using(var timer=Lifetime.ArmFailureBound(delegate(){System.Threading.Interlocked.Increment(ref closures);released.Set();},System.DateTime.UtcNow.AddMilliseconds(100))){
+     if(!released.WaitOne(5000)||closures!=1)throw new System.Exception("blocked failure response survived its bound");
+    }
+   }
+   using(var terminal=new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes("another business request"))){
+    Lifetime.DrainTerminal(terminal);
+    if(terminal.Position!=terminal.Length)throw new System.Exception("terminal input was reused");
+   }
+   using(var stopped=new System.Threading.ManualResetEvent(false)){
+    int observations=0,disconnects=0;
+    // A disconnected pipe with unread payload must still terminate the worker.
+    Lifetime.Observe(stopped,delegate(){observations++;return 4u;},delegate(){disconnects++;});
+    if(observations!=1||disconnects!=1)throw new System.Exception("EOF observer missed unread backlog");
+    stopped.Set();Lifetime.Observe(stopped,delegate(){throw new System.Exception("observer survived stop");},delegate(){throw new System.Exception("stop closed job twice");});
+   }
+  }
+ }
+}`)...)
+	script := `$ErrorActionPreference='Stop';$source=[Console]::In.ReadToEnd();Add-Type -TypeDefinition $source -IgnoreWarnings -WarningAction SilentlyContinue;[AMCStream.IdentityRegression]::Check();Write-Output 'compiled'`
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, path, "-NoProfile", "-NonInteractive", "-Command", script)
+	command.Stdin = bytes.NewReader(source)
+	output, err := command.CombinedOutput()
+	if err != nil || !strings.Contains(string(output), "compiled") {
+		t.Fatalf("C# declarations: %v %s", err, output)
+	}
+	if len(StartupCommand) > 8191 || len(source) > MaxControl {
+		t.Fatal("startup/source bounds exceeded")
+	}
+	bootstrap := strings.TrimSuffix(strings.SplitN(StartupCommand, `-Command "`, 2)[1], `"`)
+	script = `$tokens=$null;$errors=$null;[Management.Automation.Language.Parser]::ParseInput([Console]::In.ReadToEnd(),[ref]$tokens,[ref]$errors)|Out-Null;if($errors.Count){$errors|ForEach-Object{$_.Message};exit 1}`
+	command = exec.CommandContext(ctx, path, "-NoProfile", "-NonInteractive", "-Command", script)
+	command.Stdin = strings.NewReader(bootstrap)
+	if output, err = command.CombinedOutput(); err != nil {
+		t.Fatalf("bootstrap parse: %v %s", err, output)
+	}
+}

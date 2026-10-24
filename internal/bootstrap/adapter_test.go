@@ -321,6 +321,9 @@ func TestBuildSpecProducesExactInteractiveLimitedFingerprint(t *testing.T) {
 	if spec.MultipleInstances != "IgnoreNew" || spec.ExecutionTimeLimit != "PT0S" {
 		t.Fatalf("unsafe lifecycle settings: %#v", spec)
 	}
+	if spec.ListenAddress != "" {
+		t.Fatalf("bootstrap must leave listener selection automatic: %q", spec.ListenAddress)
+	}
 	if err := spec.Validate(identity); err != nil {
 		t.Fatalf("spec.Validate() error = %v", err)
 	}

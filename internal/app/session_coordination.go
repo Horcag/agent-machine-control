@@ -19,6 +19,10 @@ func (s *SessionService) evaluatePolicy(ctx context.Context, op domain.Operation
 		return policy.Decision{}, err
 	}
 
+	capabilities := domain.SessionCapabilities()
+	if domain.IsGuestOperation(op.Kind) {
+		capabilities[domain.CapabilityGuestOperation] = struct{}{}
+	}
 	evalInput := policy.EvaluationInput{
 		Operation:               op,
 		Now:                     now,
@@ -26,7 +30,7 @@ func (s *SessionService) evaluatePolicy(ctx context.Context, op domain.Operation
 		RollbackState:           rollbackState,
 		Approval:                approval,
 		RollbackPolicy:          policy.RollbackPolicyEscalateToDestructive,
-		AvailableCapabilities:   domain.SessionCapabilities(),
+		AvailableCapabilities:   capabilities,
 		SensitiveEvidenceScopes: domain.NewScopeSet("evidence:sensitive", policy.DefaultSensitiveEvidenceScope),
 	}
 
@@ -286,6 +290,8 @@ func (s *SessionService) executeMutation(
 }
 
 type admittedSessionMutation struct {
+	approval     *domain.Approval
+	labGrant     *ConsoleLabGrant
 	op           domain.Operation
 	fp           domain.Fingerprint
 	idFp         domain.Fingerprint
@@ -301,13 +307,26 @@ func (s *SessionService) admitSessionMutation(
 	timeout time.Duration,
 	initialFP domain.Fingerprint,
 ) (*admittedSessionMutation, *domain.Receipt, error) {
+	var labGrant *ConsoleLabGrant
+	releaseGrant := func() error { return nil }
+	if approval == nil {
+		grant, release, err := s.labAuthority.admitPersistentLab(ctx, op)
+		if err != nil {
+			return nil, nil, err
+		}
+		labGrant, releaseGrant = grant, release
+	}
 	releaseLease, err := s.acquireMutationLease(ctx, op, timeout, initialFP)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, errors.Join(err, releaseGrant())
 	}
-	now := s.now()
+	releaseMachine := releaseLease
+	releaseLease = func() error { return errors.Join(releaseGrant(), releaseMachine()) }
 	safety := s.resolveSafety(ctx, op.Target)
 	op.Classification = safety.Classification
+	if domain.IsGuestOperation(op.Kind) && op.Classification != domain.ClassReversibleMutation && op.Classification != domain.ClassDestructivePrivileged {
+		return nil, nil, errors.Join(ErrGuestAuthority, releaseLease())
+	}
 	fp, idFp, err := s.validateAndFingerprint(op)
 	if err != nil {
 		return nil, nil, errors.Join(err, releaseLease())
@@ -320,12 +339,19 @@ func (s *SessionService) admitSessionMutation(
 			releaseLease: releaseLease,
 		}, nil, nil
 	}
+	if labGrant != nil && op.Classification.RequiresApproval() {
+		approval, err = s.labAuthority.deriveLabApproval(ctx, *labGrant, op)
+		if err != nil {
+			return nil, nil, errors.Join(err, releaseLease())
+		}
+	}
+	now := s.now()
 	decision, denialReceipt, err := s.evaluateAndAdmit(ctx, op, safety, approval, now, fp, idFp)
 	if err != nil {
 		return nil, denialReceipt, errors.Join(err, releaseLease())
 	}
 	return &admittedSessionMutation{
-		op: op, fp: fp, idFp: idFp, decision: decision, safety: safety, releaseLease: releaseLease,
+		op: op, fp: fp, idFp: idFp, decision: decision, safety: safety, releaseLease: releaseLease, approval: approval, labGrant: labGrant,
 	}, nil, nil
 }
 
@@ -425,13 +451,16 @@ func (s *SessionService) coordinateSessionMutation(
 		}
 		return sessionMutationResult{}, denialRcpt, err
 	}
-	if err := s.reserveAndPrepareMutation(ctx, admitted, approval); err != nil {
+	if err := s.reserveAndPrepareMutation(ctx, admitted, admitted.approval); err != nil {
 		entry.err = err
 		return sessionMutationResult{}, nil, err
 	}
 
-	result, rcpt, mutErr := s.executeMutation(ctx, admitted.op, admitted.fp, admitted.idFp, admitted.safety, execute)
-	mutErr = errors.Join(mutErr, s.releaseUnexecutedApproval(ctx, admitted, approval, result))
+	result, rcpt, mutErr := s.executeMutation(withGuestAdmission(ctx, admitted), admitted.op, admitted.fp, admitted.idFp, admitted.safety, func(execCtx context.Context) (result sessionMutationResult, err error) {
+		err = s.labAuthority.withPersistentLabEffect(execCtx, admitted.labGrant, func(fenced context.Context) error { result, err = execute(fenced); return err })
+		return result, err
+	})
+	mutErr = errors.Join(mutErr, s.releaseUnexecutedApproval(ctx, admitted, admitted.approval, result))
 	releaseErr := admitted.releaseLease()
 
 	entry.result = result

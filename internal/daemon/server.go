@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,6 +29,7 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/receipt"
 	"github.com/Horcag/agent-machine-control/internal/sessions"
 	"github.com/Horcag/agent-machine-control/internal/statedir"
+	"github.com/Horcag/agent-machine-control/internal/wslruntime"
 )
 
 type contextKey string
@@ -42,37 +44,39 @@ var (
 
 // Server is the HTTP/1.1 daemon server for Agent Machine Control.
 type Server struct {
-	cfg               Config
-	stateDir          *statedir.StateDir
-	authStore         *auth.Store
-	leaseMgr          *lease.Manager
-	auditStore        *audit.Store
-	receiptStore      *receipt.Store
-	approvalStore     *approval.Store
-	recoveryService   *app.RecoveryService
-	consoleService    *app.ConsoleService
-	desktopService    *app.DesktopService
-	targetService     *app.TargetService
-	targetCoordinator *app.TargetCoordinator
-	eventHub          *events.Hub
-	opMgr             *operations.Manager
-	sessionMgr        *sessions.Manager
-	sessionService    *app.SessionService
-	singletonLock     *SingletonLock
-	httpServer        *http.Server
-	listener          net.Listener
-	endpoint          string
-	startedAt         time.Time
-	pid               int
-	runtimeID         string
-	startTime         string
-	shutdownChan      chan struct{}
-	shutdownOnce      sync.Once
-	admissionClosed   atomic.Bool
-	semaphore         chan struct{}
-	identityProvider  lease.IdentityProvider
-	shutdownHTTP      func(context.Context) error
-	closeHTTP         func() error
+	guestService          *app.GuestService
+	cfg                   Config
+	stateDir              *statedir.StateDir
+	authStore             *auth.Store
+	leaseMgr              *lease.Manager
+	auditStore            *audit.Store
+	receiptStore          *receipt.Store
+	approvalStore         *approval.Store
+	recoveryService       *app.RecoveryService
+	consoleService        *app.ConsoleService
+	desktopService        *app.DesktopService
+	targetService         *app.TargetService
+	targetCoordinator     *app.TargetCoordinator
+	eventHub              *events.Hub
+	opMgr                 *operations.Manager
+	sessionMgr            *sessions.Manager
+	sessionService        *app.SessionService
+	singletonLock         *SingletonLock
+	httpServer            *http.Server
+	listener              net.Listener
+	endpoint              string
+	startedAt             time.Time
+	pid                   int
+	runtimeID             string
+	startTime             string
+	shutdownChan          chan struct{}
+	shutdownOnce          sync.Once
+	admissionClosed       atomic.Bool
+	guestShutdownComplete atomic.Bool
+	semaphore             chan struct{}
+	identityProvider      lease.IdentityProvider
+	shutdownHTTP          func(context.Context) error
+	closeHTTP             func() error
 
 	afterEarlyMutationAdmissionCheck func()
 
@@ -195,12 +199,16 @@ func NewServer(cfg Config) (*Server, error) {
 		identityProvider:  ident,
 	}
 
-	if provider, ok := backend.(app.ConsoleProvider); ok {
-		srv.consoleService = app.NewConsoleService(provider, recoverySvc, targetService, filepath.Join(sd.Root(), "console-frames"), app.WithConsoleLabSafetyResolver(safetyResolver), app.WithConsoleLabEnrollmentIdentity(func(ctx context.Context, ref domain.MachineRef) (string, error) {
-			return targetService.EnrollmentIdentity(ctx, string(ref))
-		}))
+	provider, _ := backend.(app.ConsoleProvider)
+	srv.consoleService = app.NewConsoleService(provider, recoverySvc, targetService, filepath.Join(sd.Root(), "console-frames"), app.WithConsoleLabSafetyResolver(safetyResolver), app.WithConsoleLabEnrollmentIdentity(func(ctx context.Context, ref domain.MachineRef) (string, error) {
+		return targetService.EnrollmentIdentity(ctx, string(ref))
+	}))
+	app.WithSessionLabAuthority(srv.consoleService)(sessionSvc)
+	app.WithRecoveryLabAuthority(srv.consoleService)(recoverySvc)
+	if provider != nil {
 		srv.desktopService = app.NewDesktopService(guestdesktop.New(guestssh.NewTransport(keyProvider)), srv.consoleService)
 	}
+	srv.initializeGuestService(sessionSvc, targetService, keyProvider)
 	srv.setupHTTPServer()
 	return srv, nil
 }
@@ -279,6 +287,10 @@ func (s *Server) dispatchV1(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) dispatchOtherV1(w http.ResponseWriter, r *http.Request, path string) {
 	switch {
+	case path == "guest/operations":
+		s.handleGuestOperation(w, r)
+	case path == "guest/approvals":
+		s.handleGuestApproval(w, r)
 	case strings.HasPrefix(path, "desktop/"):
 		s.dispatchDesktop(w, r, path)
 	case path == "audit":
@@ -355,32 +367,13 @@ func (s *Server) dispatchReceiptSubroute(w http.ResponseWriter, r *http.Request,
 
 // Start opens the network listener and records the daemon endpoint.
 func (s *Server) Start() error {
-	addr := s.cfg.ListenAddr
-	if addr == "" {
-		addr = "127.0.0.1:0"
-	}
-
-	host, _, err := net.SplitHostPort(addr)
+	preferIPv6 := preferIPv6Loopback(runtime.GOOS, s.stateDir.Root(), wslruntime.IsWindowsHostPath)
+	ln, err := listenLoopback(s.cfg.ListenAddr, preferIPv6, net.Listen)
 	if err != nil {
 		if s.singletonLock != nil {
 			_ = s.singletonLock.Release()
 		}
-		return fmt.Errorf("daemon: invalid listen address %q: %w", addr, err)
-	}
-	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
-		if s.singletonLock != nil {
-			_ = s.singletonLock.Release()
-		}
-		return fmt.Errorf("daemon: listen address host %q must be a loopback IP literal", host)
-	}
-
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		if s.singletonLock != nil {
-			_ = s.singletonLock.Release()
-		}
-		return fmt.Errorf("daemon: failed to listen on %s: %w", addr, err)
+		return err
 	}
 
 	s.listener = ln

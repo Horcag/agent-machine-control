@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/domain"
@@ -89,4 +90,31 @@ func runLifecycleHooks(ctx context.Context, req MutationRequest) error {
 		}
 	}
 	return nil
+}
+
+func (s *RecoveryService) checkPreconditions(ctx context.Context, op domain.Operation, req MutationRequest) (*domain.Receipt, error) {
+	if s.receiptStore != nil {
+		// Durable terminal truth wins over caller cancellation for an exact retry.
+		lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		cached, err := s.receiptStore.LookupIdempotencyContext(lookupCtx, op)
+		cancel()
+		if err != nil {
+			return nil, err
+		}
+		if cached != nil {
+			if req.cachedReceipt != nil {
+				*req.cachedReceipt = true
+			}
+			return cached, nil
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if s.auditStore != nil {
+		if err := s.auditStore.CheckWritableContext(ctx); err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrAuditUnavailable, err)
+		}
+	}
+	return nil, nil
 }

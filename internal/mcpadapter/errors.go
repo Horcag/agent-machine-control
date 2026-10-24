@@ -3,6 +3,7 @@ package mcpadapter
 import (
 	"context"
 	"errors"
+	"github.com/Horcag/agent-machine-control/internal/app"
 	"net/http"
 
 	"github.com/Horcag/agent-machine-control/internal/backends/hyperv"
@@ -60,45 +61,52 @@ func operationToolError(err error, operationID, receiptID string) *mcp.CallToolR
 // Category keys are allowlisted protocol metadata, never provider message text.
 func categoryToolError(category string) string {
 	messages := map[string]string{
-		"recording_status_inconclusive":   "recording_status_inconclusive: recording status is inconclusive",
-		"approval_required":               "approval_required: operator approval required for this operation",
-		"target_not_enrolled":             "target is not enrolled",
-		"target_mismatch":                 "target is not enrolled",
-		"target_unavailable":              "protected target is unavailable",
-		"host_unavailable":                "backend_host_unavailable: backend management host is unavailable",
-		"module_missing":                  "backend_module_missing: Hyper-V PowerShell module is unavailable",
-		"backend_error":                   "backend_error: backend operation failed",
-		"backend_unavailable":             "backend_unavailable: machine backend is unavailable",
-		"access_denied":                   "backend_access_denied: machine backend access denied",
-		"malformed_response":              "backend_malformed_response: machine backend returned an invalid response",
-		"output_limit":                    "backend_output_limit: machine backend output exceeded its size limit",
-		"machine_not_found":               "requested resource not found",
-		"checkpoint_not_found":            "requested resource not found",
-		"not_found":                       "requested resource not found",
-		"invalid_argument":                "invalid_argument: invalid operation input",
-		"invalid_state":                   "operation_conflict: operation conflicts with current state",
-		"conflict":                        "operation_conflict: operation conflicts with current state",
-		"unauthorized":                    "authentication failed",
-		"unauthenticated_caller":          "authentication failed",
-		"forbidden":                       "access_denied: operation denied by policy",
-		"policy":                          "access_denied: operation denied by policy",
-		"policy_denial":                   "access_denied: operation denied by policy",
-		"forbidden_operation":             "access_denied: operation denied by policy",
-		"missing_required_scope":          "access_denied: operation denied by policy",
-		"delegation_exceeds_authority":    "access_denied: operation denied by policy",
-		"approval_record_expired":         "approval_expired: operator approval has expired",
-		"approval_record_consumed":        "approval_consumed: operator approval has already been consumed",
-		"approval_record_not_yet_valid":   "approval_invalid: operator approval is not yet valid",
-		"approval_record_mismatch":        "approval_invalid: operator approval does not match this operation",
-		"missing_verified_rollback_point": "rollback_required: operation requires a verified rollback point",
-		"timeout":                         "operation_timeout: operation timeout exceeded",
-		"deadline_exceeded":               "operation_timeout: operation timeout exceeded",
-		"deadline_passed":                 "operation_timeout: operation timeout exceeded",
-		"cancelled":                       "operation_canceled: operation was canceled",
-		"caller_canceled":                 "operation_canceled: operation was canceled",
-		"persistence_failure":             "operation_persistence_failure: operation record could not be saved",
-		"finalization_error":              "operation_finalization_error: operation could not be finalized",
-		"daemon_crash_recovered":          "operation_interrupted: operation was interrupted by daemon restart",
+		"guest_workspace_unprovisioned":    "guest_workspace_unprovisioned: an operator must provision authorized workspace identity metadata",
+		"guest_authority":                  "guest_authority: guest authority changed or unavailable",
+		"guest_not_prepared":               "guest_not_prepared: prepare the guest worker explicitly",
+		"guest_ownership":                  "guest_ownership: guest artifact ownership or identity mismatch",
+		"guest_uncertain":                  "guest_uncertain: guest operation outcome is uncertain; do not replay",
+		"missing_sensitive_evidence_scope": "access_denied: sensitive evidence scope required",
+		"missing_required_capability":      "access_denied: required capability unavailable",
+		"recording_status_inconclusive":    "recording_status_inconclusive: recording status is inconclusive",
+		"approval_required":                "approval_required: operator approval required for this operation",
+		"target_not_enrolled":              "target is not enrolled",
+		"target_mismatch":                  "target is not enrolled",
+		"target_unavailable":               "protected target is unavailable",
+		"host_unavailable":                 "backend_host_unavailable: backend management host is unavailable",
+		"module_missing":                   "backend_module_missing: Hyper-V PowerShell module is unavailable",
+		"backend_error":                    "backend_error: backend operation failed",
+		"backend_unavailable":              "backend_unavailable: machine backend is unavailable",
+		"access_denied":                    "backend_access_denied: machine backend access denied",
+		"malformed_response":               "backend_malformed_response: machine backend returned an invalid response",
+		"output_limit":                     "backend_output_limit: machine backend output exceeded its size limit",
+		"machine_not_found":                "requested resource not found",
+		"checkpoint_not_found":             "requested resource not found",
+		"not_found":                        "requested resource not found",
+		"invalid_argument":                 "invalid_argument: invalid operation input",
+		"invalid_state":                    "operation_conflict: operation conflicts with current state",
+		"conflict":                         "operation_conflict: operation conflicts with current state",
+		"unauthorized":                     "authentication failed",
+		"unauthenticated_caller":           "authentication failed",
+		"forbidden":                        "access_denied: operation denied by policy",
+		"policy":                           "access_denied: operation denied by policy",
+		"policy_denial":                    "access_denied: operation denied by policy",
+		"forbidden_operation":              "access_denied: operation denied by policy",
+		"missing_required_scope":           "access_denied: operation denied by policy",
+		"delegation_exceeds_authority":     "access_denied: operation denied by policy",
+		"approval_record_expired":          "approval_expired: operator approval has expired",
+		"approval_record_consumed":         "approval_consumed: operator approval has already been consumed",
+		"approval_record_not_yet_valid":    "approval_invalid: operator approval is not yet valid",
+		"approval_record_mismatch":         "approval_invalid: operator approval does not match this operation",
+		"missing_verified_rollback_point":  "rollback_required: operation requires a verified rollback point",
+		"timeout":                          "operation_timeout: operation timeout exceeded",
+		"deadline_exceeded":                "operation_timeout: operation timeout exceeded",
+		"deadline_passed":                  "operation_timeout: operation timeout exceeded",
+		"cancelled":                        "operation_canceled: operation was canceled",
+		"caller_canceled":                  "operation_canceled: operation was canceled",
+		"persistence_failure":              "operation_persistence_failure: operation record could not be saved",
+		"finalization_error":               "operation_finalization_error: operation could not be finalized",
+		"daemon_crash_recovered":           "operation_interrupted: operation was interrupted by daemon restart",
 	}
 	if message := messages[category]; message != "" {
 		return message
@@ -159,6 +167,9 @@ func classifiedToolError(err error) string {
 }
 
 func protectedToolError(err error) string {
+	if errors.Is(err, app.ErrGuestUncertain) {
+		return categoryToolError("guest_uncertain")
+	}
 	if isApprovalRequired(err) {
 		return "approval_required: operator approval required for this operation"
 	}
