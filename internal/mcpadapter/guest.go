@@ -86,10 +86,10 @@ func (a *Adapter) GuestRemoveOwned(ctx context.Context, _ *mcp.CallToolRequest, 
 	return a.guestOperation(ctx, in, "remove-owned")
 }
 func (a *Adapter) addGuestTools(server *mcp.Server) {
-	mcp.AddTool(server, &mcp.Tool{Name: "guest_prepare", InputSchema: guestInputSchema("prepare"), Description: "Explicitly prepare the enrolled guest worker using server-provisioned workspace identity"}, a.GuestPrepare)
-	mcp.AddTool(server, &mcp.Tool{Name: "guest_put", InputSchema: guestInputSchema("put"), Description: "Stream an explicit local source file and return an opaque guest ownership reference"}, a.GuestPut)
+	mcp.AddTool(server, &mcp.Tool{Name: "guest_prepare", InputSchema: guestInputSchema("prepare"), Description: "Prepare the persistent binary worker once before guest_put, guest_get or guest_exec; subsequent operations reuse it with the server-provisioned workspace identity"}, a.GuestPrepare)
+	mcp.AddTool(server, &mcp.Tool{Name: "guest_put", InputSchema: guestInputSchema("put"), Description: "Upload a whole local file, including gigabyte archives and installers (up to 1 TiB), in one binary stream with SHA-256 verification. Pass its source path after guest_prepare; returns an opaque ownership reference for guest_get and guest_remove_owned."}, a.GuestPut)
 	mcp.AddTool(server, &mcp.Tool{Name: "guest_get", InputSchema: guestInputSchema("get"), Description: "Download an opaque owned artifact to a new local destination after verification"}, a.GuestGet)
-	mcp.AddTool(server, &mcp.Tool{Name: "guest_exec", InputSchema: guestInputSchema("exec"), Description: "Execute an explicit local UTF-8 script and publish verified output to a new local destination"}, a.GuestExec)
+	mcp.AddTool(server, &mcp.Tool{Name: "guest_exec", InputSchema: guestInputSchema("exec"), Description: "Send and execute a whole local UTF-8 PowerShell script (up to 16 MiB) through the prepared binary worker in one operation; publish verified output to a new local destination"}, a.GuestExec)
 	mcp.AddTool(server, &mcp.Tool{Name: "guest_remove_owned", InputSchema: guestInputSchema("remove-owned"), Description: "Remove only artifacts identified by immutable opaque ownership references"}, a.GuestRemoveOwned)
 }
 
@@ -131,7 +131,7 @@ func guestInputSchema(operation string) map[string]any {
 	}
 	required := []string{"reason", "idempotency_key", "deadline"}
 	if operation == "put" || operation == "exec" {
-		properties["source"] = map[string]any{"type": "string", "minLength": 1, "description": "Explicit local payload path, never sent to the guest; exec accepts UTF-8 scripts up to 16 MiB"}
+		properties["source"] = map[string]any{"type": "string", "minLength": 1, "description": "Path to the complete local file; streamed as binary with bounded memory. Put accepts up to 1 TiB; exec accepts UTF-8 scripts up to 16 MiB. The local path stays on the host."}
 		required = append(required, "source")
 	}
 	if operation == "get" || operation == "exec" {
