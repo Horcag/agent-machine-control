@@ -339,7 +339,7 @@ func buildSpec(host hostContext, identity app.BootstrapIdentity, distro, linuxUs
 		Distro: distro, LinuxUser: linuxUser, StateDir: stateRoot,
 		WrapperPath: wrapperPath, MetadataPath: metadataPath,
 		BinaryPath: binaryPath, BinarySHA256: binaryHash,
-		WSLExecutable: host.WSLExecutable, ListenAddress: "127.0.0.1:0",
+		WSLExecutable: host.WSLExecutable,
 	}
 	wrapper, err := wrapperBytes(spec)
 	if err != nil {
@@ -366,6 +366,10 @@ func wrapperBytes(spec app.BootstrapSpec) ([]byte, error) {
 			return nil, fmt.Errorf("%w: unsafe %s", app.ErrBootstrapUnsupported, label)
 		}
 	}
+	listenArguments := ""
+	if spec.ListenAddress != "" {
+		listenArguments = fmt.Sprintf("    '--listen',\n    '%s',\n", quoteWindowsArgument(spec.ListenAddress))
+	}
 	launcher := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
 $arguments = @(
     '-d',
@@ -377,9 +381,7 @@ $arguments = @(
     'run',
     '--state-dir',
     '%s',
-    '--listen',
-    '%s',
-    '--json'
+%s    '--json'
 )
 $start = [Diagnostics.ProcessStartInfo]::new()
 $start.FileName = '%s'
@@ -389,7 +391,7 @@ $start.CreateNoWindow = $true
 $child = [Diagnostics.Process]::Start($start)
 $child.WaitForExit()
 exit $child.ExitCode
-`, quoteWindowsArgument(spec.Distro), quoteWindowsArgument(spec.LinuxUser), quoteWindowsArgument(spec.BinaryPath), quoteWindowsArgument(spec.StateDir), quoteWindowsArgument(spec.ListenAddress), spec.WSLExecutable)
+`, quoteWindowsArgument(spec.Distro), quoteWindowsArgument(spec.LinuxUser), quoteWindowsArgument(spec.BinaryPath), quoteWindowsArgument(spec.StateDir), listenArguments, spec.WSLExecutable)
 	return []byte(launcher), nil
 }
 

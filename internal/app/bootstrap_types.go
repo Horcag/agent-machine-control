@@ -137,7 +137,7 @@ func (s BootstrapSpec) validateSettings() error {
 	if s.ExecutionTimeLimit != "PT0S" || !s.AllowStartOnBatteries || !s.DontStopOnBatteries {
 		return fmt.Errorf("%w: task settings can interrupt the daemon", ErrBootstrapDrift)
 	}
-	if s.ListenAddress != "127.0.0.1:0" {
+	if s.ListenAddress != "" && s.ListenAddress != "127.0.0.1:0" {
 		return fmt.Errorf("%w: daemon listen address must be ephemeral loopback", ErrBootstrapDrift)
 	}
 	return nil

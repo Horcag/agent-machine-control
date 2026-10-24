@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,6 +29,7 @@ import (
 	"github.com/Horcag/agent-machine-control/internal/receipt"
 	"github.com/Horcag/agent-machine-control/internal/sessions"
 	"github.com/Horcag/agent-machine-control/internal/statedir"
+	"github.com/Horcag/agent-machine-control/internal/wslruntime"
 )
 
 type contextKey string
@@ -365,32 +367,13 @@ func (s *Server) dispatchReceiptSubroute(w http.ResponseWriter, r *http.Request,
 
 // Start opens the network listener and records the daemon endpoint.
 func (s *Server) Start() error {
-	addr := s.cfg.ListenAddr
-	if addr == "" {
-		addr = "127.0.0.1:0"
-	}
-
-	host, _, err := net.SplitHostPort(addr)
+	preferIPv6 := preferIPv6Loopback(runtime.GOOS, s.stateDir.Root(), wslruntime.IsWindowsHostPath)
+	ln, err := listenLoopback(s.cfg.ListenAddr, preferIPv6, net.Listen)
 	if err != nil {
 		if s.singletonLock != nil {
 			_ = s.singletonLock.Release()
 		}
-		return fmt.Errorf("daemon: invalid listen address %q: %w", addr, err)
-	}
-	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
-		if s.singletonLock != nil {
-			_ = s.singletonLock.Release()
-		}
-		return fmt.Errorf("daemon: listen address host %q must be a loopback IP literal", host)
-	}
-
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		if s.singletonLock != nil {
-			_ = s.singletonLock.Release()
-		}
-		return fmt.Errorf("daemon: failed to listen on %s: %w", addr, err)
+		return err
 	}
 
 	s.listener = ln
