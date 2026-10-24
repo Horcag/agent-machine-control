@@ -5,6 +5,14 @@ task launches the local WSL `amcd` process automatically without storing a passw
 token. It is host-control infrastructure; it does not select, enroll, start, stop, or otherwise
 mutate a virtual machine.
 
+For Linux-local state, the automatic listener prefers IPv6 loopback with IPv4 fallback. Shared
+Windows-backed state and native Windows keep IPv4 so both environments can reach the daemon.
+This avoids IPv4 loopback relays for local WSL clients while preserving shared-state compatibility.
+Clients discover the selected address from the protected endpoint record; an explicit
+`amcd run --listen` address remains exact. The generated bootstrap wrapper leaves this selection
+automatic. Existing installations retain their exact IPv4 wrapper and matching old controller
+until the explicit package-upgrade procedure below.
+
 ## Package companion
 
 WSL bootstrap requires the matching architecture's `amcd-launcher.exe` beside the immutable Linux
@@ -119,7 +127,7 @@ so its initial process does not allocate a console or activate Windows Terminal.
 Windows PowerShell through `GetSystemDirectoryW` and starts it with `CREATE_NO_WINDOW` and fixed
 non-interactive `-File` arguments. The wrapper uses `ProcessStartInfo` with `UseShellExecute=false`
 and `CreateNoWindow=true` for the exact Windows `wsl.exe` path, validated WSL distribution and Linux
-user, exact Linux `amcd` path, state directory, loopback listen address, and fixed daemon flags.
+user, exact Linux `amcd` path, state directory, optional explicit loopback address, and fixed daemon flags.
 Both launchers wait and return the child's exit code. No Terminal preferences or unrelated windows
 or processes are changed. The three files
 and their directory have a canonical protected DACL with exactly two explicit FullControl allow

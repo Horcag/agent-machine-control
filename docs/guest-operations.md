@@ -111,3 +111,9 @@ installed revision and intended Windows target. Measure cold preparation separat
 commands, upload, download and owned deletion. Include payload size, digest verification, durable
 commit, final receipt and cleanup time. Report RPC overhead separately from guest execution where
 the evidence permits; retain compact receipts and remove owned fixtures after each run.
+
+Measure any host TCP forwarding separately from the guest's direct, operator-provisioned SSH
+endpoint. A forwarding service can limit throughput even when guest disk writes and hashing are
+fast. Verify the exact enrolled VM and its existing SSH host-key pin before changing the protected
+endpoint. Retire the original worker under its original configuration first; a changed route starts
+a new authority generation. Existing authenticated terminal connections can retain their own route.

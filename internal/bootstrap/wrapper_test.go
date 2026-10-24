@@ -33,8 +33,15 @@ func TestWrapperStartsConsolelessChildAndPreservesExitAndArguments(t *testing.T)
 		return strings.TrimSpace(string(out))
 	}
 	dir, binary, launcher := buildWindowsTestExecutables(t)
+	for _, address := range []string{"", "127.0.0.1:0"} {
+		t.Run("listen="+address, func(t *testing.T) { checkWrapperInvocation(t, dir, binary, launcher, address, winPath) })
+	}
+}
+
+func checkWrapperInvocation(t *testing.T, dir, binary, launcher, address string, winPath func(string) string) {
+	t.Helper()
 	output := filepath.Join(dir, "child observation.json")
-	spec := app.BootstrapSpec{WSLExecutable: winPath(binary), Distro: "Synthetic WSL", LinuxUser: "operator", BinaryPath: "/synthetic path/amcd", StateDir: winPath(output), ListenAddress: "127.0.0.1:0"}
+	spec := app.BootstrapSpec{WSLExecutable: winPath(binary), Distro: "Synthetic WSL", LinuxUser: "operator", BinaryPath: "/synthetic path/amcd", StateDir: winPath(output), ListenAddress: address}
 	wrapper, err := wrapperBytes(spec)
 	if err != nil {
 		t.Fatal(err)
@@ -46,6 +53,7 @@ func TestWrapperStartsConsolelessChildAndPreservesExitAndArguments(t *testing.T)
 	if _, _, err := launcherArtifact(filepath.Join(dir, "amcd"), "Synthetic-WSL"); err != nil {
 		t.Fatal(err)
 	}
+	// #nosec G204 -- launcher is built from repository-owned source in this test's private directory.
 	command := exec.CommandContext(t.Context(), launcher, "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", winPath(wrapperPath))
 	out, err := command.CombinedOutput()
 	var exit *exec.ExitError
@@ -66,7 +74,11 @@ func TestWrapperStartsConsolelessChildAndPreservesExitAndArguments(t *testing.T)
 	if observation.Console != 0 {
 		t.Fatal("launcher allocated a console for its child")
 	}
-	want := []string{"-d", spec.Distro, "--user", spec.LinuxUser, "--exec", spec.BinaryPath, "run", "--state-dir", spec.StateDir, "--listen", spec.ListenAddress, "--json"}
+	want := []string{"-d", spec.Distro, "--user", spec.LinuxUser, "--exec", spec.BinaryPath, "run", "--state-dir", spec.StateDir}
+	if address != "" {
+		want = append(want, "--listen", address)
+	}
+	want = append(want, "--json")
 	if !reflect.DeepEqual(observation.Args, want) {
 		t.Fatalf("child arguments: %q, want %q", observation.Args, want)
 	}
