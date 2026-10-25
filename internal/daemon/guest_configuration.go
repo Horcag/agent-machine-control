@@ -81,7 +81,9 @@ func (p *guestConfigurationProvider) Current(ctx context.Context, targetRef doma
 		return zero, err
 	}
 	generation := sha256.Sum256(authority)
-	return app.GuestConfiguration{Generation: hex.EncodeToString(generation[:]), Caller: *current, WorkspaceIdentity: record.Workspace}, nil
+	// Generation binds the full live principal; operation authority remains
+	// attenuated to the caller that was checked against that principal.
+	return app.GuestConfiguration{Generation: hex.EncodeToString(generation[:]), Caller: caller.Clone(), WorkspaceIdentity: record.Workspace}, nil
 }
 
 func (p *guestConfigurationProvider) currentActor(ctx context.Context, caller domain.ActorContext) (*domain.ActorContext, error) {

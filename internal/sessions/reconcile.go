@@ -34,6 +34,9 @@ func reconcileSessionFileWithSync(
 	}
 
 	obs.State = domain.SessionStateCrashed
+	if now.Before(obs.LastActivityAt) {
+		now = obs.LastActivityAt
+	}
 	obs.ClosedAt = &now
 	obs.ErrorMessage = "daemon_crash_recovered"
 

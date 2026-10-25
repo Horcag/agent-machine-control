@@ -130,7 +130,7 @@ func (s *RecoveryService) executeMutation(
 	}
 	defer func() { resultErr = errors.Join(resultErr, releaseGrant()) }()
 
-	now := s.now()
+	now := labAdmissionTime(s.now(), req.labAdmissionAt, !req.labAdmissionAt.IsZero())
 
 	// 3. Rollback discovery & 4. Policy evaluation & 5. Approval check
 	decision, rollbackRef, err := s.prepareAndAuthorizeMutation(ctx, op, req, providerTargetID, now)
@@ -151,7 +151,8 @@ func (s *RecoveryService) executeMutation(
 	}
 
 	// 7. Audit Admission Intent & Approval Consumption
-	approvalConsumed, err := s.recordAdmissionAndConsume(ctx, op, decision, req, now)
+	consumedAt := labAdmissionTime(s.now(), now, !req.labAdmissionAt.IsZero())
+	approvalConsumed, err := s.recordAdmissionAndConsume(ctx, op, decision, req, consumedAt)
 	if err != nil {
 		return s.preProviderFailure(ctx, op, fp, decision, now, errors.Join(err, releaseLease()), rollbackRef, req.ApprovalID)
 	}
@@ -219,6 +220,11 @@ func (s *RecoveryService) recordAdmissionAndConsume(
 	req MutationRequest,
 	now time.Time,
 ) (bool, error) {
+	if decision.EffectiveClass.RequiresApproval() && req.Approval != nil {
+		if err := req.Approval.IsActive(now); err != nil {
+			return false, approvalActivityDenial(err)
+		}
+	}
 	if s.auditStore != nil {
 		if err := s.auditStore.RecordAdmissionIntentContext(ctx, op); err != nil {
 			return false, fmt.Errorf("%w: %w", ErrAuditUnavailable, err)

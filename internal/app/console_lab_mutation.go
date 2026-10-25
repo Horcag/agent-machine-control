@@ -36,7 +36,8 @@ func (s *ConsoleService) executeLabMutation(ctx context.Context, actor domain.Ac
 	if err != nil {
 		return result, err
 	}
-	issued, err := s.deriveLabApproval(ctx, grant, op)
+	req.labAdmissionAt = s.recovery.now()
+	issued, err := s.deriveLabApproval(ctx, grant, op, req.labAdmissionAt)
 	if err != nil {
 		return result, err
 	}
@@ -63,7 +64,7 @@ func labOperationAllowed(op domain.Operation) bool {
 		op.Classification == domain.ClassDestructivePrivileged && len(op.RequiredScopes) == 1 && op.RequiredScopes[0] == domain.ScopeMachineWrite
 }
 
-func (s *ConsoleService) deriveLabApproval(ctx context.Context, grant ConsoleLabGrant, op domain.Operation) (*domain.Approval, error) {
+func (s *ConsoleService) deriveLabApproval(ctx context.Context, grant ConsoleLabGrant, op domain.Operation, issuedAt time.Time) (*domain.Approval, error) {
 	fingerprint, err := op.Fingerprint()
 	if err != nil {
 		return nil, err
@@ -75,7 +76,7 @@ func (s *ConsoleService) deriveLabApproval(ctx context.Context, grant ConsoleLab
 		return nil, err
 	}
 	issued := domain.Approval{ID: id, Actor: op.Actor.EffectiveActor, Target: op.Target, AuthorizedClass: domain.ClassDestructivePrivileged,
-		Fingerprint: fingerprint, IdempotencyKey: op.IdempotencyKey, IssuedAt: s.recovery.now(), ExpiresAt: op.Deadline}
+		Fingerprint: fingerprint, IdempotencyKey: op.IdempotencyKey, IssuedAt: issuedAt, ExpiresAt: op.Deadline}
 	if existing != nil {
 		issued.IssuedAt = existing.IssuedAt
 		if !equalIssuedOperationApproval(*existing, issued) {
