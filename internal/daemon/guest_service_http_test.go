@@ -219,7 +219,13 @@ func newGuestHTTPServiceFixture(t *testing.T) (*httptest.Server, string, *guestH
 	session := app.NewSessionService(nil, fixture, lease.NewManager(sd.LeasesDir()), audit.NewStore(sd.AuditDir()), receipt.NewStore(sd.ReceiptsDir()), approval.NewStore(sd.ApprovalsDir()), app.WithSessionMutationJournal(sessions.NewMutationJournal(sd.SessionsDir())))
 	svc := app.NewGuestService(session, fixture, fixture, fixture, app.NewGuestStore(filepath.Join(sd.Root(), "guest")))
 	server := &Server{guestService: svc, authStore: store, semaphore: make(chan struct{}, 8)}
-	httpServer := httptest.NewServer(server.authMiddleware(http.HandlerFunc(server.handleGuestOperation)))
+	httpServer := httptest.NewServer(server.authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/approval" {
+			server.handleGuestApproval(w, r)
+			return
+		}
+		server.handleGuestOperation(w, r)
+	})))
 	t.Cleanup(httpServer.Close)
 	return httpServer, token, fixture
 }

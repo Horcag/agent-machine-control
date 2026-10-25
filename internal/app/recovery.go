@@ -60,6 +60,8 @@ type MutationRequest struct {
 	// Set only when the normal identity-bound receipt lookup returns a terminal result.
 	cachedReceipt      *bool
 	providerDispatched *bool
+	// Only trusted lab coordination sets this causal floor for local issuance.
+	labAdmissionAt time.Time
 }
 
 // RecoveryService orchestrates in-process direct recovery operations, policy, leases, and receipts.

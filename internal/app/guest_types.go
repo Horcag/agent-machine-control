@@ -21,6 +21,7 @@ var ErrGuestUncertain = errors.New("app: guest operation outcome is uncertain; d
 // GuestConfiguration is refreshed at admission and at the effect boundary.
 // Current must revalidate enrollment, credentials and key pins, current actor
 // authority, and the server-provisioned workspace; Generation binds all of them.
+// Caller preserves requested authority without expanding it to the live principal.
 // WorkspaceIdentity must come from authorized provisioning, never path adoption.
 type GuestConfiguration struct {
 	Generation        string

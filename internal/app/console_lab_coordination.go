@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/Horcag/agent-machine-control/internal/domain"
 	"github.com/Horcag/agent-machine-control/internal/target"
@@ -57,12 +58,12 @@ func (s *ConsoleService) admitPersistentLab(ctx context.Context, op domain.Opera
 	return &grant, release, nil
 }
 
-func (s *ConsoleService) derivePersistentLab(ctx context.Context, op domain.Operation) (*domain.Approval, *ConsoleLabGrant, func() error, error) {
+func (s *ConsoleService) derivePersistentLab(ctx context.Context, op domain.Operation, admittedAt time.Time) (*domain.Approval, *ConsoleLabGrant, func() error, error) {
 	grant, release, err := s.admitPersistentLab(ctx, op)
 	if err != nil || grant == nil {
 		return nil, grant, release, err
 	}
-	approval, err := s.deriveLabApproval(ctx, *grant, op)
+	approval, err := s.deriveLabApproval(ctx, *grant, op, admittedAt)
 	if err != nil {
 		return nil, nil, func() error { return nil }, errors.Join(err, release())
 	}
@@ -86,7 +87,8 @@ func (s *RecoveryService) coordinatePersistentRecovery(ctx context.Context, op d
 	if req.Approval != nil || req.ApprovalID != "" || req.ApprovalError != nil {
 		return req, execute, release, nil
 	}
-	derived, grant, release, err := s.labAuthority.derivePersistentLab(ctx, op)
+	admittedAt := s.now()
+	derived, grant, release, err := s.labAuthority.derivePersistentLab(ctx, op, admittedAt)
 	if err != nil {
 		return req, execute, release, err
 	}
@@ -94,8 +96,18 @@ func (s *RecoveryService) coordinatePersistentRecovery(ctx context.Context, op d
 		return req, execute, release, nil
 	}
 	req.Approval, req.ApprovalID = derived, string(derived.ID)
+	req.labAdmissionAt = admittedAt
 	fenced := func(effectCtx context.Context) error {
 		return s.labAuthority.withPersistentLabEffect(effectCtx, grant, execute)
 	}
 	return req, fenced, release, nil
+}
+
+// labAdmissionTime preserves causality only for locally derived authority.
+// Fresh forward readings still enforce expiry; external approvals get no floor.
+func labAdmissionTime(now, admittedAt time.Time, local bool) time.Time {
+	if local && now.Before(admittedAt) {
+		return admittedAt
+	}
+	return now
 }

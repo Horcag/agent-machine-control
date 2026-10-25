@@ -198,6 +198,9 @@ func (s *Store) MarkConsumedContext(ctx context.Context, a domain.Approval, cons
 	if err := s.validateIssuedLocked(ctx, a); err != nil {
 		return err
 	}
+	if err := a.IsActive(consumedAt); err != nil {
+		return err
+	}
 
 	consumed := a.Clone()
 	consumed.Consumed = true

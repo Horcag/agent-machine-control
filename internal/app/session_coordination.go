@@ -163,6 +163,11 @@ func (s *SessionService) checkDestructiveApproval(ctx context.Context, approval 
 }
 
 func (s *SessionService) prepareAuditAndApproval(ctx context.Context, decision policy.Decision, op domain.Operation, approval *domain.Approval, now time.Time) error {
+	if decision.EffectiveClass.RequiresApproval() && approval != nil {
+		if err := approval.IsActive(now); err != nil {
+			return approvalActivityDenial(err)
+		}
+	}
 	if s.auditStore != nil {
 		if err := s.auditStore.RecordAdmissionIntentContext(ctx, op); err != nil {
 			return err
@@ -292,6 +297,7 @@ func (s *SessionService) executeMutation(
 type admittedSessionMutation struct {
 	approval     *domain.Approval
 	labGrant     *ConsoleLabGrant
+	admittedAt   time.Time
 	op           domain.Operation
 	fp           domain.Fingerprint
 	idFp         domain.Fingerprint
@@ -339,19 +345,20 @@ func (s *SessionService) admitSessionMutation(
 			releaseLease: releaseLease,
 		}, nil, nil
 	}
+	admittedAt := s.now()
 	if labGrant != nil && op.Classification.RequiresApproval() {
-		approval, err = s.labAuthority.deriveLabApproval(ctx, *labGrant, op)
+		approval, err = s.labAuthority.deriveLabApproval(ctx, *labGrant, op, admittedAt)
 		if err != nil {
 			return nil, nil, errors.Join(err, releaseLease())
 		}
 	}
-	now := s.now()
+	now := labAdmissionTime(s.now(), admittedAt, labGrant != nil)
 	decision, denialReceipt, err := s.evaluateAndAdmit(ctx, op, safety, approval, now, fp, idFp)
 	if err != nil {
 		return nil, denialReceipt, errors.Join(err, releaseLease())
 	}
 	return &admittedSessionMutation{
-		op: op, fp: fp, idFp: idFp, decision: decision, safety: safety, releaseLease: releaseLease, approval: approval, labGrant: labGrant,
+		op: op, fp: fp, idFp: idFp, decision: decision, safety: safety, releaseLease: releaseLease, approval: approval, labGrant: labGrant, admittedAt: now,
 	}, nil, nil
 }
 
@@ -359,7 +366,7 @@ func (s *SessionService) reserveAndPrepareMutation(ctx context.Context, admitted
 	if s.mutationJournal == nil {
 		return errors.Join(errors.New("app: session mutation journal is unavailable"), admitted.releaseLease())
 	}
-	now := s.now()
+	now := labAdmissionTime(s.now(), admitted.admittedAt, admitted.labGrant != nil)
 	if _, err := s.mutationJournal.ReserveContext(ctx, admitted.op, now); err != nil {
 		return errors.Join(err, admitted.releaseLease())
 	}

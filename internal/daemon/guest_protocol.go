@@ -202,7 +202,9 @@ func (s *Server) handleGuestApproval(w http.ResponseWriter, r *http.Request) {
 	req.Params.Caller = caller
 	grant, receipt, err := s.guestService.IssueApprovalFor(r.Context(), req.Params, time.Duration(req.ValidForMillis)*time.Millisecond, req.Beneficiary)
 	if err != nil {
-		s.mapSessionError(w, err)
+		if !writeGuestEarlyError(w, guestFailureCategory(err), app.GuestOperationResult{}, false) {
+			s.mapSessionError(w, err)
+		}
 		return
 	}
 	writeJSON(w, 200, GuestApprovalResponse{grant, receipt})
