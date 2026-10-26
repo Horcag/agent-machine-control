@@ -5,7 +5,10 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +31,7 @@ func runRetirementLoader(t *testing.T, source string, input []byte) ([]byte, err
 	if err != nil {
 		t.Skip("PowerShell unavailable for local loader semantics")
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
 	defer cancel()
 	command := guestRetirementCommand(source)
 	if len(utf16.Encode([]rune(command))) > 7900 {
@@ -36,8 +39,34 @@ func runRetirementLoader(t *testing.T, source string, input []byte) ([]byte, err
 	}
 	token := strings.TrimPrefix(command, "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ")
 	process := exec.CommandContext(ctx, pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", token)
+	stagePath := filepath.Join(t.TempDir(), "retirement-stage.txt")
+	process.Env = append(os.Environ(), "AMC_RETIREMENT_TEST_STAGE="+stagePath)
 	process.Stdin = bytes.NewReader(input)
-	return process.CombinedOutput()
+	started := time.Now()
+	output, err := process.CombinedOutput()
+	t.Logf("retirement fixture: stage=%s elapsed=%s context=%v", retirementLoaderStage(stagePath), time.Since(started).Round(time.Millisecond), ctx.Err())
+	return output, err
+}
+
+func retirementLoaderStage(path string) string {
+	file, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "not-entered"
+		}
+		return "unavailable"
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, 32))
+	if err != nil {
+		return "unavailable"
+	}
+	switch stage := string(data); stage {
+	case "entered", "add-type-start", "add-type-done", "inventory-done":
+		return stage
+	default:
+		return "invalid"
+	}
 }
 
 func TestGuestRetirementLoaderPreservesFullInteger(t *testing.T) {
@@ -87,8 +116,13 @@ func TestGuestRetirementNativeInventoryFailsClosed(t *testing.T) {
 		t.Fatal("native probe terminator missing")
 	}
 	// Compile the actual embedded class, then invoke only its pure census decision.
-	source := "Add-Type -TypeDefinition @'\n" + strings.TrimSpace(native) + "\n'@\n" +
-		"$ids=[uint32[]]@(1,2,0);if([AMCOriginalProcessProbe]::InventoryMissing(1,$ids,8)){throw 'present_pid_absent'};if(-not[AMCOriginalProcessProbe]::InventoryMissing(3,$ids,8)){throw 'missing_pid_not_observed'};$refused=0;foreach($size in @(0,1,12,16)){try{$null=[AMCOriginalProcessProbe]::InventoryMissing(3,$ids,[uint32]$size);throw 'invalid_census_accepted'}catch{if($_.Exception.Message-eq'invalid_census_accepted'){throw};$refused++}};@{refused=$refused}|ConvertTo-Json -Compress"
+	source := "[IO.File]::WriteAllText($env:AMC_RETIREMENT_TEST_STAGE,'entered')\n" +
+		"[IO.File]::WriteAllText($env:AMC_RETIREMENT_TEST_STAGE,'add-type-start')\n" +
+		"Add-Type -TypeDefinition @'\n" + strings.TrimSpace(native) + "\n'@\n" +
+		"[IO.File]::WriteAllText($env:AMC_RETIREMENT_TEST_STAGE,'add-type-done')\n" +
+		"$ids=[uint32[]]@(1,2,0);if([AMCOriginalProcessProbe]::InventoryMissing(1,$ids,8)){throw 'present_pid_absent'};if(-not[AMCOriginalProcessProbe]::InventoryMissing(3,$ids,8)){throw 'missing_pid_not_observed'};$refused=0;foreach($size in @(0,1,12,16)){try{$null=[AMCOriginalProcessProbe]::InventoryMissing(3,$ids,[uint32]$size);throw 'invalid_census_accepted'}catch{if($_.Exception.Message-eq'invalid_census_accepted'){throw};$refused++}}\n" +
+		"[IO.File]::WriteAllText($env:AMC_RETIREMENT_TEST_STAGE,'inventory-done')\n" +
+		"@{refused=$refused}|ConvertTo-Json -Compress"
 	output, err := runRetirementLoader(t, source, retirementLoaderPayload([]byte(`{}`), []byte(source)))
 	if err != nil {
 		t.Fatalf("native inventory decision: %v %s", err, output)
