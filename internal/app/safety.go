@@ -37,6 +37,11 @@ type SafetyResolver interface {
 	ResolveSafety(ctx context.Context, target domain.MachineRef) (SafetyResolution, error)
 }
 
+// Approval issuance needs only classification, never rollback authority.
+type approvalClassificationResolver interface {
+	resolveApprovalClassification(context.Context, domain.MachineRef) (domain.OperationClass, error)
+}
+
 // DefaultSafetyResolver verifies server-owned configuration and backend checkpoints.
 type DefaultSafetyResolver struct {
 	configLoader MachineConfigLoader
@@ -53,6 +58,15 @@ func NewDefaultSafetyResolver(configLoader MachineConfigLoader, backend Backend)
 
 // ResolveSafety checks if the target has external effects contained and an active verified checkpoint.
 func (r *DefaultSafetyResolver) ResolveSafety(ctx context.Context, target domain.MachineRef) (SafetyResolution, error) {
+	return r.resolveSafety(ctx, target, false)
+}
+
+func (r *DefaultSafetyResolver) resolveApprovalClassification(ctx context.Context, target domain.MachineRef) (domain.OperationClass, error) {
+	resolution, err := r.resolveSafety(ctx, target, true)
+	return resolution.Classification, err
+}
+
+func (r *DefaultSafetyResolver) resolveSafety(ctx context.Context, target domain.MachineRef, classificationOnly bool) (SafetyResolution, error) {
 	destructive := SafetyResolution{
 		Classification: domain.ClassDestructivePrivileged,
 		RollbackState:  policy.RollbackState{Available: false, Verified: false},
@@ -77,7 +91,20 @@ func (r *DefaultSafetyResolver) ResolveSafety(ctx context.Context, target domain
 	if err != nil || cfg == nil {
 		return destructive, nil
 	}
+	if classificationOnly && ctx.Err() != nil {
+		return destructive, ctx.Err()
+	}
+	// Uncontained effects are destructive regardless of checkpoint state. Full
+	// admission and effect resolution still verify rollback on every call.
+	if classificationOnly && !cfg.ExternalEffectsContained {
+		return destructive, nil
+	}
 
+	return r.resolveCheckpointSafety(ctx, target, cfg, destructive)
+}
+
+// Checkpoint verification is shared by full safety and contained classification.
+func (r *DefaultSafetyResolver) resolveCheckpointSafety(ctx context.Context, target domain.MachineRef, cfg *MachineSafetyConfig, destructive SafetyResolution) (SafetyResolution, error) {
 	if cfg.RollbackCheckpointID == "" {
 		return destructive, nil
 	}

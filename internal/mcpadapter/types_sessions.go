@@ -45,7 +45,7 @@ type SessionReadResult struct {
 
 type SessionWriteInput struct {
 	SessionID      string `json:"session_id" jsonschema:"Session ID"`
-	Data           string `json:"data" jsonschema:"Character data or command to write"`
+	Data           string `json:"data" jsonschema:"UTF-8 terminal input or short command, at most 65536 bytes; use guest_put for files and guest_exec for local scripts"`
 	Reason         string `json:"reason" jsonschema:"Reason for writing data"`
 	IdempotencyKey string `json:"idempotency_key" jsonschema:"Idempotency key"`
 	Timeout        string `json:"timeout" jsonschema:"Operation timeout (e.g. 30s, 5m)"`

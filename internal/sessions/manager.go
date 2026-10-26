@@ -36,6 +36,8 @@ type Manager struct {
 	sessionsDir       string
 	transport         guestssh.Transport
 	clock             func() time.Time
+	clockMu           sync.Mutex
+	lastNow           time.Time
 	generateSessionID func() (domain.SessionID, error)
 	publishOpenHook   func() error
 	syncSessionDir    func(string) error
@@ -100,7 +102,16 @@ func NewManager(sessionsDir string, transport guestssh.Transport, clock func() t
 }
 
 func (m *Manager) now() time.Time {
-	return m.clock().UTC()
+	now := m.clock().UTC()
+	m.clockMu.Lock()
+	defer m.clockMu.Unlock()
+	// Lifecycle observations must remain causal when the wall clock steps back.
+	// Authorization and execution deadlines use their own clocks and contexts.
+	if now.Before(m.lastNow) {
+		return m.lastNow
+	}
+	m.lastNow = now
+	return now
 }
 
 // MutationJournal returns the durable journal owned by this session manager.

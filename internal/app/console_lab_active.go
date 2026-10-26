@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -13,11 +14,15 @@ import (
 
 // ActiveLabGrant discovers only the caller's currently usable authority for the enrolled VM.
 func (s *ConsoleService) ActiveLabGrant(ctx context.Context, actor domain.ActorContext, reference string) (ConsoleLabGrantStatus, error) {
+	return s.activeLabGrant(ctx, actor, reference, false)
+}
+
+func (s *ConsoleService) activeLabGrant(ctx context.Context, actor domain.ActorContext, reference string, persistentOnly bool) (ConsoleLabGrantStatus, error) {
 	disabled := ConsoleLabGrantStatus{State: "disabled"}
 	if actor.Validate() != nil || actor.IsDelegated() {
 		return disabled, ErrInvalidConsoleLabGrant
 	}
-	if err := s.validateDependencies(); err != nil {
+	if err := s.recovery.validateDependencies(); err != nil {
 		return disabled, err
 	}
 	resolution, err := s.target.ResolveTarget(ctx, reference)
@@ -43,14 +48,7 @@ func (s *ConsoleService) ActiveLabGrant(ctx context.Context, actor domain.ActorC
 		return disabled, err
 	}
 	defer file.Close()
-	entries, err := file.ReadDir(129)
-	if err != nil && !errors.Is(err, io.EOF) {
-		return disabled, err
-	}
-	if len(entries) > 128 {
-		return disabled, ErrInvalidConsoleLabGrant
-	}
-	selected, err := s.selectActiveLabGrant(ctx, actor, domain.MachineRef(resolution.Locator.String()), entries)
+	selected, err := s.scanActiveLabGrants(ctx, file, actor, domain.MachineRef(resolution.Locator.String()), persistentOnly)
 	if err != nil {
 		return disabled, err
 	}
@@ -60,7 +58,7 @@ func (s *ConsoleService) ActiveLabGrant(ctx context.Context, actor domain.ActorC
 	return ConsoleLabGrantStatus{Grant: selected, State: "active"}, nil
 }
 
-func (s *ConsoleService) selectActiveLabGrant(ctx context.Context, actor domain.ActorContext, canonical domain.MachineRef, entries []os.DirEntry) (ConsoleLabGrant, error) {
+func (s *ConsoleService) selectActiveLabGrant(ctx context.Context, actor domain.ActorContext, canonical domain.MachineRef, entries []os.DirEntry, persistentOnly bool) (ConsoleLabGrant, error) {
 	var selected ConsoleLabGrant
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
@@ -71,12 +69,46 @@ func (s *ConsoleService) selectActiveLabGrant(ctx context.Context, actor domain.
 			continue
 		}
 		grant, err := s.loadLabGrant(ctx, id)
-		if err != nil || grant.Beneficiary != actor.EffectiveActor || grant.Target != canonical || s.requireActiveLabGrant(ctx, grant) != nil {
+		if err != nil || (persistentOnly && grant.Mode != ConsoleLabModePersistentVM) || grant.Beneficiary != actor.EffectiveActor || grant.Target != canonical {
 			continue
 		}
-		if selected.GrantID == "" || grant.IssuedAt.After(selected.IssuedAt) || (grant.IssuedAt.Equal(selected.IssuedAt) && grant.GrantID > selected.GrantID) {
-			selected = grant
+		if err := s.requireActiveLabGrant(ctx, grant); err != nil {
+			if errors.Is(err, ErrInvalidConsoleLabGrant) {
+				continue
+			}
+			return ConsoleLabGrant{}, fmt.Errorf("validate matching lab authority: %w", err)
 		}
+		selected = newestLabGrant(selected, grant)
 	}
 	return selected, nil
+}
+
+func (s *ConsoleService) scanActiveLabGrants(ctx context.Context, file *os.File, actor domain.ActorContext, canonical domain.MachineRef, persistentOnly bool) (ConsoleLabGrant, error) {
+	var selected ConsoleLabGrant
+	for {
+		entries, readErr := file.ReadDir(128)
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return ConsoleLabGrant{}, readErr
+		}
+		candidate, err := s.selectActiveLabGrant(ctx, actor, canonical, entries, persistentOnly)
+		if err != nil {
+			return ConsoleLabGrant{}, err
+		}
+		selected = newestLabGrant(selected, candidate)
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+	}
+
+	return selected, nil
+}
+
+func newestLabGrant(selected, candidate ConsoleLabGrant) ConsoleLabGrant {
+	if candidate.GrantID == "" {
+		return selected
+	}
+	if selected.GrantID == "" || candidate.IssuedAt.After(selected.IssuedAt) || (candidate.IssuedAt.Equal(selected.IssuedAt) && candidate.GrantID > selected.GrantID) {
+		return candidate
+	}
+	return selected
 }

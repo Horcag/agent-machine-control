@@ -96,7 +96,7 @@ All session mutations (`session.open`, `session.write`, `session.control`, `sess
 1. **Dynamic Safety Resolution**:
    - The safety resolver inspects the target machine's server-owned `config.json` (`external_effects_contained`, `rollback_checkpoint_id`) and queries the Hyper-V backend (`ListCheckpoints`).
    - If external effects are contained and the rollback checkpoint exists and is verified in Hyper-V, the operation is classified as `ClassReversibleMutation` with the checkpoint GUID as `rollbackRef`.
-   - If external effects are not contained or the rollback checkpoint is missing/invalid, the operation is classified as `ClassDestructivePrivileged`, requiring an explicit, unconsumed operator approval record.
+   - If external effects are not contained or the rollback checkpoint is missing/invalid, the operation is classified as `ClassDestructivePrivileged`, requiring an unconsumed operator approval record. An operator-enabled [persistent VM grant](guest-desktop.md#persistent-disposable-vm-authority) supplies exact approvals automatically for its enrolled VM and beneficiary, without another human prompt.
 2. **Host Mutation Lease**:
    - Every session mutation acquires a host lease before reading containment configuration or
      querying the configured checkpoint. The same lease remains held through guest effect and

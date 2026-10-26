@@ -14,7 +14,7 @@ func (s *ConsoleService) LabGrantStatus(ctx context.Context, actor domain.ActorC
 	if actor.Validate() != nil || actor.IsDelegated() {
 		return ConsoleLabGrantStatus{}, ErrInvalidConsoleLabGrant
 	}
-	if err := s.validateDependencies(); err != nil {
+	if err := s.recovery.validateDependencies(); err != nil {
 		return ConsoleLabGrantStatus{}, err
 	}
 	grant, err := s.loadLabGrant(ctx, id)
@@ -32,7 +32,7 @@ func (s *ConsoleService) LabGrantStatus(ctx context.Context, actor domain.ActorC
 	switch {
 	case revoked:
 		status.State = "revoked"
-	case !s.recovery.now().Before(grant.ExpiresAt):
+	case grant.Mode == "" && !s.recovery.now().Before(grant.ExpiresAt):
 		status.State = "expired"
 	case s.requireActiveLabGrant(ctx, grant) != nil:
 		status.State = "stale"

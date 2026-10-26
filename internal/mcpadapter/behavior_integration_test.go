@@ -80,8 +80,8 @@ func TestBinaryStdioIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools failed: %v", err)
 	}
-	if len(toolsRes.Tools) != 27 {
-		t.Errorf("expected exactly 27 tools, got %d", len(toolsRes.Tools))
+	if len(toolsRes.Tools) != 32 {
+		t.Errorf("expected exactly 32 tools, got %d", len(toolsRes.Tools))
 	}
 
 	if err := clientSession.Close(); err != nil {
@@ -116,7 +116,7 @@ func resolveTestMCPBinary(t *testing.T) string {
 	binaryPath := filepath.Join(t.TempDir(), binaryName)
 	buildCmd := exec.Command("go", "build", "-o", binaryPath, "../../cmd/amc-mcp")
 	buildCmd.Dir = "."
-	buildCmd.Env = append(os.Environ(), "GOTOOLCHAIN=go1.26.7")
+	buildCmd.Env = os.Environ()
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		t.Fatalf("failed to build amc-mcp binary: %v\nOutput: %s", err, string(out))
 	}

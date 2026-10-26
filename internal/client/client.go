@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -38,9 +39,10 @@ func WithHTTPClient(c *http.Client) Option {
 
 // Client provides typed HTTP communication with the amcd daemon.
 type Client struct {
-	endpoint   string
-	token      string
-	httpClient *http.Client
+	guestBeforePublication func(*os.File) error
+	endpoint               string
+	token                  string
+	httpClient             *http.Client
 }
 
 // New creates a new Client configured with the target endpoint and bearer token.
@@ -110,6 +112,10 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, o
 	}
 
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.token))
+	switch path {
+	case "/v1/desktop/lab/issue", "/v1/desktop/lab/status", "/v1/desktop/lab/active":
+		req.Header.Set(daemon.LabGrantModeHeader, "1")
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

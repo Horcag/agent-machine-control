@@ -38,6 +38,39 @@ Issuing a grant does not install the guest driver. Provision it using `desktop_a
 A driver update must remove the old verified installation with its matching build before
 provisioning the new build. Foreign or modified installations are refused.
 
+## Persistent disposable VM authority
+
+For an owner-controlled disposable test VM, the operator can enable persistent VM authority:
+
+```sh
+amc desktop enable --target lab-vm --for-mcp --persistent-vm \
+  --acknowledge-external-effects \
+  --reason 'authorize autonomous work on the disposable test VM' \
+  --idempotency-key persistent-lab-example
+```
+
+This grant has no time-based expiry. It survives daemon restarts and authorizes guest file and
+script operations, terminal sessions, console and desktop actions, VM start/stop, and checkpoint
+creation/restoration on the exact enrolled VM. A separate grant without `--for-mcp` enables the
+operator CLI. Agents do not need to request one-use approvals for those operations. The service
+derives their exact approvals from the stored operator grant and preserves normal audit, receipts,
+actor scopes, deadlines, and idempotency checks. Actual safety classification remains unchanged;
+enabling this mode does not declare external effects contained or invent a rollback checkpoint.
+
+Use `amc desktop status` to discover the current grant for the caller and selected target, or
+provide `--lab-grant-id` to inspect a specific grant. The existing `desktop disable` command
+revokes persistent authority. Clearing or replacing the enrollment also invalidates it, including
+when the same VM is enrolled again. Other VMs, host administration, enrollment changes, credential
+configuration, and approval issuance receive no authority from this mode. Without `--persistent-vm`,
+the existing bounded console/desktop grant behavior is unchanged.
+
+If verification of a matching stored grant fails, discovery reports the lookup error and
+dispatch remains blocked. A provider or protected-state read failure does not require a renewed
+operator grant. Inspect the reported cause and current grant status after recovery. An earlier
+denial remains cached under its original retry key; reconcile that receipt before using a new
+key for a confirmed undispatched operation. Invalid, revoked, inactive, or replaced-enrollment
+grants still confer no authority.
+
 ## Agent interaction loop
 
 1. Call `desktop_observe`. It returns a PNG content block, frame identity, native and

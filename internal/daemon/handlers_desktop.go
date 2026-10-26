@@ -128,6 +128,9 @@ func (s *Server) dispatchDesktop(w http.ResponseWriter, r *http.Request, path st
 	}
 }
 
+// LabGrantModeHeader opts into the persistent grant mode response field.
+const LabGrantModeHeader = "X-AMC-Lab-Grant-Mode"
+
 func (s *Server) dispatchDesktopLab(w http.ResponseWriter, r *http.Request, path string) {
 	actor, _ := getCallerContext(r.Context())
 	switch path {
@@ -145,7 +148,7 @@ func (s *Server) dispatchDesktopLab(w http.ResponseWriter, r *http.Request, path
 		writeJSON(w, http.StatusOK, struct {
 			Grant   app.ConsoleLabGrant `json:"grant"`
 			Receipt any                 `json:"receipt"`
-		}{grant, rcpt})
+		}{labGrantResponse(r, grant), rcpt})
 	case "desktop/lab/status":
 		var req struct {
 			GrantID string `json:"grant_id"`
@@ -159,6 +162,7 @@ func (s *Server) dispatchDesktopLab(w http.ResponseWriter, r *http.Request, path
 			writeConsoleError(w, err)
 			return
 		}
+		out.Grant = labGrantResponse(r, out.Grant)
 		writeJSON(w, http.StatusOK, out)
 	case "desktop/lab/active":
 		var req struct {
@@ -173,6 +177,7 @@ func (s *Server) dispatchDesktopLab(w http.ResponseWriter, r *http.Request, path
 			writeConsoleError(w, err)
 			return
 		}
+		out.Grant = labGrantResponse(r, out.Grant)
 		writeJSON(w, http.StatusOK, out)
 	case "desktop/lab/revoke":
 		var req app.ConsoleLabGrantRevokeRequest
@@ -189,4 +194,12 @@ func (s *Server) dispatchDesktopLab(w http.ResponseWriter, r *http.Request, path
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "endpoint not found")
 	}
+}
+
+// The protected grant retains its mode; only the legacy wire projection omits it.
+func labGrantResponse(r *http.Request, grant app.ConsoleLabGrant) app.ConsoleLabGrant {
+	if r.Header.Get(LabGrantModeHeader) != "1" {
+		grant.Mode = ""
+	}
+	return grant
 }
