@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"time"
 
@@ -94,7 +95,10 @@ func (s *ConsoleService) labIdentity(ctx context.Context, reference string) (Tar
 		return resolution, "", err
 	}
 	identity, err := s.labEnrollment(ctx, domain.MachineRef(resolution.Locator.String()))
-	if err != nil || !validLabDigest(identity) {
+	if err != nil {
+		return resolution, "", fmt.Errorf("read lab enrollment identity: %w", err)
+	}
+	if !validLabDigest(identity) {
 		return resolution, "", ErrInvalidConsoleLabGrant
 	}
 	return resolution, identity, nil
@@ -123,7 +127,11 @@ func (s *ConsoleService) resolveActiveLabGrant(ctx context.Context, grant Consol
 	if err != nil {
 		return TargetResolution{}, err
 	}
-	return resolution, s.labActivation(ctx, grant.GrantID)
+	err = s.labActivation(ctx, grant.GrantID)
+	if errors.Is(err, os.ErrNotExist) {
+		return resolution, ErrInvalidConsoleLabGrant
+	}
+	return resolution, err
 }
 
 func (s *ConsoleService) resolveLabBinding(ctx context.Context, grant ConsoleLabGrant) (TargetResolution, error) {
@@ -136,7 +144,10 @@ func (s *ConsoleService) resolveLabBindingWithResolution(ctx context.Context, gr
 		return TargetResolution{}, ErrInvalidConsoleLabGrant
 	}
 	revoked, err := s.labRevoked(ctx, grant.GrantID)
-	if err != nil || revoked {
+	if err != nil {
+		return TargetResolution{}, fmt.Errorf("read lab revocation: %w", err)
+	}
+	if revoked {
 		return TargetResolution{}, ErrInvalidConsoleLabGrant
 	}
 	var resolution TargetResolution
@@ -149,11 +160,14 @@ func (s *ConsoleService) resolveLabBindingWithResolution(ctx context.Context, gr
 			return TargetResolution{}, ErrInvalidConsoleLabGrant
 		}
 		identity, err = s.labEnrollment(ctx, domain.MachineRef(resolution.Locator.String()))
-		if !validLabDigest(identity) {
+		if err == nil && !validLabDigest(identity) {
 			return TargetResolution{}, ErrInvalidConsoleLabGrant
 		}
 	}
-	if err != nil || resolution.Locator.String() != string(grant.Target) || identity != grant.EnrollmentIdentity {
+	if err != nil {
+		return TargetResolution{}, fmt.Errorf("resolve lab enrollment: %w", err)
+	}
+	if resolution.Locator.String() != string(grant.Target) || identity != grant.EnrollmentIdentity {
 		return TargetResolution{}, ErrInvalidConsoleLabGrant
 	}
 	return resolution, s.requireGrantSafety(ctx, resolution, grant.Mode, grant.AcknowledgeExternalEffects)
