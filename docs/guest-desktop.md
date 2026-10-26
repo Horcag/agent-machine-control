@@ -64,6 +64,13 @@ when the same VM is enrolled again. Other VMs, host administration, enrollment c
 configuration, and approval issuance receive no authority from this mode. Without `--persistent-vm`,
 the existing bounded console/desktop grant behavior is unchanged.
 
+If verification of a matching stored grant fails, discovery reports the lookup error and
+dispatch remains blocked. A provider or protected-state read failure does not require a renewed
+operator grant. Inspect the reported cause and current grant status after recovery. An earlier
+denial remains cached under its original retry key; reconcile that receipt before using a new
+key for a confirmed undispatched operation. Invalid, revoked, inactive, or replaced-enrollment
+grants still confer no authority.
+
 ## Agent interaction loop
 
 1. Call `desktop_observe`. It returns a PNG content block, frame identity, native and

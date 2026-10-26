@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -68,12 +69,16 @@ func (s *ConsoleService) selectActiveLabGrant(ctx context.Context, actor domain.
 			continue
 		}
 		grant, err := s.loadLabGrant(ctx, id)
-		if err != nil || (persistentOnly && grant.Mode != ConsoleLabModePersistentVM) || grant.Beneficiary != actor.EffectiveActor || grant.Target != canonical || s.requireActiveLabGrant(ctx, grant) != nil {
+		if err != nil || (persistentOnly && grant.Mode != ConsoleLabModePersistentVM) || grant.Beneficiary != actor.EffectiveActor || grant.Target != canonical {
 			continue
 		}
-		if selected.GrantID == "" || grant.IssuedAt.After(selected.IssuedAt) || (grant.IssuedAt.Equal(selected.IssuedAt) && grant.GrantID > selected.GrantID) {
-			selected = grant
+		if err := s.requireActiveLabGrant(ctx, grant); err != nil {
+			if errors.Is(err, ErrInvalidConsoleLabGrant) {
+				continue
+			}
+			return ConsoleLabGrant{}, fmt.Errorf("validate matching lab authority: %w", err)
 		}
+		selected = newestLabGrant(selected, grant)
 	}
 	return selected, nil
 }
@@ -89,13 +94,21 @@ func (s *ConsoleService) scanActiveLabGrants(ctx context.Context, file *os.File,
 		if err != nil {
 			return ConsoleLabGrant{}, err
 		}
-		if candidate.GrantID != "" && (selected.GrantID == "" || candidate.IssuedAt.After(selected.IssuedAt) || (candidate.IssuedAt.Equal(selected.IssuedAt) && candidate.GrantID > selected.GrantID)) {
-			selected = candidate
-		}
+		selected = newestLabGrant(selected, candidate)
 		if errors.Is(readErr, io.EOF) {
 			break
 		}
 	}
 
 	return selected, nil
+}
+
+func newestLabGrant(selected, candidate ConsoleLabGrant) ConsoleLabGrant {
+	if candidate.GrantID == "" {
+		return selected
+	}
+	if selected.GrantID == "" || candidate.IssuedAt.After(selected.IssuedAt) || (candidate.IssuedAt.Equal(selected.IssuedAt) && candidate.GrantID > selected.GrantID) {
+		return candidate
+	}
+	return selected
 }
